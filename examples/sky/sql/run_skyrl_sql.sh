@@ -1,8 +1,8 @@
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export DATA_DIR='/SkyRL-SQL-653-data'
-DB_PATH=/data
+export DATA_DIR='/home/ray/default/SkyRL-SQL-653-data'
+DB_PATH=/home/ray/default/sql_data
 BASE_MODEL='Qwen/Qwen2.5-Coder-7B-Instruct'
-CKPT_PATH='/mnt/local_storage/ckpt'
+CKPT_PATH='/mnt/local_storage/ckpt3'
 
 PROJECT_NAME='MultiTurn-Experiment'
 EXPERIMENT_NAME="SkyRL-SQL-7B"
@@ -12,7 +12,7 @@ ENTROPY_COEFF=0
 KL_LOSS_TYPE=low_var_kl
 N_AGENT=5
 N_TURNS=5
-TEMP=0.6
+TEMP=0
 TOPP=0.95
 USE_KL_LOSS=False
 LR=1e-6

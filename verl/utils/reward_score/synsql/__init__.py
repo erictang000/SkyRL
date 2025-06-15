@@ -51,6 +51,7 @@ def calculate_reward_parallel(db_files, completions, references, questions, num_
     Returns:
         List of rewards for each completion.
     """
+    breakpoint()
     if log_dir:
         assert n_agent is not None, "n_agent must be provided for logging"
     start = perf_counter()

@@ -17,7 +17,7 @@ from torch.distributed import DeviceMesh
 from tensordict import TensorDict
 # NOTE (sumanthrh): Ideally, we can guard this import and run it only for the swe bench task. 
 # However, in openhands' long chain of dependencies, the import for `scantree` fails when this is done.
-from verl.workers.agentic.swe_agent.codeact import CodeActAgentGroup
+# from verl.workers.agentic.swe_agent.codeact import CodeActAgentGroup
 
 from verl import DataProto
 from verl.workers.rollout.base import BaseRollout
@@ -97,27 +97,27 @@ class AsyncRollout(BaseRollout):
         if sampling_params.get("n", 1) > 1: 
             raise ValueError("Sampling parameter `n` is not supported for multi-turn agentic tasks. For generating multiple trajectories per instance, please use `rollout.n_trajectories` instead.")
         
-        if self.config.task_type == "swegym":
-            codeact_agent_group = CodeActAgentGroup(
-                batch=prompts,
-                num_trajectories=self.config.n_trajectories,
-                infer_engine=self.engine,
-                max_prompt_length=self.config.prompt_length,
-                max_response_length=self.config.response_length,
-                max_starting_message_length=self.config.max_starting_message_length,
-                max_parallel_agents=max(self.config.max_parallel_agents // self.device_mesh.size(0), 1),
-                max_eval_parallel_agents=max(self.config.max_eval_parallel_agents // self.device_mesh.size(0), 1),
-                max_iterations = self.config.max_iterations,
-                tokenizer=self.engine.tokenizer_manager.tokenizer,
-                sampling_params=sampling_params,
-                device=device,
-                log_messages_dir=self.config.log_messages_dir,
-                remove_think_tokens=self.config.remove_think_tokens,
-                qwen3_enable_thinking=self.config.qwen3_enable_thinking,
-            )
+        # if self.config.task_type == "swegym":
+        #     codeact_agent_group = CodeActAgentGroup(
+        #         batch=prompts,
+        #         num_trajectories=self.config.n_trajectories,
+        #         infer_engine=self.engine,
+        #         max_prompt_length=self.config.prompt_length,
+        #         max_response_length=self.config.response_length,
+        #         max_starting_message_length=self.config.max_starting_message_length,
+        #         max_parallel_agents=max(self.config.max_parallel_agents // self.device_mesh.size(0), 1),
+        #         max_eval_parallel_agents=max(self.config.max_eval_parallel_agents // self.device_mesh.size(0), 1),
+        #         max_iterations = self.config.max_iterations,
+        #         tokenizer=self.engine.tokenizer_manager.tokenizer,
+        #         sampling_params=sampling_params,
+        #         device=device,
+        #         log_messages_dir=self.config.log_messages_dir,
+        #         remove_think_tokens=self.config.remove_think_tokens,
+        #         qwen3_enable_thinking=self.config.qwen3_enable_thinking,
+        #     )
 
-            results = codeact_agent_group.run()
-        elif self.config.task_type == "sql":
+        #     results = codeact_agent_group.run()
+        if self.config.task_type == "sql":
             from verl.workers.agentic.llm_sql_agent.sqlact import SQLActAgentGroup
             from verl.workers.agentic.llm_sql_agent.generation import GenerationConfig
             total_world_size = torch.distributed.get_world_size()

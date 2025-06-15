@@ -444,13 +444,13 @@ class RayPPOTrainer(object):
             filter_overlong_prompts=self.config.data.get('filter_overlong_prompts', False),
             num_workers=self.config.data.get('filter_overlong_prompts_workers', None),
         )
-        # use sampler for better ckpt resume
-        if self.config.data.shuffle:
-            train_dataloader_generator = torch.Generator()
-            train_dataloader_generator.manual_seed(self.config.data.get('seed', 1))
-            sampler = RandomSampler(data_source=self.train_dataset, generator=train_dataloader_generator)
-        else:
-            sampler = SequentialSampler(data_source=self.train_dataset)
+        # # use sampler for better ckpt resume
+        # if self.config.data.shuffle:
+        #     train_dataloader_generator = torch.Generator()
+        #     train_dataloader_generator.manual_seed(self.config.data.get('seed', 1))
+        #     sampler = RandomSampler(data_source=self.train_dataset, generator=train_dataloader_generator)
+        # else:
+        sampler = SequentialSampler(data_source=self.train_dataset)
 
         self.train_dataloader = StatefulDataLoader(dataset=self.train_dataset,
                                                    batch_size=self.config.data.train_batch_size,
@@ -1027,7 +1027,6 @@ class RayPPOTrainer(object):
                         # decomposed rewards:
                         for k, v in reward_tensor_dict.items():
                             batch.batch[k]=v
-
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:
                             batch, kl_metrics = apply_kl_penalty(batch,
