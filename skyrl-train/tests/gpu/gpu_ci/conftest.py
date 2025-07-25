@@ -16,7 +16,8 @@ def ray_init_fixture():
     if ray.is_initialized():
         ray.shutdown()
     env_vars = {}
-    if not peer_access_supported():
+    # hard code to 4 gpus for CI environment for now
+    if not peer_access_supported(max_num_gpus_per_node=4):
         log_once("Disabling NCCL P2P for CI environment")
         env_vars = {"NCCL_P2P_DISABLE": "1", "NCCL_SHM_DISABLE": "1"}
     ray.init(runtime_env={"env_vars": env_vars})
