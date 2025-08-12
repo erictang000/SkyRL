@@ -1,16 +1,9 @@
-name: SkyRL-GPU
+name: SkyRL-GPU-E2E-CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'skyrl-train/**'
-      - '!skyrl-train/docs/**'
-      - '!skyrl-train/examples/**'
-      - '.github/workflows/**'
+  schedule:
+    - cron: '5 8 * * *'   # Every day at 08:05 UTC (~00:05 PST / ~01:05 PDT)
   workflow_dispatch:
-
 
 permissions:
   checks: write   # for status checks to appear
@@ -18,7 +11,7 @@ permissions:
 
 jobs:
   
-  skyrl_tests:
+  skyrl_gpu_e2e_test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,10 +35,12 @@ jobs:
         run: uv pip install anyscale==0.24.79 typer==0.9.0
       - name: Install envsubst
         run: sudo apt-get update && sudo apt-get install -y gettext-base
-      # Run tests
-      - name: GPU tests
+      - name: Basic convergence test
         env:
           ANYSCALE_CLI_TOKEN: ${{ secrets.ANYSCALE_CLI_TOKEN }}
           ANYSCALE_HOST: https://console.anyscale.com
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: |
-          anyscale job submit -f ci/anyscale_gpu_ci.yaml --wait
+          envsubst < ci/anyscale_gpu_e2e_test.yaml > ci/anyscale_gpu_e2e_test_envsubst.yaml
+          anyscale job submit -f ci/anyscale_gpu_e2e_test_envsubst.yaml --wait
+          rm -f ci/anyscale_gpu_e2e_test_envsubst.yaml
