@@ -279,6 +279,8 @@ def initialize_ray(cfg: DictConfig):
             env_vars["VLLM_USE_V1"] = "1"
             env_vars["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 
+    env_vars["NCCL_CUMEM_ENABLE"] = "0"
+
     max_num_gpus_per_node = max(
         [
             cfg.trainer.placement.policy_num_gpus_per_node,
