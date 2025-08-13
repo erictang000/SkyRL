@@ -10,3 +10,4 @@ env_vars:
   WANDB_API_KEY: $WANDB_API_KEY
   RAY_RUNTIME_ENV_HOOK: ray._private.runtime_env.uv_runtime_env_hook.hook
 max_retries: 1 # (Optional) Maximum number of times the job will be retried before being marked failed. Defaults to `1`.
+timeout_s: 5400
