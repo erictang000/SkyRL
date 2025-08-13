@@ -42,5 +42,5 @@ jobs:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: |
           envsubst < ci/anyscale_gpu_e2e_test.yaml > ci/anyscale_gpu_e2e_test_envsubst.yaml
-          anyscale job submit -f ci/anyscale_gpu_e2e_test_envsubst.yaml --wait
+          anyscale job submit -f ci/anyscale_gpu_e2e_test_envsubst.yaml --wait --timeout 5400
           rm -f ci/anyscale_gpu_e2e_test_envsubst.yaml
