@@ -1,8 +1,8 @@
 name: SkyRL-GPU
 
-on:
-  push:
-    branches:
+on: 
+  push: 
+    branches: 
       - main
     paths:
       - 'skyrl-train/**'
