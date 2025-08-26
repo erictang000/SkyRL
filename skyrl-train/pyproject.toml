@@ -81,8 +81,8 @@ docs = [
     "sphinx-autobuild>=2021.3.14"
 ]
 vllm = [
-    "vllm==0.9.2",
-    "torch==2.7.0",
+    "vllm==0.10.0",
+    "torch==2.7.1",
     "flashinfer-python",
     "torchvision"
 ]
@@ -92,7 +92,28 @@ sglang = [
     "torch==2.7.1",
     "torchvision",
 ]
+mcore = [
+  "mbridge",
+  "megatron-bridge",
+  "megatron-core@git+https://github.com/NVIDIA/Megatron-LM.git@core_r0.13.0",
+  "transformer-engine[pytorch]==2.5.0",
+]
 
+[dependency-groups]
+
+# This is a default group so that we install these even with bare `uv sync`
+build = [
+    # Build requirement for TE
+    "torch==2.7.1",
+    # Build requirement for TE
+    "setuptools",
+    "packaging",
+    "einops",
+    # Build requirement for mcore
+    "pybind11",
+    # Build requirement for flash-attn
+    "psutil",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

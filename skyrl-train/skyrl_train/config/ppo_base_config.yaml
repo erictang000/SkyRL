@@ -2,6 +2,7 @@ defaults:
   - _self_
   - deepspeed_config@deepspeed_config.train: train
   - deepspeed_config@deepspeed_config.eval: eval
+  - megatron_config@megatron_config.policy: policy
   - skyrl_gym_config: default
 
 data:
@@ -39,6 +40,7 @@ trainer:
       cpu_offload: false # offload params + optimizer state to cpu during fwd pass
       reshard_after_forward: true # fsdp2 only, [True, False, int between 1 and fsdp_size]
       fsdp_size: -1
+    megatron_config: ${megatron_config.policy}
     sequence_parallel_size: 1
     # uses torch compile with logits calculation
     use_torch_compile: false

@@ -88,6 +88,7 @@ class DistributedTorchRayActor:
             pp=0,
             world_size=self._world_size,
             dp_size=self.device_mesh.size(0),
+            pp_size=1,
         )
 
     def _seq_parallel_monkey_patch(self, model: PreTrainedModel, use_parent_class: bool = False):
@@ -460,6 +461,7 @@ class PPORayActorGroup:
         logger.info("Initializing process group for RayActorGroup")
         ray.get([actor.init_worker_process_group.remote() for actor in self._actor_handlers])
         logger.info("Initialized process group for RayActorGroup")
+        #  TODO defer mesh rank initialization to after init_model is called to allow for backend agnostic distributed setup
         self.actor_infos = [ActorInfo(actor, ray.get(actor.get_mesh_rank.remote())) for actor in self._actor_handlers]
         logger.info(f"Mesh Ranks: {[actor_info.rank for actor_info in self.actor_infos]}")
 

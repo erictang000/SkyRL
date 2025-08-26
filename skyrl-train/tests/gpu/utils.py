@@ -78,6 +78,7 @@ def make_dummy_experience(seq_len=10, num_actions=4) -> Experience:
         sequences=torch.randint(0, 100, (B, T), device="cpu"),
         action_log_probs=0.4 * torch.ones((B, num_actions), device="cpu"),
         base_action_log_probs=0.3 * torch.ones((B, num_actions), device="cpu"),
+        rollout_logprobs=0.2 * torch.ones((B, num_actions), device="cpu"),
         values=0.5 * torch.ones((B, num_actions), device="cpu"),
         returns=0.5 * torch.ones((B, num_actions), device="cpu"),
         advantages=0.6 * torch.ones((B, num_actions), device="cpu"),
@@ -119,6 +120,8 @@ def import_worker(strategy: str, worker_type: str):
         module_path = "skyrl_train.workers.deepspeed.deepspeed_worker"
     elif strategy in ("fsdp", "fsdp2"):
         module_path = "skyrl_train.workers.fsdp.fsdp_worker"
+    elif strategy == "megatron":
+        module_path = "skyrl_train.workers.megatron.megatron_worker"
     else:
         raise ValueError(f"Unknown strategy type for {worker_type}: {strategy}")
 
