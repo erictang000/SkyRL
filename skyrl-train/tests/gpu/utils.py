@@ -20,7 +20,7 @@ from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.utils import get_ray_pg_ready_with_timeout
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.generators.base import GeneratorInput, ConversationType
-from skyrl_train.utils.utils import peer_access_supported
+from skyrl_train.utils.utils import peer_access_supported, validate_cfg
 
 
 TEST_DATA_PATH = os.path.expanduser("~/data/gsm8k/validation.parquet")
@@ -85,6 +85,7 @@ def make_dummy_experience(seq_len=10, num_actions=4) -> Experience:
         loss_mask=torch.ones((B, num_actions), dtype=int, device="cpu"),
         action_mask=torch.ones((B, num_actions), dtype=int, device="cpu"),
         num_actions=num_actions,
+        rollout_logprobs=0.4 * torch.ones((B, num_actions), device="cpu"),
         info={},
     )
 
