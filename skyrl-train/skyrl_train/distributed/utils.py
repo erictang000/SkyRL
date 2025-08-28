@@ -35,6 +35,26 @@ ModelOptimPair = Tuple[nn.Module, Optimizer]
 ModelOrModelOptimPair = Union[nn.Module, ModelOptimPair]
 
 
+def broadcast_dict(data: dict[str, float], src, group):
+    """
+    Broadcast a dictionary of floats to all ranks in the given group.
+
+    TODO: potentially optimize this by combining into a single broadcast call
+    Args:
+        data: A dictionary of floats to broadcast.
+        src: The rank to broadcast from.
+        group: The group to broadcast to.
+    Returns:
+        None
+    """
+    new_data = {}
+    for key in sorted(list(data.keys())):
+        data_tensor = torch.tensor(data[key], device=torch.cuda.current_device())
+        torch.distributed.broadcast(data_tensor, src=src, group=group, async_op=False)
+        new_data[key] = data_tensor.item()
+    return new_data
+
+
 def get_free_port():
     with socket.socket() as sock:
         sock.bind(("", 0))

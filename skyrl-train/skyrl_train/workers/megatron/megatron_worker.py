@@ -132,11 +132,12 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         # create worker model
         self.model = MegatronPPOPolicy(
-            config=self.cfg.trainer.policy,
+            config=self.cfg,
             hf_config=self.hf_config,
             tf_config=self.tf_config,
             actor_module=self.actor_module,
             actor_optimizer=self.optimizer,
+            policy_loss_fn=self.policy_loss_fn,
         )
 
     def training_step(self, experience: Experience, global_step, local_step, accumulation_steps) -> Dict[str, float]:
@@ -147,24 +148,53 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         experience.to_device(torch.cuda.current_device())
 
         sequences = experience.sequences
-        old_action_log_probs = experience.action_log_probs
-        base_action_log_probs = (
-            experience.base_action_log_probs if experience.base_action_log_probs is not None else None
-        )
-        advantages = experience.advantages
         num_actions = experience.num_actions
         attention_mask = experience.attention_mask
-        loss_mask = experience.loss_mask
-        rollout_action_logprobs = experience.rollout_logprobs
 
-        action_log_probs, output = self.model.forward_backward_micro_batch(
+        metrics = self.model.forward_backward_micro_batch(
             sequences,
             num_actions,
+            accumulation_steps,
+            old_action_log_probs=experience.action_log_probs,
+            base_action_log_probs=experience.base_action_log_probs,
+            advantages=experience.advantages,
+            loss_mask=experience.loss_mask,
+            rollout_action_logprobs=experience.rollout_logprobs,
             attention_mask=attention_mask,
             temperature=self.cfg.generator.sampling_params.temperature,
             compute_entropy=True,
         )
-        breakpoint()
+        if (local_step + 1) % accumulation_steps == 0:
+            grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
+
+        if self.record_memory:
+            self.save_memory_snapshot(global_step, local_step)
+
+        status = {
+            "policy_loss": metrics["policy_loss"],
+            "policy_lr": self.optimizer.param_groups[0]["lr"],
+            "ppo_clip_ratio": metrics["ppo_clip_ratio"],
+            "policy_entropy": metrics["policy_entropy"],
+        }
+        if self.cfg.trainer.algorithm.use_kl_loss:
+            status["policy_kl"] = metrics["policy_kl"]
+
+        if grad_norm is not None:
+            status["raw_grad_norm"] = grad_norm
+
+        for k, v in experience.info.items():
+            if k == "kl":
+                # just use the same value as loss if available
+                status[k] = (
+                    metrics["policy_kl"].item()
+                    if isinstance(metrics["policy_kl"], torch.Tensor)
+                    else status["policy_kl"]
+                )
+            else:
+                status[k] = v.mean().item() if isinstance(v, torch.Tensor) else v
+
+        status["response_length"] = num_actions
+        return status
 
     async def broadcast_to_inference_engines(self, inference_engine_client):
         pass

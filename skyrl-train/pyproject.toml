@@ -33,7 +33,7 @@ dependencies = [
     "debugpy==1.8.0",
     "hf_transfer",
     "wandb",
-    "datasets",
+    "datasets>=3.6.0",
     "tensordict",
     "jaxtyping",
     "skyrl-gym",
@@ -41,6 +41,7 @@ dependencies = [
 ]
 
 [tool.uv]
+default-groups = ["build"]
 conflicts = [
     [
         { extra = "vllm" },

@@ -91,7 +91,10 @@ class MegatronStrategy(DistributedStrategy):
         **kwargs,
     ) -> Optional[Float[torch.Tensor, "1"]]:
         """Perform optimizer step"""
-        pass
+        _, grad_norm, _ = optimizer.step()
+        scheduler.step(1)
+        optimizer.zero_grad()
+        return grad_norm
 
     def prepare(
         self, *models_or_model_optim_pairs: ModelOrModelOptimPair

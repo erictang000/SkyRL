@@ -156,7 +156,7 @@ def load_megatron_model_to_gpu(models, load_grad=True):
                         buffer.param_data.copy_(buffer.param_data.cpu_data, non_blocking=True)
         else:
             # we need this for ref module
-            device_id = get_device_id()
+            device_id = torch.cuda.current_device()
             for _, param in model_chunk.named_parameters():
                 param.data = param.data.to(device_id, non_blocking=True)
                 if param.grad is not None:
@@ -223,7 +223,7 @@ def load_megatron_copy_params(optimizers):
     def load_tensor_to_gpu(tensor):
         if tensor is None:
             return
-        device_id = get_device_id()
+        device_id = torch.cuda.current_device()
         tensor.data = tensor.data.to(device_id, non_blocking=True)
 
     def load_group_to_gpu(group):
@@ -282,9 +282,9 @@ def load_megatron_optimizer(optimizers):
             opt_state_dict_values = _opt.optimizer.state.values()
             for v in opt_state_dict_values:
                 if "exp_avg" in v:
-                    v["exp_avg"] = v["exp_avg"].to(get_device_id(), non_blocking=True)
+                    v["exp_avg"] = v["exp_avg"].to(torch.cuda.current_device(), non_blocking=True)
                 if "exp_avg_sq" in v:
-                    v["exp_avg_sq"] = v["exp_avg_sq"].to(get_device_id(), non_blocking=True)
+                    v["exp_avg_sq"] = v["exp_avg_sq"].to(torch.cuda.current_device(), non_blocking=True)
         gc.collect()
         torch.cuda.empty_cache()
 
