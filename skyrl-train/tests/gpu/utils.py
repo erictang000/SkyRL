@@ -20,7 +20,7 @@ from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.utils import get_ray_pg_ready_with_timeout
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.generators.base import GeneratorInput, ConversationType
-from skyrl_train.utils.utils import peer_access_supported, validate_cfg
+from skyrl_train.utils.utils import peer_access_supported
 
 
 TEST_DATA_PATH = os.path.expanduser("~/data/gsm8k/validation.parquet")
