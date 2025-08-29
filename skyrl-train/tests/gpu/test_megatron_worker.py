@@ -164,17 +164,11 @@ async def test_megatron_training_step(cfg, ray_init_fixture):
         )
     )
 
-    results_megatron_2 = ray.get(
-        actor_group.async_run_ray_method(
-            "pass_through", "training_step", experience, global_step, local_step + 1, accumulation_steps
-        )
-    )
-
     memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
     memory = memory[0]
     print_mem("memory after training step", memory)
 
-    for result in results_megatron_2:
+    for result in results_megatron:
         assert isinstance(result, dict), "Result should be a dictionary of training stats"
         assert "policy_loss" in result
         assert "policy_lr" in result
@@ -203,17 +197,10 @@ async def test_megatron_training_step(cfg, ray_init_fixture):
         )
     )
 
-    results_fsdp_2 = ray.get(
-        actor_group.async_run_ray_method(
-            "pass_through", "training_step", experience, global_step, local_step + 1, accumulation_steps
-        )
-    )
+    print("megatron results: ", results_megatron)
+    print("fsdp results: ", results_fsdp)
 
-    print("megatron results: ", results_megatron_2)
-    print("fsdp results: ", results_fsdp_2)
-    breakpoint()
-
-    for i, result in enumerate(results_fsdp_2):
+    for i, result in enumerate(results_fsdp):
         for k, v in result.items():
             if k == "policy_entropy":
                 # TODO: make entropy calculation only apply to non-padding tokens for all backends
@@ -221,7 +208,41 @@ async def test_megatron_training_step(cfg, ray_init_fixture):
                 # the entropy calculation is different (fsdp has random logits for padding tokens)
                 continue
             assert isinstance(v, (int, float)), f"{k} should be an int or float"
-            assert abs(v - results_megatron_2[i][k]) < 1.5e-1, f"diff in {k} is too large!"
+            assert abs(v - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
+
+
+@pytest.mark.asyncio
+async def test_megatron_ppo_train(cfg, ray_init_fixture):
+    """
+    Full test: initialize actor group, run training batch through ppo_train, validate output.
+    """
+
+    with open("/mnt/cluster_storage/gsm8k_batch.pkl", "rb") as f:
+        batch = pickle.load(f)[:512]
+
+    cfg.trainer.policy_mini_batch_size = 512
+    cfg.trainer.micro_train_batch_size_per_gpu = 8
+    cfg.generator.n_samples_per_prompt = (
+        1  # pretend that this is 1 for simplified gradient accumulation (since we have batch advantages already)
+    )
+    batch.metadata["global_step"] = 0
+
+    cfg.trainer.strategy = "megatron"
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+    results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
+
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after training step", memory)
+
+    assert results_megatron[0]["raw_grad_norm"] < 1, "Raw grad norm should be less than 1"
 
 
 def test_megatron_policy_weight_sync(cfg):

@@ -13,7 +13,6 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.distributed import finalize_model_grads
 import megatron.core.parallel_state as mpu
 from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs
-from skyrl_train.utils.torch_utils import chunked_entropy_from_logits
 from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean
 
 
@@ -35,8 +34,36 @@ class MegatronPPOPolicy:
         self.actor_optimizer = actor_optimizer
         self.policy_loss_fn = policy_loss_fn
 
-        model_config = get_model_config(self.actor_module[0])
-        model_config.finalize_model_grads_func = finalize_model_grads
+        # NOTE (erictang000): this is a potentially brittle way to disable the finalize_model_grads_func
+        # call during each call to forward_backward_micro_batch, since we are manually accumulating gradients
+        # rather than letting megatron's forward_backward_func handle the accumulation.
+        # this may be brittle, since we are modifying the megatron internal flow by overwriting the finalize function
+        # while accumulating. However, this lets us keep our standard gradient accumulation flow and metrics
+        # calculation. We could consider refactoring in the future to make the forward_backward_micro_batch
+        # take in a full mini_batch and handle the dataloader flow there if this becomes a problem.
+        self._saved_finalize = None
+        self._set_finalize_noop()
+
+    @staticmethod
+    def _finalize_noop(*args, **kwargs):
+        # do nothing; used to disable per-call finalization
+        return
+
+    def _set_finalize_noop(self):
+        cfg = get_model_config(self.actor_module[0])
+        if self._saved_finalize is None:
+            self._saved_finalize = cfg.finalize_model_grads_func
+        cfg.finalize_model_grads_func = self._finalize_noop
+
+    def _restore_and_finalize_once(self):
+        # call the real finalize exactly once at the end of the accumulation window
+        cfg = get_model_config(self.actor_module[0])
+        real_finalize = self._saved_finalize or finalize_model_grads
+        # restore
+        cfg.finalize_model_grads_func = real_finalize
+        self._saved_finalize = None
+        # perform one real finalize (TP/DP reductions, scaling, etc.)
+        real_finalize(self.actor_module)
 
     def _validate_config(self, config) -> None:
         """Validate config options not implemented for Megatron backend"""
@@ -63,12 +90,10 @@ class MegatronPPOPolicy:
         num_actions: Union[int, list[int]],
         attention_mask: Optional[torch.Tensor] = None,
         temperature: float = 1.0,  # TODO: should we divide by temperature here?
-        compute_entropy: bool = False,
-        post_process_fn=None,
         **kwargs,
     ) -> torch.Tensor:
         position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 1)
+        position_ids.masked_fill_(attention_mask == 0, 0)
 
         micro_batch_size = sequences.shape[0]
         seq_len = sequences.shape[1]
@@ -77,12 +102,6 @@ class MegatronPPOPolicy:
 
         def collection_func(logits, data):
             sequences = data["sequences"]
-            # label = data["position_ids"].clone()
-            # label_mask = data["attention_mask"].clone()
-            # num_actions = data["num_actions"]
-            # label_mask[:, : -num_actions - 1] = 0
-            # label_mask[:, -1] = 0
-
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
@@ -95,11 +114,7 @@ class MegatronPPOPolicy:
                 inference_only=True,
                 chunk_size=None,
             )
-            # log_probs = vocab_parallel_cross_entropy(
-            #     vocab_parallel_logits=logits,
-            #     target=label,
-            # )
-            # log_probs = log_probs.masked_fill(~label_mask.bool(), 0.0)
+
             return 0.0, {"log_probs": token_logprobs}
 
         def forward_step(batch_iter, model):
@@ -177,11 +192,9 @@ class MegatronPPOPolicy:
         rollout_action_logprobs: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         temperature: float = 1.0,
-        compute_entropy: bool = False,
-        post_process_fn=None,
     ):
         position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 1)
+        position_ids.masked_fill_(attention_mask == 0, 0)
 
         micro_batch_size = sequences.shape[0]
         seq_len = sequences.shape[1]
@@ -222,10 +235,10 @@ class MegatronPPOPolicy:
                 rollout_logprobs=rollout_action_logprobs,
             )
 
-            with torch.no_grad():
-                action_logits = logits[:, -num_actions - 1 : -1, :]
-                entropy_BS = chunked_entropy_from_logits(action_logits, requires_grad=False)
-                entropy = entropy_BS.sum().item() / entropy_BS.numel()
+            # with torch.no_grad():
+            #     action_logits = logits[:, -num_actions - 1 : -1, :]
+            #     entropy_BS = chunked_entropy_from_logits(action_logits, requires_grad=False)
+            #     entropy = entropy_BS.sum().item() / entropy_BS.numel()
 
             if self.cfg.trainer.algorithm.use_kl_loss:
                 kl_loss = compute_approx_kl(
@@ -243,7 +256,7 @@ class MegatronPPOPolicy:
 
             metrics = {
                 "policy_loss": policy_loss.detach().item(),
-                "policy_entropy": entropy,
+                "policy_entropy": 0,
                 "ppo_clip_ratio": clip_ratio,
                 "policy_kl": kl_loss.detach().item(),
             }

@@ -57,6 +57,7 @@ class MegatronWorker:
         model = self.bridge.get_model(
             post_model_creation_callbacks=[],  # don't rely on these since we might switch to Megatron-Bridge
             wrap_with_ddp=wrap_with_ddp,
+            ddp_config=self.cfg.trainer.policy.megatron_config.override_ddp_config,
         )
         if override_model_config.get("moe_config", {}).get("freeze_moe_router", False):
             freeze_moe_router(model)
@@ -163,12 +164,13 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             rollout_action_logprobs=experience.rollout_logprobs,
             attention_mask=attention_mask,
             temperature=self.cfg.generator.sampling_params.temperature,
-            compute_entropy=True,
         )
 
         grad_norm = None
         if (local_step + 1) % accumulation_steps == 0:
+            self.model._restore_and_finalize_once()
             grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
+            self.model._set_finalize_noop()
 
         if self.record_memory:
             self.save_memory_snapshot(global_step, local_step)

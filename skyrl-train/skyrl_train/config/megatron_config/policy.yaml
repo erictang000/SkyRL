@@ -11,7 +11,13 @@ sequence_parallel: true
 use_distributed_optimizer: True
 
 # Allow to override Distributed Data Parallel (DDP) config
-override_ddp_config: {}
+# TODO (erictang000): understand exactly what is going on here
+override_ddp_config:
+  grad_reduce_in_fp32: false
+  overlap_grad_reduce: false
+  overlap_param_gather: false
+  average_in_collective: true
+  data_parallel_sharding_strategy: "optim_grads_params"
 
 seed: 42
 
@@ -19,7 +25,7 @@ override_model_config: {}
 
 # additional transformer config like: num_layers_in_first(/last)_pipeline_stage
 # oc.select: default val for ref.megatron.override_transformer_config
-# NOTE (erictang000) these are only used for gradient checkpointing
+# NOTE (erictang000) these are
 override_transformer_config:
   # Recompute configuration, same as in megatron.training.arguments
   # default use minimal performance-interference recompute methods
