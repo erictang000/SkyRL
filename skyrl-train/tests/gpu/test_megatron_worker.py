@@ -1,16 +1,15 @@
 """
 Run with:
-uv run --isolated --extra dev --extra mcore -- pytest tests/gpu/test_megatron_worker.py
+uv run --isolated --extra dev --extra vllm --extra mcore -- pytest tests/gpu/test_megatron_worker.py
 """
 
-import pickle
 import ray
 import pytest
 import hydra
 from omegaconf import DictConfig
 import torch
 import asyncio
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from tests.gpu.utils import (
     init_worker_with_type,
@@ -27,7 +26,7 @@ from skyrl_train.utils.utils import print_mem, validate_cfg
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.utils.torch_utils import logprobs_from_logits
-from skyrl_train.utils.ppo_utils import PolicyLossRegistry, AdvantageEstimatorRegistry
+from skyrl_train.training_batch import TrainingInputBatch
 
 MODEL_NAME = "Qwen/Qwen3-0.6B"
 
@@ -37,9 +36,6 @@ def get_test_actor_config() -> DictConfig:
         cfg = hydra.compose(config_name="ppo_base_config")
 
     cfg.trainer.policy.model.path = MODEL_NAME
-    cfg.trainer.placement.policy_num_gpus_per_node = 2
-    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 2
-    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 1
     cfg.trainer.micro_forward_batch_size_per_gpu = 2
     cfg.trainer.micro_train_batch_size_per_gpu = 2
     cfg.trainer.use_sample_packing = False
@@ -49,6 +45,57 @@ def get_test_actor_config() -> DictConfig:
     return cfg
 
 
+def get_test_training_batch() -> TrainingInputBatch:
+    """
+    Returns a test training batch with padded seqs and attention masks
+
+    Gives a batch of 4 sequences with variable amounts of left padding, and variable response lengths/amounts of right padding
+    Attention masks are 1 for non-padding tokens, 0 for padding tokens
+    The rest of the fields are filled with dummy data
+    """
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+    sentences = [
+        "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+        "<|im_start|>user\nThe selling price of a bicycle that had sold $220 last year was increased by 15",
+        "What is the new price? Let's think step by step and output the final answer after `####`.<|im_end|>\n",
+        "<|im_start|>assistant\nTo find the new price of the bicycle after the increase,",
+    ]
+
+    sequences = [tokenizer.encode(sentence) for sentence in sentences]
+    attention_masks = [[1] * len(seq) for seq in sequences]
+    batch_size = len(sequences)
+    num_actions = 10
+
+    pad_token_id = tokenizer.pad_token_id
+
+    # pad to length of longest sequence (25)
+    pad_before_after = [(4, 2), (0, 1), (1, 1), (6, 4)]
+    for i, (pad_before, pad_after) in enumerate(pad_before_after):
+        sequences[i] = [pad_token_id] * pad_before + sequences[i] + [pad_token_id] * pad_after
+        attention_masks[i] = [0] * pad_before + attention_masks[i] + [0] * pad_after
+
+    attention_masks = torch.tensor(attention_masks)
+    sequences = torch.tensor(sequences)
+
+    data = TrainingInputBatch(
+        {
+            "sequences": sequences,
+            "attention_mask": attention_masks,
+            "action_log_probs": torch.tensor([[0.1] * num_actions] * batch_size),
+            "base_action_log_probs": torch.tensor([[0.2] * num_actions] * batch_size),
+            "rollout_logprobs": torch.tensor([[0.11] * num_actions] * batch_size),
+            "values": torch.tensor([[0.1] * num_actions] * batch_size),
+            "returns": torch.tensor([[0.1] * num_actions] * batch_size),
+            "advantages": torch.tensor([[0.5] * num_actions] * batch_size),
+            "loss_mask": torch.tensor([[1] * num_actions] * batch_size),
+            "response_mask": torch.tensor([[1] * num_actions] * batch_size),
+        }
+    )
+    data.metadata = {"response_length": num_actions}
+    return data
+
+
 @pytest.fixture
 def cfg() -> DictConfig:
     return get_test_actor_config()
@@ -56,20 +103,24 @@ def cfg() -> DictConfig:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("worker_type"),
+    ("worker_type", "tp", "pp", "gpus_per_node"),
     [
-        "policy",
-        "ref",
+        ("policy", 2, 1, 2),
+        ("ref", 2, 1, 2),  # ref has same forward pass as policy - just duplicate one test to test setup
+        ("policy", 1, 2, 2),
+        ("policy", 2, 2, 4),
     ],
 )
-async def test_megatron_forward(cfg, ray_init_fixture, worker_type):
+async def test_megatron_forward(cfg, ray_init_fixture, worker_type, tp, pp, gpus_per_node):
     """
     Test that the Megatron forward pass is numerically equivalent to just running a huggingface model forward.
     """
     #### Megatron forward pass ####
     cfg.trainer.strategy = "megatron"
-    with open("/mnt/cluster_storage/gsm8k_batch.pkl", "rb") as f:
-        batch = pickle.load(f)[:8]
+    cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
+    batch = get_test_training_batch()
 
     actor_group = init_worker_with_type(
         worker_type,
@@ -138,15 +189,23 @@ async def test_megatron_forward(cfg, ray_init_fixture, worker_type):
 
 
 @pytest.mark.asyncio
-async def test_megatron_training_step(cfg, ray_init_fixture):
+@pytest.mark.parametrize(
+    ("worker_type", "tp", "pp", "gpus_per_node"),
+    [
+        ("policy", 2, 2, 4),
+    ],
+)
+async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp, gpus_per_node):
     """
     Full test: initialize actor group, send dummy experience to training_step, validate output.
     """
 
-    with open("/mnt/cluster_storage/gsm8k_batch.pkl", "rb") as f:
-        batch = pickle.load(f)[4:8]
+    batch = get_test_training_batch()
 
     cfg.trainer.strategy = "megatron"
+    cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
     actor_group = init_worker_with_type(
         "policy",
         shared_pg=None,
@@ -211,40 +270,6 @@ async def test_megatron_training_step(cfg, ray_init_fixture):
             assert abs(v - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
 
 
-@pytest.mark.asyncio
-async def test_megatron_ppo_train(cfg, ray_init_fixture):
-    """
-    Full test: initialize actor group, run training batch through ppo_train, validate output.
-    """
-
-    with open("/mnt/cluster_storage/gsm8k_batch.pkl", "rb") as f:
-        batch = pickle.load(f)[:512]
-
-    cfg.trainer.policy_mini_batch_size = 512
-    cfg.trainer.micro_train_batch_size_per_gpu = 8
-    cfg.generator.n_samples_per_prompt = (
-        1  # pretend that this is 1 for simplified gradient accumulation (since we have batch advantages already)
-    )
-    batch.metadata["global_step"] = 0
-
-    cfg.trainer.strategy = "megatron"
-    actor_group = init_worker_with_type(
-        "policy",
-        shared_pg=None,
-        colocate_all=False,
-        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
-        cfg=cfg,
-    )
-
-    results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
-
-    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    memory = memory[0]
-    print_mem("memory after training step", memory)
-
-    assert results_megatron[0]["raw_grad_norm"] < 1, "Raw grad norm should be less than 1"
-
-
 def test_megatron_policy_weight_sync(cfg):
     """
     Test that we can sync weights between policy and inference for megatron then run inference
@@ -255,7 +280,11 @@ def test_megatron_policy_weight_sync(cfg):
         cfg.generator.weight_sync_backend = "nccl"
         cfg.trainer.strategy = "megatron"
         cfg.generator.backend = "vllm"
-        cfg.generator.inference_engine_tensor_parallel_size = 2
+        cfg.generator.inference_engine_tensor_parallel_size = 4
+
+        # set tp and pp to 2 to check that gather for weight sync works correctly
+        cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 2
+        cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 2
 
         # If colocate is True, this will load the engine, sleep, and wake up the engine
         client, pg = init_inference_engines(
@@ -282,8 +311,6 @@ def test_megatron_policy_weight_sync(cfg):
 
         print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
     finally:
-        AdvantageEstimatorRegistry.reset()
-        PolicyLossRegistry.reset()
         ray.shutdown()
 
 

@@ -6,7 +6,7 @@ import torch.nn as nn
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.distributed import finalize_model_grads
 import megatron.core.parallel_state as mpu
-from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs
+from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs, vocab_parallel_entropy
 from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean
 from skyrl_train.distributed.megatron.megatron_utils import (
     get_model_config,
@@ -234,10 +234,10 @@ class MegatronPPOPolicy:
                 rollout_logprobs=rollout_action_logprobs,
             )
 
-            # with torch.no_grad():
-            #     action_logits = logits[:, -num_actions - 1 : -1, :]
-            #     entropy_BS = chunked_entropy_from_logits(action_logits, requires_grad=False)
-            #     entropy = entropy_BS.sum().item() / entropy_BS.numel()
+            with torch.no_grad():
+                action_logits = logits[:, -num_actions - 1 : -1, :]
+                entropy_BS = vocab_parallel_entropy(action_logits)
+                entropy = entropy_BS.sum().item() / entropy_BS.numel()
 
             if self.cfg.trainer.algorithm.use_kl_loss:
                 kl_loss = compute_approx_kl(
@@ -255,7 +255,7 @@ class MegatronPPOPolicy:
 
             metrics = {
                 "policy_loss": policy_loss.detach().item(),
-                "policy_entropy": 0,
+                "policy_entropy": entropy,
                 "ppo_clip_ratio": clip_ratio,
                 "policy_kl": kl_loss.detach().item(),
             }
