@@ -1,7 +1,8 @@
+from typing import Optional, Union, Callable, List
 from omegaconf import OmegaConf
-from typing import Optional, Union
 from functools import partial
 import torch
+import torch.nn as nn
 
 from skyrl_train.distributed.megatron.megatron_utils import (
     get_model_config,
@@ -11,6 +12,7 @@ from skyrl_train.distributed.megatron.megatron_utils import (
 )
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.distributed import finalize_model_grads
+from megatron.core.tensor_parallel import vocab_parallel_cross_entropy
 import megatron.core.parallel_state as mpu
 from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs
 from skyrl_train.utils.torch_utils import chunked_entropy_from_logits
@@ -23,9 +25,9 @@ class MegatronPPOPolicy:
         config,
         hf_config,
         tf_config,
-        actor_module,
-        actor_optimizer,
-        policy_loss_fn,
+        actor_module: List[nn.Module],
+        actor_optimizer: Optional[torch.optim.Optimizer] = None,
+        policy_loss_fn: Optional[Callable] = None,
     ):
         self.cfg = config
         self._validate_config(self.cfg.trainer.policy)
@@ -35,19 +37,6 @@ class MegatronPPOPolicy:
         self.actor_optimizer = actor_optimizer
         self.policy_loss_fn = policy_loss_fn
 
-        self.optimizer_step_args = OmegaConf.create(
-            {
-                "skip_grad": None,
-                "overlap_dp_param_comm": False,
-                "overlap_dp_grad_comm": False,
-                "gradient_accumulation_steps": 1,
-                "sequence_parallel": self.tf_config.sequence_parallel,
-                "DDP_impl": "local",
-                "layernorm_allreduce_bucket_threshold": 0,
-                "pipeline_model_parallel_split_rank": None,
-                "reduce_grads_use_alltoall": False,
-            }
-        )
         model_config = get_model_config(self.actor_module[0])
         model_config.finalize_model_grads_func = finalize_model_grads
 
@@ -57,7 +46,7 @@ class MegatronPPOPolicy:
         if config.get("shuffle", False):
             assert config.data_loader_seed is not None, "If shuffle dataloader, seed must be manually set"
         if config.get("megatron_config", {}).get("tensor_model_parallel_size", 1) == 1:
-            print("[Warining] Because actor tp size == 1, set sp to False")
+            print("[Warning] Because actor tp size == 1, set sp to False")
             config.megatron_config.sequence_parallel = False
         self.config = config
 
@@ -90,6 +79,12 @@ class MegatronPPOPolicy:
 
         def collection_func(logits, data):
             sequences = data["sequences"]
+            # label = data["position_ids"].clone()
+            # label_mask = data["attention_mask"].clone()
+            # num_actions = data["num_actions"]
+            # label_mask[:, : -num_actions - 1] = 0
+            # label_mask[:, -1] = 0
+
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
@@ -102,6 +97,11 @@ class MegatronPPOPolicy:
                 inference_only=True,
                 chunk_size=None,
             )
+            # log_probs = vocab_parallel_cross_entropy(
+            #     vocab_parallel_logits=logits,
+            #     target=label,
+            # )
+            # log_probs = log_probs.masked_fill(~label_mask.bool(), 0.0)
             return 0.0, {"log_probs": token_logprobs}
 
         def forward_step(batch_iter, model):
@@ -117,7 +117,7 @@ class MegatronPPOPolicy:
                 sequences,
                 attention_mask,
                 position_ids,
-                self.tf_config.sequence_parallel,
+                self.config.megatron_config.sequence_parallel,
                 pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
             )
 
@@ -163,7 +163,7 @@ class MegatronPPOPolicy:
             log_probs = log_probs[:, -num_actions:]
         else:
             # return dummy log_probs that will get .to("cpu")'d for non-last stage (since we only collect from last pp rank)
-            log_probs = torch.zeros(size=(1, 1), dtype=torch.float32, device=sequences.device)
+            log_probs = torch.zeros(size=(1, 1), dtype=torch.bfloat16, device=sequences.device)
             log_probs = log_probs.to(sequences.device)
         return log_probs
 
@@ -211,6 +211,7 @@ class MegatronPPOPolicy:
                 inference_only=False,
                 chunk_size=None,
             )
+            
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
@@ -244,10 +245,10 @@ class MegatronPPOPolicy:
             loss = loss / accumulation_steps
 
             metrics = {
-                "policy_loss": policy_loss.item(),
+                "policy_loss": policy_loss.detach().item(),
                 "policy_entropy": entropy,
                 "ppo_clip_ratio": clip_ratio,
-                "policy_kl": kl_loss.item(),
+                "policy_kl": kl_loss.detach().item(),
             }
             return loss, metrics
 
@@ -262,7 +263,7 @@ class MegatronPPOPolicy:
                 sequences,
                 attention_mask,
                 position_ids,
-                self.tf_config.sequence_parallel,
+                self.config.megatron_config.sequence_parallel,
                 pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
             )
 
@@ -309,9 +310,10 @@ class MegatronPPOPolicy:
         # broadcast metrics to all pp ranks
         if not mpu.is_pipeline_last_stage(ignore_virtual=True):
             metrics = [None]
-        torch.distributed.broadcast_object_list(
-            metrics,
-            src=mpu.get_pipeline_model_parallel_last_rank(),
-            group=mpu.get_pipeline_model_parallel_group(),
-        )
+        with torch.no_grad():
+            torch.distributed.broadcast_object_list(
+                metrics,
+                src=mpu.get_pipeline_model_parallel_last_rank(),
+                group=mpu.get_pipeline_model_parallel_group(),
+            )
         return metrics[0]

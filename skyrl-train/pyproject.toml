@@ -53,6 +53,11 @@ conflicts = [
         { extra = "flashrl" },
         { extra = "sglang" },
     ],
+    [
+        { extra = "mcore" },
+        { extra = "sglang" },
+        { extra = "flashrl" },
+    ]
 ]
 
 [tool.uv.sources]

@@ -19,6 +19,7 @@ override_model_config: {}
 
 # additional transformer config like: num_layers_in_first(/last)_pipeline_stage
 # oc.select: default val for ref.megatron.override_transformer_config
+# NOTE (erictang000) these are only used for gradient checkpointing
 override_transformer_config:
   # Recompute configuration, same as in megatron.training.arguments
   # default use minimal performance-interference recompute methods

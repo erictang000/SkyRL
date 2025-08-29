@@ -1,6 +1,7 @@
 import os
 import random
 from datetime import timedelta
+from tkinter import N
 from typing import List, Union, Optional
 from jaxtyping import Float
 
@@ -15,7 +16,7 @@ from skyrl_train.models import Actor
 from skyrl_train.distributed.utils import ModelOrModelOptimPair
 
 import megatron.core.parallel_state as mpu
-from skyrl_train.distributed.megatron.megatron_utils import offload_megatron_model_to_cpu, load_megatron_model_to_gpu
+from skyrl_train.distributed.megatron.megatron_utils import offload_megatron_model_to_cpu, load_megatron_model_to_gpu, offload_megatron_optimizer, load_megatron_optimizer
 
 
 class MegatronStrategy(DistributedStrategy):
@@ -70,17 +71,20 @@ class MegatronStrategy(DistributedStrategy):
         For all cases except fsdp2 with cpu_offload=True, we need to manually offload weights/optimizer to cpu.
         """
         offload_megatron_model_to_cpu(model)
+        if optimizer is not None:
+            offload_megatron_optimizer(optimizer)
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
     def backload_to_gpu(self, model, optimizer, non_blocking=True):
         """Reload model weights back to GPU."""
         load_megatron_model_to_gpu(model)
+        if optimizer is not None:
+            load_megatron_optimizer(optimizer)
         torch.cuda.synchronize()
 
     def backward(self, loss: torch.Tensor, model, optimizer: optim.Optimizer, **kwargs) -> None:
-        """Perform backward pass"""
-        loss.backward()
+        raise NotImplementedError()
 
     def optimizer_step(
         self,
@@ -99,22 +103,7 @@ class MegatronStrategy(DistributedStrategy):
     def prepare(
         self, *models_or_model_optim_pairs: ModelOrModelOptimPair
     ) -> Union[List[ModelOrModelOptimPair], ModelOrModelOptimPair]:
-        """Prepare models and optimizers with FSDP"""
-        ret = []
-        for arg in models_or_model_optim_pairs:
-            if isinstance(arg, tuple):
-                assert len(arg) == 3, f'Expect (model, optimizer, scheduler) pair, got a tuple with size "{len(arg)}"'
-                ret.append(self._megatron_init_train_model(*arg))
-            else:
-                ret.append(self._megatron_init_eval_model(arg))
-
-        return ret[0] if len(ret) == 1 else ret
-
-    def _megatron_init_train_model(self, model, optimizer, scheduler):
-        return model, optimizer, scheduler
-
-    def _megatron_init_eval_model(self, model):
-        return model
+        raise NotImplementedError()
 
     def all_reduce(self, data, op="mean"):
         """Perform all_reduce across all processes"""
@@ -155,13 +144,6 @@ class MegatronStrategy(DistributedStrategy):
             ret = [torch.zeros_like(data).to(torch.cuda.current_device()) for _ in range(self.world_size)]
             dist.all_gather(ret, data.to(torch.cuda.current_device()))
             return torch.cat(ret).cpu() if is_cpu_tensor else torch.cat(ret)
-
-    def _unwrap_model(self, model) -> nn.Module:
-        """Unwrap model from Actor or Megatron"""
-        if isinstance(model, Actor):
-            return model.model
-        else:
-            return model
 
     def save_ckpt(
         self,

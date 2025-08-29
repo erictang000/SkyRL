@@ -5,6 +5,7 @@ import torch.distributed
 import ray
 from megatron.core.optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+import asyncio
 
 from skyrl_train.distributed.megatron.optimizer import (
     init_megatron_optim_config,
@@ -12,10 +13,13 @@ from skyrl_train.distributed.megatron.optimizer import (
     get_megatron_optimizer_param_scheduler,
 )
 from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
-from skyrl_train.utils.utils import update_model_config
+from skyrl_train.utils.utils import update_model_config, str_to_torch_dtype, get_physical_gpu_id
 from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 from skyrl_train.workers.worker import (
     PolicyWorkerBase,
+    RefWorkerBase,
+    RewardWorkerBase,
+    CriticWorkerBase,
 )
 from mbridge import AutoBridge
 
@@ -69,10 +73,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
     def offload_to_cpu(self, pin_memory=True, non_blocking=True):
         self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(self.model, self.optimizer, pin_memory, non_blocking)
+        self.strategy.offload_to_cpu(self.actor_module, self.optimizer, pin_memory, non_blocking)
 
     def backload_to_gpu(self, non_blocking=True):
-        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking)
+        self.strategy.backload_to_gpu(self.actor_module, self.optimizer, non_blocking)
 
     def init_worker_process_group(self):
         if not torch.distributed.is_initialized():
@@ -105,29 +109,26 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         )
 
         # wrap with DDP for training
-        self.model = self.make_megatron_module(
+        self.actor_module = self.make_megatron_module(
             self.cfg.trainer.policy.megatron_config.override_model_config, wrap_with_ddp=True
         )
 
         # load weights
-        self.bridge.load_weights(self.model, model_path)
+        self.bridge.load_weights(self.actor_module, model_path)
         if self._rank == 0:
-            print_model_size(self.model[0])
+            print_model_size(self.actor_module[0])
 
         # create optimizer
         optim_config = init_megatron_optim_config(self.cfg.trainer.policy.optimizer_config)
-        self.optimizer = get_megatron_optimizer(self.model, optim_config)
+        self.optimizer = get_megatron_optimizer(self.actor_module, optim_config)
+
+        self._normalize_mini_batch_size()
 
         # create scheduler
         self.scheduler = get_megatron_optimizer_param_scheduler(
             optimizer=self.optimizer,
             config=self.cfg.trainer.policy.optimizer_config,
             num_training_steps=num_training_steps,
-        )
-
-        # prepare model and optimizer
-        self.actor_module, self.optimizer, self.scheduler = self.strategy.prepare(
-            (self.model, self.optimizer, self.scheduler),
         )
 
         # create worker model
@@ -164,6 +165,8 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             temperature=self.cfg.generator.sampling_params.temperature,
             compute_entropy=True,
         )
+        
+        grad_norm = None
         if (local_step + 1) % accumulation_steps == 0:
             grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
 
@@ -197,14 +200,147 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         return status
 
     async def broadcast_to_inference_engines(self, inference_engine_client):
-        pass
+        use_prefix_cache = self.cfg.generator.enable_prefix_caching
+        generator_dtype = str_to_torch_dtype(self.cfg.generator.model_dtype)
+        cache_reset_task = None
+        if use_prefix_cache and torch.distributed.get_rank() == 0:
+            # clear prefix cache
+            cache_reset_task = inference_engine_client.reset_prefix_cache()
+
+        torch.cuda.empty_cache()
+        per_tensor_param = self.bridge.export_weights(self.actor_module)
+
+        for name, param in per_tensor_param:
+            # NOTE (erictang000) we do not use bucketed weight updates for megatron here, which means this is not compatible with the FlashRL integration
+            # in the future we should improve this to use bucketed weight updates and support FlashRL + megatron for large models
+            from torch.multiprocessing.reductions import reduce_tensor
+
+            device = torch.cuda.current_device()
+            param = param.to(device, non_blocking=True)
+            param = param.to(generator_dtype)
+            weight = param.data.clone()
+            ipc_handle = reduce_tensor(weight)
+
+            ipc_handle = {get_physical_gpu_id(): ipc_handle}
+
+            ipc_handle_list = [None] * torch.distributed.get_world_size()
+            torch.distributed.all_gather_object(ipc_handle_list, ipc_handle)
+
+            if torch.distributed.get_rank() == 0:
+                ipc_handles = {}
+                for d in ipc_handle_list:
+                    ipc_handles.update(d)
+
+                shape = param.shape
+
+                await asyncio.create_task(
+                    inference_engine_client.update_named_weights(
+                        {
+                            "names": [name],
+                            "dtypes": [self.cfg.generator.model_dtype],
+                            "shapes": [shape],
+                            "extras": [{
+                                "ipc_handles": ipc_handles,
+                            }],
+                        }
+                    )
+                )
+
+            torch.distributed.barrier()
+            torch.cuda.synchronize()
+        
+        if cache_reset_task is not None:
+            await cache_reset_task
+        torch.cuda.empty_cache()
+        torch.distributed.barrier()
+
 
     def get_weight_statistics(self):
         """Compute lightweight statistics for model weights"""
         raise NotImplementedError()
 
     def _set_pad_token_id(self, pad_token_id):
-        self.model.model.config.pad_token_id = pad_token_id
+        # this already gets set in the init_model method
+        pass
 
+class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.model: MegatronPPOPolicy = None
+        self.actor_module: List[nn.Module] = None
+
+    def offload_to_cpu(self, pin_memory=True, non_blocking=True):
+        self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
+        self.strategy.offload_to_cpu(self.actor_module, None, pin_memory, non_blocking)
+
+    def backload_to_gpu(self, non_blocking=True):
+        self.strategy.backload_to_gpu(self.actor_module, None, non_blocking)
+
+    def init_worker_process_group(self):
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(backend="nccl")
+
+        # override the init_process_group method to use megatron distributed setup to create the mesh
+        self.strategy = MegatronStrategy(
+            megatron_config=self.cfg.trainer.ref.megatron_config,
+            optimizer_config=None,
+            seed=self.cfg.trainer.seed,
+        )
+        self.strategy.setup_distributed()
+
+        self.mesh_rank = MeshRank(
+            dp=mpu.get_data_parallel_rank(),
+            sp=mpu.get_context_parallel_rank(),
+            tp=mpu.get_tensor_model_parallel_rank(),
+            pp=mpu.get_pipeline_model_parallel_rank(),
+            world_size=self._world_size,
+            dp_size=mpu.get_data_parallel_world_size(),
+            pp_size=mpu.get_pipeline_model_parallel_world_size(),
+        )
+
+    def init_model(self, model_path, num_training_steps: int = 1e9):
+        # get hf_config and tf_config
+        self.init_configs(
+            model_path,
+            self.cfg.trainer.ref.megatron_config.override_model_config,
+            self.cfg.trainer.ref.megatron_config.override_transformer_config,
+        )
+
+        # wrap with DDP for training
+        self.actor_module = self.make_megatron_module(
+            self.cfg.trainer.ref.megatron_config.override_model_config, wrap_with_ddp=False
+        )
+
+        # load weights
+        self.bridge.load_weights(self.actor_module, model_path)
+        if self._rank == 0:
+            print_model_size(self.actor_module[0])
+            
+        # create worker model
+        self.model = MegatronPPOPolicy(
+            config=self.cfg,
+            hf_config=self.hf_config,
+            tf_config=self.tf_config,
+            actor_module=self.actor_module
+        )
+
+    def get_weight_statistics(self):
+        """Compute lightweight statistics for model weights"""
+        raise NotImplementedError()
+
+    def _set_pad_token_id(self, pad_token_id):
+        # this already gets set in the init_model method
+        pass
+
+class MegatronRewardWorkerBase(MegatronWorker, RewardWorkerBase):
+    def __init__(self, **kwargs):
+        raise NotImplementedError()
+
+class MegatronCriticWorkerBase(MegatronWorker, CriticWorkerBase):
+    def __init__(self, **kwargs):
+        raise NotImplementedError()
 
 PolicyWorker = ray.remote(num_gpus=1)(MegatronPolicyWorkerBase)
+RefWorker = ray.remote(num_gpus=1)(MegatronRefWorkerBase)
+CriticWorker = ray.remote(num_gpus=1)(MegatronCriticWorkerBase)
+RewardWorker = ray.remote(num_gpus=1)(MegatronRewardWorkerBase)

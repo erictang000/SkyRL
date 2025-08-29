@@ -113,6 +113,14 @@ def validate_batch_sizes(cfg: DictConfig):
             critic_train_batch_size_per_gpu % critic_mini_batch_size_per_gpu == 0
         ), f"normalized critic_train_batch_size_per_gpu (train_batch_size * n_samples_per_prompt // critic_dp_size) {critic_train_batch_size_per_gpu} should be divisible by critic_mini_batch_size_per_gpu (critic_mini_batch_size * n_samples_per_prompt // critic_dp_size) {critic_mini_batch_size_per_gpu}"
 
+def validate_megatron_cfg(cfg: DictConfig):
+    assert cfg.generator.weight_sync_backend == "nccl", "only nccl is supported for megatron weight sync"
+    assert cfg.generator.backend == "vllm", "only vllm is supported for with megatron"
+    assert cfg.trainer.placement.colocate_all, "only colocate_all=True is supported for megatron training"
+    assert cfg.trainer.critic.model.path is None, "only GRPO training is currently supported for megatron"
+
+    assert cfg.trainer.policy.sequence_parallel_size == 1, "sequence parallel should be configured using the megatron_config.policy.context_parallel_size for megatron!"
+    assert cfg.trainer.ref.sequence_parallel_size == 1, "sequence parallel should be configured using the megatron_config.ref.context_parallel_size for megatron!"
 
 def validate_cfg(cfg: DictConfig):
     from .ppo_utils import AdvantageEstimatorRegistry, PolicyLossRegistry
@@ -268,6 +276,9 @@ def validate_cfg(cfg: DictConfig):
         if not cfg.generator.run_engines_locally:
             raise NotImplementedError("Remote inference mode doesn't support `sampling_params.logprobs`")
 
+    if cfg.trainer.strategy == "megatron":
+        validate_megatron_cfg(cfg)
+
 
 @ray.remote
 def get_all_env_variables():
@@ -363,6 +374,9 @@ def prepare_runtime_environment(cfg: DictConfig) -> dict[str, str]:
         logger.info("Peer access is not supported on this node type, disabling NCCL P2P and SHM")
         env_vars["NCCL_P2P_DISABLE"] = "1"
         env_vars["NCCL_SHM_DISABLE"] = "1"
+
+    if cfg.trainer.strategy == "megatron":
+        env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
 
     # TODO: this can be removed if we standardize on env files.
     # But it's helpful for a quickstart

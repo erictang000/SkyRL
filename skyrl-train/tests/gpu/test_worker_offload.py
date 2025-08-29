@@ -9,10 +9,10 @@ from omegaconf import DictConfig
 import os
 import shutil
 
-from tests.gpu.utils import init_worker_with_type, make_dummy_experience, make_dummy_tensorbatch
-from skyrl_train.utils.utils import print_mem
+from tests.gpu.utils import init_worker_with_type, make_dummy_experience, make_dummy_tensorbatch, get_rank_0_memory
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.training_batch import TrainingOutputBatch
+from skyrl_train.utils.utils import validate_cfg
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
@@ -31,12 +31,6 @@ def get_test_actor_config() -> DictConfig:
 @pytest.fixture
 def cfg() -> DictConfig:
     return get_test_actor_config()
-
-
-def get_rank_0_memory(actor_group, message: str):
-    mem = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))[0]
-    print_mem(message, mem)
-    return mem["allocated"]
 
 
 @pytest.mark.asyncio

@@ -461,7 +461,6 @@ class PPORayActorGroup:
         logger.info("Initializing process group for RayActorGroup")
         ray.get([actor.init_worker_process_group.remote() for actor in self._actor_handlers])
         logger.info("Initialized process group for RayActorGroup")
-        #  TODO defer mesh rank initialization to after init_model is called to allow for backend agnostic distributed setup
         self.actor_infos = [ActorInfo(actor, ray.get(actor.get_mesh_rank.remote())) for actor in self._actor_handlers]
         logger.info(f"Mesh Ranks: {[actor_info.rank for actor_info in self.actor_infos]}")
 
@@ -643,6 +642,8 @@ class PolicyWorkerBase(Worker):
                         "policy_lr": status["policy_lr"],
                         "ent": status["policy_entropy"],
                     }
+                    if "raw_grad_norm" in status:
+                        short_status["grad_norm"] = status["raw_grad_norm"]
                     if "reward" in status:
                         short_status["rm"] = status["reward"]
 
@@ -807,7 +808,8 @@ class PolicyWorkerBase(Worker):
         sequences = micro_batch["sequences"]
         response_length = micro_batch.metadata["response_length"]
         attention_mask = micro_batch["attention_mask"]
-        with torch.no_grad(), torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+        
+        with torch.no_grad():
             policy_logprob = self.model(
                 sequences,
                 response_length,
