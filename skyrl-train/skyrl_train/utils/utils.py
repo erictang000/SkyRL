@@ -115,17 +115,28 @@ def validate_batch_sizes(cfg: DictConfig):
 
 
 def validate_megatron_cfg(cfg: DictConfig):
+    # not yet supported + tested features
     assert cfg.generator.weight_sync_backend == "nccl", "only nccl is supported for megatron weight sync"
     assert cfg.generator.backend == "vllm", "only vllm is supported for with megatron"
     assert cfg.trainer.placement.colocate_all, "only colocate_all=True is supported for megatron training"
     assert cfg.trainer.critic.model.path is None, "only GRPO training is currently supported for megatron"
 
-    assert (
-        cfg.trainer.policy.sequence_parallel_size == 1
-    ), "sequence parallel should be configured using the megatron_config.policy.context_parallel_size for megatron!"
-    assert (
-        cfg.trainer.ref.sequence_parallel_size == 1
-    ), "sequence parallel should be configured using the megatron_config.ref.context_parallel_size for megatron!"
+    worker_configs = [(cfg.trainer.policy, "policy"), (cfg.trainer.ref, "ref")]
+    for config, worker_type in worker_configs:
+        # context, expert, and export tensor parallel are not yet supported for megatron
+        assert (
+            config.megatron_config.context_parallel_size == 1
+        ), f"found {worker_type}.context_parallel_size > 1, context parallel is not yet supported for megatron"
+        assert (
+            config.megatron_config.expert_model_parallel_size == 1
+        ), f"found {worker_type}.expert_model_parallel_size > 1, expert model parallel is not yet supported for megatron"
+        assert (
+            config.megatron_config.expert_tensor_parallel_size == 1
+        ), f"found {worker_type}.expert_tensor_parallel_size > 1, expert tensor parallel is not yet supported for megatron"
+        # check that sequence parallel is not configured outside of megatron
+        assert (
+            config.sequence_parallel_size == 1
+        ), f"found {worker_type}.sequence_parallel_size={config.sequence_parallel_size}, ulysses style sequence parallel is not supported for megatron"
 
 
 def validate_cfg(cfg: DictConfig):
@@ -382,6 +393,8 @@ def prepare_runtime_environment(cfg: DictConfig) -> dict[str, str]:
         env_vars["NCCL_SHM_DISABLE"] = "1"
 
     if cfg.trainer.strategy == "megatron":
+        # useful when tp > 1 (and thus megatron sequence_parallel is enabled)
+        # see: https://github.com/NVIDIA/Megatron-LM/issues/533#issuecomment-1760193239
         env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
 
     # TODO: this can be removed if we standardize on env files.

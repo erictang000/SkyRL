@@ -3,17 +3,17 @@ from functools import partial
 import torch
 import torch.nn as nn
 
+from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.distributed import finalize_model_grads
+import megatron.core.parallel_state as mpu
+from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs
+from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean
 from skyrl_train.distributed.megatron.megatron_utils import (
     get_model_config,
     make_batch_generator,
     remove_left_padding,
     recover_left_padding,
 )
-from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.core.distributed import finalize_model_grads
-import megatron.core.parallel_state as mpu
-from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs
-from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean
 
 
 class MegatronPPOPolicy:
@@ -27,7 +27,6 @@ class MegatronPPOPolicy:
         policy_loss_fn: Optional[Callable] = None,
     ):
         self.cfg = config
-        self._validate_config(self.cfg.trainer.policy)
         self.hf_config = hf_config
         self.tf_config = tf_config
         self.actor_module = actor_module
@@ -65,16 +64,6 @@ class MegatronPPOPolicy:
         # perform one real finalize (TP/DP reductions, scaling, etc.)
         real_finalize(self.actor_module)
 
-    def _validate_config(self, config) -> None:
-        """Validate config options not implemented for Megatron backend"""
-        assert config.get("sequence_parallel_size", 1) == 1
-        if config.get("shuffle", False):
-            assert config.data_loader_seed is not None, "If shuffle dataloader, seed must be manually set"
-        if config.get("megatron_config", {}).get("tensor_model_parallel_size", 1) == 1:
-            print("[Warning] Because actor tp size == 1, set sp to False")
-            config.megatron_config.sequence_parallel = False
-        self.config = config
-
     def train(self):
         [module.train() for module in self.actor_module]
 
@@ -105,6 +94,10 @@ class MegatronPPOPolicy:
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
+            # temperature normalization
+            if temperature != 1.0:
+                logits.div_(temperature)
+
             token_logprobs = from_parallel_logits_to_logprobs(
                 logits,
                 sequences,
@@ -130,7 +123,9 @@ class MegatronPPOPolicy:
                 sequences,
                 attention_mask,
                 position_ids,
-                self.config.megatron_config.sequence_parallel,
+                # NOTE (erictang000) - this is automatically set to True if tp_size > 1
+                # unrelated to ulysses sequence parallel/context parallel
+                self.tf_config.sequence_parallel,
                 pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
             )
 
@@ -213,6 +208,10 @@ class MegatronPPOPolicy:
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
+            # temperature normalization
+            if temperature != 1.0:
+                logits.div_(temperature)
+
             token_logprobs = from_parallel_logits_to_logprobs(
                 logits,
                 sequences,
@@ -273,7 +272,7 @@ class MegatronPPOPolicy:
                 sequences,
                 attention_mask,
                 position_ids,
-                self.config.megatron_config.sequence_parallel,
+                self.tf_config.sequence_parallel,
                 pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
             )
 

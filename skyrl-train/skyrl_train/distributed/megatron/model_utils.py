@@ -15,7 +15,6 @@
 from typing import Any, Optional
 
 import torch
-from torch.distributed.tensor import DTensor, distribute_tensor
 
 
 @torch.no_grad()
@@ -240,91 +239,6 @@ class ChunkedDistributedLogprob(torch.autograd.Function):
 
         # if you add an argument to the forward method, then you must add a corresponding None here
         return grad_input, None, None, None, None, None, None
-
-
-def dtensor_from_parallel_logits_to_logprobs(
-    vocab_parallel_logits: torch.Tensor,
-    target: DTensor | torch.Tensor,
-    vocab_start_index: int,
-    vocab_end_index: int,
-    tp_group: torch.distributed.ProcessGroup,
-    inference_only: bool = False,
-    seq_index: Optional[torch.Tensor] = None,
-    chunk_size: Optional[int] = None,
-) -> torch.Tensor:
-    """Get log probabilities from TP+CP sharded vocab logits.
-
-    Args:
-        vocab_parallel_logits (orch.Tensor): Logits distributed across tensor parallel workers,
-            with shape [batch_size, seq_len, vocab_size/tp_size].
-        target (DTensor): Target token indices with shape [batch_size, seq_len].
-            NOTE: Must be the unmodified targets as this function will shift them internally.
-        vocab_start_index (int): Starting vocabulary index for this worker's partition.
-        vocab_end_index (int): Ending vocabulary index for this worker's partition.
-        tp_group (torch.distributed.ProcessGroup): Process group for distributed communication.
-        inference_only (bool, optional): If True, tensors won't be saved for backward pass. Defaults to False.
-        seq_index (Optional[torch.Tensor]): Sequence index tensor with shape [seq_len].
-            It is only provided for cp sharded logits. It represents how tensor is sharded across the sequence dimension.
-        chunk_size (Optional[int]): Sequence dimension chunk size for computing the log probabilities.
-
-    Returns:
-        torch.Tensor: Log probabilities tensor with shape [batch_size, seq_len-1].
-            The sequence dimension is reduced by 1 due to the target shifting.
-    """
-    cp_size = 1
-
-    if (
-        isinstance(target, DTensor)
-        and target.device_mesh.mesh_dim_names is not None
-        and "cp" in target.device_mesh.mesh_dim_names
-    ):
-        cp_dim_index = target.device_mesh.mesh_dim_names.index("cp")
-        cp_size = target.device_mesh.shape[cp_dim_index]
-
-    if cp_size > 1:
-        assert seq_index is not None, "seq_index must be provided for cp sharded logits"
-        target_shape = torch.Size(target.shape)
-        cp_mesh = target.device_mesh
-        cp_placements = target.placements
-        _, sorted_indices = torch.sort(seq_index)
-        # Recover the original order of the target
-        target = target.full_tensor()[:, sorted_indices]
-        target = target.roll(shifts=-1, dims=-1)[:, seq_index]
-
-        # Reshard
-        target = distribute_tensor(target, cp_mesh, cp_placements)
-        target = target.to_local()
-    else:
-        target = target.roll(shifts=-1, dims=-1)
-
-    if chunk_size is not None:
-        logprobs: torch.Tensor = ChunkedDistributedLogprob.apply(  # type: ignore
-            vocab_parallel_logits,
-            target,
-            vocab_start_index,
-            vocab_end_index,
-            chunk_size,
-            tp_group,
-            inference_only,
-        ).contiguous()
-    else:
-        logprobs: torch.Tensor = DistributedLogprob.apply(  # type: ignore
-            vocab_parallel_logits,
-            target,
-            vocab_start_index,
-            vocab_end_index,
-            tp_group,
-            inference_only,
-        ).contiguous()
-
-    if cp_size > 1:
-        # logprobs is sharded on the sequence dimension.
-        # Get full sequence tensor, vocab dim has been reduced already.
-        logprobs_dtensor = DTensor.from_local(logprobs, cp_mesh, cp_placements)
-        logprobs = logprobs_dtensor.full_tensor()[:, sorted_indices]
-        assert logprobs.shape == target_shape
-
-    return logprobs[:, :-1]
 
 
 def from_parallel_logits_to_logprobs(
@@ -622,52 +536,3 @@ class AllGatherCPTensor(torch.autograd.Function):
         grad_input = grad_input.view(*grad_input.shape[0:seq_dim], -1, *grad_input.shape[(seq_dim + 2) :])
 
         return grad_input, None, None  # , None
-
-
-def get_logprobs_from_vocab_parallel_logits(
-    vocab_parallel_logits: DTensor,
-    input_ids: torch.Tensor | DTensor,
-    seq_index: Optional[torch.Tensor] = None,
-    chunk_size: Optional[int] = None,
-):
-    """Computes log probabilities from vocabulary-parallel logits.
-
-    This function takes logits that are sharded across the vocabulary dimension (tensor parallel)
-    and computes the log probabilities for the given input IDs.
-
-    Args:
-        vocab_parallel_logits (DTensor): Logits distributed across tensor parallel workers,
-            with shape [batch_size, seq_len, vocab_size/tp_size].
-        input_ids (torch.Tensor | DTensor): Input token IDs for which to compute log probabilities,
-            with shape [batch_size, seq_len].
-        seq_index (Optional[torch.Tensor]): Sequence index for the input IDs,
-            with shape [sequence_length].
-        chunk_size (Optional[int]): Sequence dimension chunk size for computing log probabilities.
-
-    Returns:
-        torch.Tensor: Log probabilities for the given input IDs.
-    """
-    device_mesh = vocab_parallel_logits.device_mesh
-    if seq_index is not None:
-        assert (
-            device_mesh.mesh_dim_names is not None and "cp" in device_mesh.mesh_dim_names
-        ), "seq_index must be provided for cp sharded logits"
-
-    tp_size = 1
-
-    tp_group = device_mesh.get_group("tp")
-    tp_rank = tp_group.rank()
-    tp_size = tp_group.size()
-
-    vocab_interval_per_rank = vocab_parallel_logits.shape[-1] // tp_size
-
-    return dtensor_from_parallel_logits_to_logprobs(
-        vocab_parallel_logits.to_local(),
-        input_ids,
-        vocab_interval_per_rank * tp_rank,
-        (tp_rank + 1) * vocab_interval_per_rank,
-        tp_group,
-        inference_only=not torch.is_grad_enabled(),
-        seq_index=seq_index,
-        chunk_size=chunk_size,
-    )

@@ -1,34 +1,33 @@
-from ast import List
 import torch
 import torch.nn as nn
 import torch.distributed
 import ray
+from transformers import AutoTokenizer, AutoConfig
+import asyncio
+from typing import List, Dict
+
+from mbridge import AutoBridge
+import megatron.core.parallel_state as mpu
 from megatron.core.optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
-import asyncio
 
 from skyrl_train.distributed.megatron.optimizer import (
     init_megatron_optim_config,
     get_megatron_optimizer,
     get_megatron_optimizer_param_scheduler,
 )
+from skyrl_train.distributed.dispatch import MeshRank
+from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
 from skyrl_train.utils.utils import update_model_config, str_to_torch_dtype, get_physical_gpu_id
-from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 from skyrl_train.workers.worker import (
     PolicyWorkerBase,
     RefWorkerBase,
     RewardWorkerBase,
     CriticWorkerBase,
 )
-from mbridge import AutoBridge
-
-from transformers import AutoTokenizer, AutoConfig
-import megatron.core.parallel_state as mpu
-from skyrl_train.distributed.dispatch import MeshRank
 from skyrl_train.workers.megatron.megatron_policy import MegatronPPOPolicy
 from skyrl_train.dataset.replay_buffer import Experience
-from typing import Dict
 
 
 class MegatronWorker:
@@ -115,7 +114,11 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         )
 
         # load weights
+        # NOTE (erictang000): there is currently a bug in mbridge that causes the model to not load correctly if tie_word_embeddings is set
+        # see: https://github.com/NVIDIA/Megatron-LM/issues/533#issuecomment-1760193239
+        # this is the case for the Qwen2.5-1.5B and 3B models, but not the 7B model
         self.bridge.load_weights(self.actor_module, model_path)
+
         if self._rank == 0:
             print_model_size(self.actor_module[0])
 

@@ -27,14 +27,6 @@ class MeshRank:
     dp_size: int
     pp_size: int
 
-    def is_dispatch_dp_rank(self) -> bool:
-        """
-        Check if this rank should be dispatched data (or if it will be handled by the worker)
-
-        This is any rank with PP=0
-        """
-        return self.pp == 0
-
     def is_collection_dp_rank(self) -> bool:
         """Check if this rank is a DP rank to collect from
 

@@ -12,14 +12,14 @@ LOGGER="wandb"  # change to "console" to print to stdout
 
 INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 
-MEGATRON_TP=2
-MEGATRON_PP=2
+MEGATRON_TP=4
+MEGATRON_PP=1
 
 uv run --isolated --extra $INFERENCE_BACKEND --extra mcore -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/validation.parquet']" \
   trainer.algorithm.advantage_estimator="grpo" \
-  trainer.policy.model.path="Qwen/Qwen3-0.6B" \
+  trainer.policy.model.path="Qwen/Qwen2.5-7B-Instruct" \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
@@ -53,7 +53,7 @@ uv run --isolated --extra $INFERENCE_BACKEND --extra mcore -m skyrl_train.entryp
   generator.n_samples_per_prompt=5 \
   generator.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="gsm8k_megatron" \
+  trainer.project_name="test" \
   trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_fixed_grads" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \

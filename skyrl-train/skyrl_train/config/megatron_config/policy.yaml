@@ -4,11 +4,6 @@ pipeline_model_parallel_size: 1
 context_parallel_size: 1
 expert_model_parallel_size: 1
 expert_tensor_parallel_size: 1
-# note - this is a tensor parallel optimization in megatron - the equivalent for ulysses
-# sequence parallel is context parallel in megatron
-sequence_parallel: true 
-
-use_distributed_optimizer: True
 
 # Allow to override Distributed Data Parallel (DDP) config
 # TODO (erictang000): understand exactly what is going on here

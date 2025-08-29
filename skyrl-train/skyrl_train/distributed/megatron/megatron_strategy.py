@@ -33,9 +33,6 @@ class MegatronStrategy(DistributedStrategy):
         megatron_config,
         optimizer_config=None,
         seed: int = 42,
-        micro_train_batch_size_per_gpu=1,
-        train_batch_size=1,
-        num_training_steps: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.megatron_config = megatron_config
@@ -71,8 +68,6 @@ class MegatronStrategy(DistributedStrategy):
     def offload_to_cpu(self, model, optimizer, pin_memory=True, non_blocking=True):
         """
         Offload model weights and optimizer to CPU memory.
-
-        For all cases except fsdp2 with cpu_offload=True, we need to manually offload weights/optimizer to cpu.
         """
         offload_megatron_model_to_cpu(model)
         if optimizer is not None:
@@ -108,46 +103,6 @@ class MegatronStrategy(DistributedStrategy):
         self, *models_or_model_optim_pairs: ModelOrModelOptimPair
     ) -> Union[List[ModelOrModelOptimPair], ModelOrModelOptimPair]:
         raise NotImplementedError()
-
-    def all_reduce(self, data, op="mean"):
-        """Perform all_reduce across all processes"""
-        assert op in ("mean", "max", "sum")
-        if isinstance(data, dict):
-            ret = {}
-            for k, v in data.items():
-                ret[k] = self.all_reduce(v, op)
-            return ret
-        else:
-            is_tensor = True
-            if not isinstance(data, torch.Tensor):
-                data = torch.Tensor([data])
-                is_tensor = False
-            is_cpu_tensor = data.device.type == "cpu"
-
-            if is_cpu_tensor:
-                data = data.to(torch.cuda.current_device())
-            if op == "mean":
-                data /= self.world_size
-            dist.all_reduce(data, op=dist.ReduceOp.MAX if op == "max" else dist.ReduceOp.SUM)
-            if is_cpu_tensor:
-                data = data.cpu()
-            return data.item() if not is_tensor else data
-
-    def all_gather(self, data):
-        """Perform all_gather across all processes"""
-        if isinstance(data, dict):
-            ret = {}
-            for k, v in data.items():
-                ret[k] = self.all_gather(v)
-            return ret
-        else:
-            if not isinstance(data, torch.Tensor):
-                data = torch.Tensor([data])
-            is_cpu_tensor = data.device.type == "cpu"
-
-            ret = [torch.zeros_like(data).to(torch.cuda.current_device()) for _ in range(self.world_size)]
-            dist.all_gather(ret, data.to(torch.cuda.current_device()))
-            return torch.cat(ret).cpu() if is_cpu_tensor else torch.cat(ret)
 
     def save_ckpt(
         self,
