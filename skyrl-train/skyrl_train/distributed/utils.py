@@ -34,6 +34,7 @@ from torch.optim import Optimizer
 ModelOptimPair = Tuple[nn.Module, Optimizer]
 ModelOrModelOptimPair = Union[nn.Module, ModelOptimPair]
 
+
 def get_free_port():
     with socket.socket() as sock:
         sock.bind(("", 0))

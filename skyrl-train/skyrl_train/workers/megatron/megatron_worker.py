@@ -165,7 +165,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             temperature=self.cfg.generator.sampling_params.temperature,
             compute_entropy=True,
         )
-        
+
         grad_norm = None
         if (local_step + 1) % accumulation_steps == 0:
             grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
@@ -239,21 +239,22 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                             "names": [name],
                             "dtypes": [self.cfg.generator.model_dtype],
                             "shapes": [shape],
-                            "extras": [{
-                                "ipc_handles": ipc_handles,
-                            }],
+                            "extras": [
+                                {
+                                    "ipc_handles": ipc_handles,
+                                }
+                            ],
                         }
                     )
                 )
 
             torch.distributed.barrier()
             torch.cuda.synchronize()
-        
+
         if cache_reset_task is not None:
             await cache_reset_task
         torch.cuda.empty_cache()
         torch.distributed.barrier()
-
 
     def get_weight_statistics(self):
         """Compute lightweight statistics for model weights"""
@@ -262,6 +263,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
     def _set_pad_token_id(self, pad_token_id):
         # this already gets set in the init_model method
         pass
+
 
 class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
     def __init__(self, **kwargs):
@@ -315,13 +317,10 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         self.bridge.load_weights(self.actor_module, model_path)
         if self._rank == 0:
             print_model_size(self.actor_module[0])
-            
+
         # create worker model
         self.model = MegatronPPOPolicy(
-            config=self.cfg,
-            hf_config=self.hf_config,
-            tf_config=self.tf_config,
-            actor_module=self.actor_module
+            config=self.cfg, hf_config=self.hf_config, tf_config=self.tf_config, actor_module=self.actor_module
         )
 
     def get_weight_statistics(self):
@@ -332,13 +331,16 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         # this already gets set in the init_model method
         pass
 
+
 class MegatronRewardWorkerBase(MegatronWorker, RewardWorkerBase):
     def __init__(self, **kwargs):
         raise NotImplementedError()
 
+
 class MegatronCriticWorkerBase(MegatronWorker, CriticWorkerBase):
     def __init__(self, **kwargs):
         raise NotImplementedError()
+
 
 PolicyWorker = ray.remote(num_gpus=1)(MegatronPolicyWorkerBase)
 RefWorker = ray.remote(num_gpus=1)(MegatronRefWorkerBase)

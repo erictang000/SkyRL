@@ -1,5 +1,4 @@
 from typing import Optional, Union, Callable, List
-from omegaconf import OmegaConf
 from functools import partial
 import torch
 import torch.nn as nn
@@ -12,7 +11,6 @@ from skyrl_train.distributed.megatron.megatron_utils import (
 )
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.distributed import finalize_model_grads
-from megatron.core.tensor_parallel import vocab_parallel_cross_entropy
 import megatron.core.parallel_state as mpu
 from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs
 from skyrl_train.utils.torch_utils import chunked_entropy_from_logits
@@ -211,7 +209,6 @@ class MegatronPPOPolicy:
                 inference_only=False,
                 chunk_size=None,
             )
-            
 
             action_log_probs = token_logprobs[:, -num_actions:]
 

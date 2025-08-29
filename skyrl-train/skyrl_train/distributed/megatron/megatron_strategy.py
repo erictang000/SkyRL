@@ -1,7 +1,6 @@
 import os
 import random
 from datetime import timedelta
-from tkinter import N
 from typing import List, Union, Optional
 from jaxtyping import Float
 
@@ -16,7 +15,12 @@ from skyrl_train.models import Actor
 from skyrl_train.distributed.utils import ModelOrModelOptimPair
 
 import megatron.core.parallel_state as mpu
-from skyrl_train.distributed.megatron.megatron_utils import offload_megatron_model_to_cpu, load_megatron_model_to_gpu, offload_megatron_optimizer, load_megatron_optimizer
+from skyrl_train.distributed.megatron.megatron_utils import (
+    offload_megatron_model_to_cpu,
+    load_megatron_model_to_gpu,
+    offload_megatron_optimizer,
+    load_megatron_optimizer,
+)
 
 
 class MegatronStrategy(DistributedStrategy):

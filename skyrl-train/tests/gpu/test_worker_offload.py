@@ -12,7 +12,6 @@ import shutil
 from tests.gpu.utils import init_worker_with_type, make_dummy_experience, make_dummy_tensorbatch, get_rank_0_memory
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.training_batch import TrainingOutputBatch
-from skyrl_train.utils.utils import validate_cfg
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 

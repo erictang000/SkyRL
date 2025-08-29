@@ -7,7 +7,7 @@ set -x
 # bash examples/training_backends/megatron/run_megatron.sh
 
 DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=1
+NUM_GPUS=4
 LOGGER="wandb"  # change to "console" to print to stdout
 
 INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
@@ -51,7 +51,7 @@ uv run --isolated --extra $INFERENCE_BACKEND --extra mcore -m skyrl_train.entryp
   generator.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_1_gpu" \
+  trainer.run_name="gsm8k_megatron_4_gpus" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@

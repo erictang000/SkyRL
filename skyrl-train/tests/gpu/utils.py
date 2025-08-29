@@ -45,6 +45,7 @@ def get_rank_0_memory(actor_group, message: str):
     print_mem(message, mem)
     return mem["allocated"]
 
+
 def make_dummy_tensorbatch(seq_len=10, num_actions=4) -> TensorBatch:
     B, T = 2, seq_len
     data = TensorBatch(

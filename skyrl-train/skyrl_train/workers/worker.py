@@ -808,7 +808,7 @@ class PolicyWorkerBase(Worker):
         sequences = micro_batch["sequences"]
         response_length = micro_batch.metadata["response_length"]
         attention_mask = micro_batch["attention_mask"]
-        
+
         with torch.no_grad():
             policy_logprob = self.model(
                 sequences,

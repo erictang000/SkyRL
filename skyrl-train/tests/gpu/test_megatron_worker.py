@@ -12,7 +12,15 @@ import torch
 import asyncio
 from transformers import AutoModelForCausalLM
 
-from tests.gpu.utils import init_worker_with_type, ray_init_for_tests, get_rank_0_memory, make_dummy_experience, init_inference_engines, run_inference, get_test_prompts
+from tests.gpu.utils import (
+    init_worker_with_type,
+    ray_init_for_tests,
+    get_rank_0_memory,
+    make_dummy_experience,
+    init_inference_engines,
+    run_inference,
+    get_test_prompts,
+)
 
 from skyrl_train.workers.worker_utils import BatchIterator
 from skyrl_train.utils.utils import print_mem, validate_cfg
@@ -256,6 +264,7 @@ def test_megatron_policy_weight_sync(cfg):
         AdvantageEstimatorRegistry.reset()
         PolicyLossRegistry.reset()
         ray.shutdown()
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

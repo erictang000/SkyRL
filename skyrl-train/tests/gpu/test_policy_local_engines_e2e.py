@@ -34,6 +34,7 @@ def get_test_actor_config() -> DictConfig:
 
         return cfg
 
+
 @pytest.mark.parametrize(
     ("colocate_all", "weight_sync_backend", "strategy", "backend", "tp_size"),
     [
