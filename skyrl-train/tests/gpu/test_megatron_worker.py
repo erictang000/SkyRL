@@ -318,6 +318,7 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
             assert isinstance(v, (int, float)), f"{k} should be an int or float"
             assert abs(v - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("worker_type"),
