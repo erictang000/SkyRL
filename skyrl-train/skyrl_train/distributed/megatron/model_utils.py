@@ -1,4 +1,8 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Utils ported from NeMo-Aligner by way of NeMo-RL
+# https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/distributed/model_utils.py
+# The original copyright is reproduced below:
+
+#  Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -540,6 +544,7 @@ class AllGatherCPTensor(torch.autograd.Function):
         return grad_input, None, None  # , None
 
 
+# Below ported from https://github.com/volcengine/verl/blob/main/verl/utils/megatron/tensor_parallel.py#L109
 class _VocabParallelEntropy(torch.autograd.Function):
     @staticmethod
     def forward(ctx, vocab_parallel_logits: torch.Tensor) -> torch.Tensor:

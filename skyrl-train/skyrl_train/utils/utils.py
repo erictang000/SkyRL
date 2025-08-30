@@ -120,6 +120,7 @@ def validate_megatron_cfg(cfg: DictConfig):
     assert cfg.generator.backend == "vllm", "only vllm is supported for with megatron"
     assert cfg.trainer.placement.colocate_all, "only colocate_all=True is supported for megatron training"
     assert cfg.trainer.critic.model.path is None, "only GRPO training is currently supported for megatron"
+    assert not cfg.trainer.use_sample_packing, "sample packing is not yet supported for megatron"
 
     worker_configs = [(cfg.trainer.policy, "policy"), (cfg.trainer.ref, "ref")]
     for config, worker_type in worker_configs:

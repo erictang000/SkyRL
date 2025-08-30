@@ -19,7 +19,7 @@ uv run --isolated --extra $INFERENCE_BACKEND --extra mcore -m skyrl_train.entryp
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/validation.parquet']" \
   trainer.algorithm.advantage_estimator="grpo" \
-  trainer.policy.model.path="Qwen/Qwen2.5-7B-Instruct" \
+  trainer.policy.model.path="Qwen/Qwen3-4B-Instruct-2507" \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
@@ -30,6 +30,7 @@ uv run --isolated --extra $INFERENCE_BACKEND --extra mcore -m skyrl_train.entryp
   megatron_config.policy.pipeline_model_parallel_size=$MEGATRON_PP \
   megatron_config.ref.tensor_model_parallel_size=$MEGATRON_TP \
   megatron_config.ref.pipeline_model_parallel_size=$MEGATRON_PP \
+  trainer.use_sample_packing=false \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
   trainer.eval_before_train=false \
