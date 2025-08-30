@@ -5,16 +5,13 @@ context_parallel_size: 1
 expert_model_parallel_size: 1
 expert_tensor_parallel_size: 1
 
-# Allow to override Distributed Data Parallel (DDP) config
-override_ddp_config: {}
 
 seed: 42
 
-override_model_config: {}
+model_config_kwargs: {}
 
 # additional transformer config like: num_layers_in_first(/last)_pipeline_stage
-# oc.select: default val for ref.megatron.override_transformer_config
-override_transformer_config:
+transformer_config_kwargs:
   # Recompute configuration, same as in megatron.training.arguments
   # default use minimal performance-interference recompute methods
   # Recompute granualarity, choices: ["full", "selective"]

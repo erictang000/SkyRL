@@ -31,7 +31,7 @@ from skyrl_train.dataset.replay_buffer import Experience
 
 
 class MegatronWorker:
-    def init_configs(self, model_path, override_model_config, override_transformer_config):
+    def init_configs(self, model_path, model_config_kwargs, transformer_config_kwargs):
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         hf_config = AutoConfig.from_pretrained(model_path)
 
@@ -40,11 +40,11 @@ class MegatronWorker:
             "eos_token_id": tokenizer.eos_token_id,
             "pad_token_id": tokenizer.pad_token_id,
         }
-        override_config_kwargs.update(override_model_config.get("model_config", {}))
+        override_config_kwargs.update(model_config_kwargs.get("model_config", {}))
         update_model_config(hf_config, override_config_kwargs=override_config_kwargs)
 
         bridge = AutoBridge.from_config(hf_config)
-        bridge.set_extra_args(**override_transformer_config)
+        bridge.set_extra_args(**transformer_config_kwargs)
         tf_config = bridge.config
         self.bridge = bridge
 
@@ -52,13 +52,13 @@ class MegatronWorker:
         self.tf_config = tf_config
         self.tokenizer = tokenizer
 
-    def make_megatron_module(self, override_model_config, wrap_with_ddp=True):
+    def make_megatron_module(self, model_config_kwargs, wrap_with_ddp=True):
         model = self.bridge.get_model(
             post_model_creation_callbacks=[],  # don't rely on these since we might switch to Megatron-Bridge
             wrap_with_ddp=wrap_with_ddp,
-            ddp_config=self.cfg.trainer.policy.megatron_config.override_ddp_config,
+            ddp_config=self.cfg.trainer.policy.megatron_config.ddp_config,
         )
-        if override_model_config.get("moe_config", {}).get("freeze_moe_router", False):
+        if model_config_kwargs.get("moe_config", {}).get("freeze_moe_router", False):
             freeze_moe_router(model)
         return model
 
@@ -104,13 +104,13 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # get hf_config and tf_config
         self.init_configs(
             model_path,
-            self.cfg.trainer.policy.megatron_config.override_model_config,
-            self.cfg.trainer.policy.megatron_config.override_transformer_config,
+            self.cfg.trainer.policy.megatron_config.model_config_kwargs,
+            self.cfg.trainer.policy.megatron_config.transformer_config_kwargs,
         )
 
         # wrap with DDP for training
         self.actor_module = self.make_megatron_module(
-            self.cfg.trainer.policy.megatron_config.override_model_config, wrap_with_ddp=True
+            self.cfg.trainer.policy.megatron_config.model_config_kwargs, wrap_with_ddp=True
         )
 
         # load weights
@@ -309,13 +309,13 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         # get hf_config and tf_config
         self.init_configs(
             model_path,
-            self.cfg.trainer.ref.megatron_config.override_model_config,
-            self.cfg.trainer.ref.megatron_config.override_transformer_config,
+            self.cfg.trainer.ref.megatron_config.model_config_kwargs,
+            self.cfg.trainer.ref.megatron_config.transformer_config_kwargs,
         )
 
         # wrap with DDP for training
         self.actor_module = self.make_megatron_module(
-            self.cfg.trainer.ref.megatron_config.override_model_config, wrap_with_ddp=False
+            self.cfg.trainer.ref.megatron_config.model_config_kwargs, wrap_with_ddp=False
         )
 
         # load weights

@@ -28,6 +28,10 @@ from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_disp
 from skyrl_train.utils.torch_utils import logprobs_from_logits
 from skyrl_train.training_batch import TrainingInputBatch
 
+
+# NOTE (erictang000): in the normal training flow, the model weights get downloaded in the HF cache by the inference engine
+# we should figure out a way to download the model weights in the test environment (for now trying to do this by
+# ordering the tests so the inference engine is initialized first). Also will be an issue for disaggregated training
 MODEL_NAME = "Qwen/Qwen3-0.6B"
 
 
@@ -101,6 +105,50 @@ def cfg() -> DictConfig:
     return get_test_actor_config()
 
 
+def test_megatron_policy_weight_sync(cfg):
+    """
+    Test that we can sync weights between policy and inference for megatron then run inference
+    """
+    try:
+        cfg = get_test_actor_config()
+        cfg.trainer.placement.colocate_all = True
+        cfg.generator.weight_sync_backend = "nccl"
+        cfg.trainer.strategy = "megatron"
+        cfg.generator.backend = "vllm"
+        cfg.generator.inference_engine_tensor_parallel_size = 4
+
+        # set tp and pp to 2 to check that gather for weight sync works correctly
+        cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 2
+        cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 2
+
+        # If colocate is True, this will load the engine, sleep, and wake up the engine
+        client, pg = init_inference_engines(
+            model=MODEL_NAME,
+            cfg=cfg,
+            use_local=True,
+            async_engine=cfg.generator.async_engine,
+            tp_size=cfg.generator.inference_engine_tensor_parallel_size,
+            colocate_all=cfg.trainer.placement.colocate_all,
+            backend="vllm",
+        )
+
+        policy = init_worker_with_type(
+            "policy",
+            shared_pg=pg,
+            colocate_all=cfg.trainer.placement.colocate_all,
+            num_gpus_per_node=cfg.generator.inference_engine_tensor_parallel_size,
+            cfg=cfg,
+        )
+        ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
+        asyncio.run(client.reset_prefix_cache())
+        ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
+        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME)))
+
+        print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
+    finally:
+        ray.shutdown()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("worker_type", "tp", "pp", "gpus_per_node"),
@@ -110,6 +158,7 @@ def cfg() -> DictConfig:
         ("policy", 1, 2, 2),
         ("policy", 2, 2, 4),
     ],
+    ids=["tp2_pp1_policy", "tp2_pp1_ref", "tp1_pp2_policy", "tp2_pp2_policy"],
 )
 async def test_megatron_forward(cfg, ray_init_fixture, worker_type, tp, pp, gpus_per_node):
     """
@@ -268,51 +317,6 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
                 continue
             assert isinstance(v, (int, float)), f"{k} should be an int or float"
             assert abs(v - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
-
-
-def test_megatron_policy_weight_sync(cfg):
-    """
-    Test that we can sync weights between policy and inference for megatron then run inference
-    """
-    try:
-        cfg = get_test_actor_config()
-        cfg.trainer.placement.colocate_all = True
-        cfg.generator.weight_sync_backend = "nccl"
-        cfg.trainer.strategy = "megatron"
-        cfg.generator.backend = "vllm"
-        cfg.generator.inference_engine_tensor_parallel_size = 4
-
-        # set tp and pp to 2 to check that gather for weight sync works correctly
-        cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 2
-        cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 2
-
-        # If colocate is True, this will load the engine, sleep, and wake up the engine
-        client, pg = init_inference_engines(
-            model=MODEL_NAME,
-            cfg=cfg,
-            use_local=True,
-            async_engine=cfg.generator.async_engine,
-            tp_size=cfg.generator.inference_engine_tensor_parallel_size,
-            colocate_all=cfg.trainer.placement.colocate_all,
-            backend="vllm",
-        )
-
-        policy = init_worker_with_type(
-            "policy",
-            shared_pg=pg,
-            colocate_all=cfg.trainer.placement.colocate_all,
-            num_gpus_per_node=cfg.generator.inference_engine_tensor_parallel_size,
-            cfg=cfg,
-        )
-        ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
-        asyncio.run(client.reset_prefix_cache())
-        ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
-        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME)))
-
-        print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
-    finally:
-        ray.shutdown()
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
