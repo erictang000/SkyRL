@@ -78,7 +78,7 @@ class MegatronPPOPolicy:
         sequences: torch.LongTensor,
         num_actions: Union[int, list[int]],
         attention_mask: Optional[torch.Tensor] = None,
-        temperature: float = 1.0,  # TODO: should we divide by temperature here?
+        temperature: float = 1.0,
         **kwargs,
     ) -> torch.Tensor:
         position_ids = attention_mask.long().cumsum(-1) - 1

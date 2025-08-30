@@ -30,7 +30,7 @@ class MeshRank:
     def is_collection_dp_rank(self) -> bool:
         """Check if this rank is a DP rank to collect from
 
-        This is the rank with (SP=0, TP=0, PP=1)
+        This is the rank with (SP=0, TP=0, PP=pp_size-1)
 
         Note: double check this for ETP > 1 (but this is not a typically used case)
         """
