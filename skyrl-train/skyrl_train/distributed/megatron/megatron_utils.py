@@ -1,4 +1,5 @@
-# Utils ported from verl/utils/megatron_utils.py
+# Utils ported from Verl
+# https://github.com/volcengine/verl/blob/e1603dc97f3c20c58feed1f5be34acd5c72a830c/verl/utils/megatron_utils.py#L4
 # The original copyright is reproduced below:
 
 # Copyright 2024 Bytedance Ltd. and/or its affiliates

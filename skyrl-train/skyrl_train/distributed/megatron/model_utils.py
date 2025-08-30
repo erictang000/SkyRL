@@ -1,5 +1,5 @@
 # Utils ported from NeMo-Aligner by way of NeMo-RL
-# https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/distributed/model_utils.py
+# https://github.com/NVIDIA-NeMo/RL/blob/9301d36cbf847212430b84a27cfe6990f773b7cf/nemo_rl/distributed/model_utils.py#L4
 # The original copyright is reproduced below:
 
 #  Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
