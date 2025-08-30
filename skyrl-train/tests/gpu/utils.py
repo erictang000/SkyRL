@@ -21,7 +21,7 @@ from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.utils import get_ray_pg_ready_with_timeout
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.generators.base import GeneratorInput, ConversationType
-from skyrl_train.utils.utils import peer_access_supported, print_mem, initialize_ray
+from skyrl_train.utils.utils import peer_access_supported, print_mem, initialize_ray, validate_cfg
 from skyrl_train.inference_engines.ray_wrapped_inference_engine import create_ray_wrapped_inference_engines
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
@@ -36,6 +36,8 @@ def get_test_actor_config() -> DictConfig:
         cfg = hydra.compose(config_name="ppo_base_config")
 
         cfg.trainer.policy.model.path = "Qwen/Qwen2.5-0.5B-Instruct"
+        cfg.trainer.logger = "console"
+        validate_cfg(cfg)
 
         return cfg
 
@@ -96,6 +98,7 @@ def make_dummy_experience(seq_len=10, num_actions=4) -> Experience:
         loss_mask=torch.ones((B, num_actions), dtype=int, device="cpu"),
         action_mask=torch.ones((B, num_actions), dtype=int, device="cpu"),
         num_actions=num_actions,
+        rollout_logprobs=0.4 * torch.ones((B, num_actions), device="cpu"),
         info={},
     )
 
@@ -369,6 +372,7 @@ def init_inference_engines(cfg, model, use_local, async_engine, tp_size, colocat
     else:
         pg, sleep = None, False
 
+    tokenizer = AutoTokenizer.from_pretrained(model)
     eps = create_ray_wrapped_inference_engines(
         num_inference_engines=1,
         tensor_parallel_size=tp_size,
@@ -386,10 +390,10 @@ def init_inference_engines(cfg, model, use_local, async_engine, tp_size, colocat
         max_num_batched_tokens=8192,
         max_num_seqs=1024,
         sampling_params=get_sampling_params_for_backend(backend, cfg.generator.sampling_params),
-        tokenizer=AutoTokenizer.from_pretrained(model),
+        tokenizer=tokenizer,
         backend=backend,
     )
-    client = InferenceEngineClient(eps)
+    client = InferenceEngineClient(eps, tokenizer)
     if sleep:
         asyncio.run(client.wake_up())
     return client, pg

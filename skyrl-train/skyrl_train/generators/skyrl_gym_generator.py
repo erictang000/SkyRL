@@ -14,6 +14,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from tqdm.asyncio import tqdm
 from dataclasses import dataclass
+from loguru import logger
 
 from skyrl_train.generators.base import GeneratorInterface, GeneratorInput, GeneratorOutput
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
@@ -145,6 +146,7 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         # init() returns the first prompt to be given to the model, and optional metadata dict
         chat_history, _ = env.init(chat_history)
+        initial_chat_history_length = len(chat_history)
         chat_end_index = len(chat_history)
         input_ids = self.tokenizer.apply_chat_template(
             chat_history,
@@ -174,6 +176,20 @@ class SkyRLGymGenerator(GeneratorInterface):
             output_ids = engine_output["response_ids"][0]
             stop_reason = engine_output["stop_reasons"][0]
 
+            # Append eos when sampling_params.stop is not None. Does not affect 3.a as chat templates add eos_token.
+            # sampling_params is not None for eval, but None for training (which uses engine.sampling_params which are from cfg)
+            current_sampling_params = (
+                sampling_params if sampling_params is not None else self.generator_cfg.sampling_params
+            )
+            stop_strs = current_sampling_params.get("stop", None)
+            if (
+                stop_strs is not None
+                and self.generator_cfg.append_eos_token_after_stop_str_in_multi_turn
+                and self.use_conversation_multi_turn
+            ):
+                if output.endswith(tuple(stop_strs)) and output_ids[-1] != self.tokenizer.eos_token_id:
+                    output_ids.append(self.tokenizer.eos_token_id)
+
             # 2. Environment step
             if self.env_executor is not None:
                 loop = asyncio.get_running_loop()
@@ -186,7 +202,7 @@ class SkyRLGymGenerator(GeneratorInterface):
 
             if env_step_output.get("postprocessed_action", None) is not None:
                 # TODO(Charlie): come back to this, we should deprecate postprocessed action
-                print(
+                logger.warning(
                     "WARNING: postprocessed action may violate token-in-token-out. Ideally you "
                     "post-process it in the token space rather than string space. "
                     "A better solution coming soon."
@@ -221,7 +237,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         prompt_ids = input_ids[:initial_prompt_length]
         if retokenize_chat_history:
             response_encodings = self.tokenizer.apply_chat_template(
-                chat_history[len(prompt) :],
+                chat_history[initial_chat_history_length:],
                 chat_template=self.custom_chat_template,
                 add_generation_prompt=False,
                 return_dict=True,

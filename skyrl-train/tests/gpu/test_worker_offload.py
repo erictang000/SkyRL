@@ -10,6 +10,7 @@ import os
 import shutil
 
 from tests.gpu.utils import init_worker_with_type, make_dummy_experience, make_dummy_tensorbatch, get_rank_0_memory
+from skyrl_train.utils.utils import validate_cfg
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.training_batch import TrainingOutputBatch
 
@@ -23,6 +24,9 @@ def get_test_actor_config() -> DictConfig:
     cfg.trainer.policy.model.path = MODEL_NAME
     cfg.trainer.placement.policy_num_gpus_per_node = 2
     cfg.trainer.use_sample_packing = False
+    cfg.trainer.logger = "console"
+
+    validate_cfg(cfg)
 
     return cfg
 
