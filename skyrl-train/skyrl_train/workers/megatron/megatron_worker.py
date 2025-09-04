@@ -6,7 +6,7 @@ from transformers import AutoTokenizer, AutoConfig
 from huggingface_hub import snapshot_download
 import os
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from collections import defaultdict
 from tqdm import tqdm
 
@@ -57,14 +57,19 @@ class MegatronWorker:
         self.tf_config = tf_config
         self.tokenizer = tokenizer
 
-    def make_megatron_module(self, model_config_kwargs: Dict[str, Any], wrap_with_ddp: bool = True) -> List[nn.Module]:
+    def make_megatron_module(
+        self,
+        model_config_kwargs: Dict[str, Any],
+        wrap_with_ddp: bool = True,
+        ddp_config: Optional[Dict[str, Any]] = None,
+    ) -> List[nn.Module]:
         """
-        Creates a megatron GPTModel using the bridge.
+        Creates a megatron GPTModel (optionally DDP wrapped) using the bridge.
         """
         model = self.bridge.get_model(
             post_model_creation_callbacks=[],  # don't rely on these since we might switch to Megatron-Bridge
             wrap_with_ddp=wrap_with_ddp,
-            ddp_config=self.cfg.trainer.policy.megatron_config.ddp_config,
+            ddp_config=ddp_config,
         )
         if model_config_kwargs.get("moe_config", {}).get("freeze_moe_router", False):
             freeze_moe_router(model)
@@ -166,18 +171,21 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         # wrap with DDP for training
         self.actor_module = self.make_megatron_module(
-            self.cfg.trainer.policy.megatron_config.model_config_kwargs, wrap_with_ddp=True
+            self.cfg.trainer.policy.megatron_config.model_config_kwargs,
+            wrap_with_ddp=True,
+            ddp_config=self.cfg.trainer.policy.megatron_config.ddp_config,
         )
 
-        # load weights
-        # NOTE (erictang000): there is currently a bug in mbridge that causes the model to not load correctly if tie_word_embeddings is set
-        # see: https://github.com/NVIDIA/Megatron-LM/issues/533#issuecomment-1760193239
-        # this is the case for the Qwen2.5-1.5B and 3B models, but not the 7B model
         if self._rank == 0 and not os.path.exists(
             model_path
         ):  # if not local path, try downloading model weights from huggingface
             snapshot_download(model_path)  # will be no-op if already downloaded
         torch.distributed.barrier()
+
+        # load weights
+        # NOTE (erictang000): there is currently a bug in mbridge that causes the model to not load correctly if tie_word_embeddings is set
+        # see: https://github.com/NVIDIA/Megatron-LM/issues/533#issuecomment-1760193239
+        # this is the case for the Qwen2.5-1.5B and 3B models, but not the 7B model
         self.bridge.load_weights(self.actor_module, model_path)
 
         if self._rank == 0:
@@ -435,7 +443,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         )
 
         self.actor_module = self.make_megatron_module(
-            self.cfg.trainer.ref.megatron_config.model_config_kwargs, wrap_with_ddp=False
+            self.cfg.trainer.ref.megatron_config.model_config_kwargs, wrap_with_ddp=False, ddp_config=None
         )
 
         # load weights
