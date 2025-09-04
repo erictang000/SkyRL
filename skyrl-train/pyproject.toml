@@ -39,12 +39,9 @@ dependencies = [
     "skyrl-gym",
     "flash-attn",
     "polars",
-    "torch",
-    "setuptools",
 ]
 
 [tool.uv]
-no-build-isolation-package = ["transformer-engine-pytorch", "transformer-engine"]
 conflicts = [
     [
         { extra = "vllm" },
@@ -110,6 +107,13 @@ sglang = [
     "torchvision",
 ]
 mcore = [
+  # Build transformer-engine separately first!
+  # uv pip install "torch==2.7.1"
+  # uv pip install "nvidia-cudnn-cu12>=9.3"
+  # export CUDNN_PATH="$(python -c 'import inspect, nvidia.cudnn as c, os; print(os.path.dirname(inspect.getfile(c)))')"
+  # export CPATH="$CUDNN_PATH/include:${CPATH:-}"
+  # export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
+  # uv pip install --no-build-isolation "transformer_engine[pytorch]==2.5.0" --verbose
   "mbridge==0.13.0",
   "megatron-core@git+https://github.com/NVIDIA/Megatron-LM.git@core_r0.13.0",
   "transformer-engine[pytorch]==2.5.0",
