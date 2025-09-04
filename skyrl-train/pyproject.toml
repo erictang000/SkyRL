@@ -39,10 +39,12 @@ dependencies = [
     "skyrl-gym",
     "flash-attn",
     "polars",
+    "torch",
+    "setuptools",
 ]
 
 [tool.uv]
-# default-groups = ["build"]
+no-build-isolation-package = ["transformer-engine-pytorch", "transformer-engine"]
 conflicts = [
     [
         { extra = "vllm" },
@@ -122,21 +124,6 @@ flashrl = [
     "torchvision",
 ]
 
-[dependency-groups]
-
-# This is a default group so that we install these even with bare `uv sync`
-# build = [
-#     # Build requirement for TE
-#     "torch==2.7.1",
-#     # Build requirement for TE
-#     "setuptools",
-#     "packaging",
-#     "einops",
-#     # Build requirement for mcore
-#     "pybind11",
-#     # Build requirement for flash-attn
-#     "psutil",
-# ]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

@@ -26,6 +26,7 @@ from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.utils.torch_utils import logprobs_from_logits
 from skyrl_train.training_batch import TrainingInputBatch
+from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 
 
 # NOTE (erictang000): in the normal training flow, the model weights get downloaded in the HF cache by the inference engine
@@ -141,7 +142,8 @@ def test_megatron_policy_weight_sync(cfg):
         ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
         asyncio.run(client.reset_prefix_cache())
         ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
-        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME)))
+        sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
+        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME), sampling_params))
 
         print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
     finally:
