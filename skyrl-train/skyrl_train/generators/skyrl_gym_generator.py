@@ -96,6 +96,13 @@ class SkyRLGymGenerator(GeneratorInterface):
             )
             self.base_conversation_token_ids = self.base_conversation_token_ids[: last_eos_token_index + 1]
 
+    async def _run_in_executor_if_available(self, func, *args, **kwargs):
+        if (executor := self.env_executor) is not None:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(executor, func, *args, **kwargs)
+        else:
+            return func(*args, **kwargs)
+
     async def agent_loop(
         self,
         prompt: ConversationType,
@@ -145,7 +152,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         chat_history = copy.deepcopy(prompt)
 
         # init() returns the first prompt to be given to the model, and optional metadata dict
-        chat_history, _ = env.init(chat_history)
+        chat_history, _ = await self._run_in_executor_if_available(env.init, chat_history)
         initial_chat_history_length = len(chat_history)
         chat_end_index = len(chat_history)
         input_ids = self.tokenizer.apply_chat_template(
@@ -153,6 +160,7 @@ class SkyRLGymGenerator(GeneratorInterface):
             # If retokenize_chat_history==True, avoid including the generation prompt in both the
             # prompt_ids and response_ids due to how `response_encodings["input_ids"]` works.
             add_generation_prompt=not retokenize_chat_history,
+            chat_template=self.custom_chat_template if retokenize_chat_history else None,
             tokenize=True,
         )
 
@@ -191,11 +199,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                     output_ids.append(self.tokenizer.eos_token_id)
 
             # 2. Environment step
-            if self.env_executor is not None:
-                loop = asyncio.get_running_loop()
-                env_step_output: BaseTextEnvStepOutput = await loop.run_in_executor(self.env_executor, env.step, output)
-            else:
-                env_step_output: BaseTextEnvStepOutput = env.step(output)
+            env_step_output: BaseTextEnvStepOutput = await self._run_in_executor_if_available(env.step, output)
             new_obs = env_step_output["observations"]
             reward = env_step_output["reward"]
             done = env_step_output["done"]
@@ -232,7 +236,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                 stop_reason = "length"
                 break
 
-        env.close()
+        await self._run_in_executor_if_available(env.close)
 
         prompt_ids = input_ids[:initial_prompt_length]
         if retokenize_chat_history:
@@ -305,7 +309,7 @@ class SkyRLGymGenerator(GeneratorInterface):
             env_extra["max_turns"] = self.max_turns
             env_config = self.skyrl_gym_cfg.get(env_class, DictConfig({}))
             env = skyrl_gym.make(env_class, env_config=env_config, extras=env_extra)
-            init_prompt, _ = env.init(prompt)
+            init_prompt, _ = await self._run_in_executor_if_available(env.init, prompt)
             init_prompts.append(init_prompt)
             envs.append(env)
 
@@ -324,7 +328,7 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         for i, (response, response_ids, env) in enumerate(zip(responses, all_response_ids, envs)):
             # step on environment and compute reward
-            env_step_output: BaseTextEnvStepOutput = env.step(response)
+            env_step_output: BaseTextEnvStepOutput = await self._run_in_executor_if_available(env.step, response)
             reward = env_step_output["reward"]
             rewards.append(reward)
 
@@ -336,7 +340,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                 sample_logprobs = logprobs[i][: len(response_ids)]
                 truncated_logprobs.append(sample_logprobs)
 
-            env.close()
+            await self._run_in_executor_if_available(env.close)
 
         prompt_token_ids = self.tokenizer.apply_chat_template(prompts, add_generation_prompt=True, tokenize=True)
         responses = truncated_responses
@@ -511,7 +515,10 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         # re-apply whole chat template so length check is correct
         input_ids = self.tokenizer.apply_chat_template(
-            chat_history[:chat_end_index], add_generation_prompt=False, tokenize=True
+            chat_history[:chat_end_index],
+            chat_template=self.custom_chat_template,
+            add_generation_prompt=False,
+            tokenize=True,
         )
         return chat_history, chat_end_index, input_ids
 

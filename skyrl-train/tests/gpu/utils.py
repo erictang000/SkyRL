@@ -1,3 +1,4 @@
+import asyncio
 import os
 import ray
 import torch
@@ -268,8 +269,8 @@ def get_test_prompts(model: str, num_samples: int = 20) -> List[ConversationType
         tokenizer.pad_token = tokenizer.eos_token
 
     dataset = PromptDataset(
-        [TEST_DATA_PATH],
-        tokenizer,
+        datasets=[TEST_DATA_PATH],
+        tokenizer=tokenizer,
         max_prompt_length=512,
     )
 
@@ -296,8 +297,8 @@ def get_test_generator_input(
         tokenizer.pad_token = tokenizer.eos_token
 
     dataset = PromptDataset(
-        [data_path],
-        tokenizer,
+        datasets=[data_path],
+        tokenizer=tokenizer,
         max_prompt_length=max_prompt_length,
     )
 
@@ -355,8 +356,8 @@ def ray_init_for_tests():
     ray.init(runtime_env={"env_vars": env_vars})
 
 
-async def run_inference(client, prompts):
-    engine_input = InferenceEngineInput(prompts=prompts)
+async def run_inference(client, prompts, sampling_params):
+    engine_input = InferenceEngineInput(prompts=prompts, sampling_params=sampling_params)
     return await client.generate(engine_input)
 
 
@@ -388,11 +389,10 @@ def init_inference_engines(cfg, model, use_local, async_engine, tp_size, colocat
         async_engine=async_engine,
         max_num_batched_tokens=8192,
         max_num_seqs=1024,
-        sampling_params=get_sampling_params_for_backend(backend, cfg.generator.sampling_params),
         tokenizer=tokenizer,
         backend=backend,
     )
-    client = InferenceEngineClient(eps, tokenizer)
+    client = InferenceEngineClient(eps, tokenizer, cfg)
     if sleep:
         asyncio.run(client.wake_up())
     return client, pg

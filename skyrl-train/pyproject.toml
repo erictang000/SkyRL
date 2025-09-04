@@ -83,6 +83,9 @@ dev = [
     "pytest>=6.2.5",
     "pytest-asyncio",
     "pre-commit",
+    "fastapi",
+    "uvicorn",
+    "litellm",
 ]
 docs = [
     "sphinx>=7.0.0",
@@ -93,7 +96,7 @@ docs = [
     "sphinx-autobuild>=2021.3.14"
 ]
 vllm = [
-    "vllm==0.10.0",
+    "vllm==0.10.1.1",
     "torch==2.7.1",
     "flashinfer-python",
     "torchvision"

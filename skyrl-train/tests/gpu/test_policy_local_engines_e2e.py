@@ -13,6 +13,7 @@ import hydra
 from omegaconf import DictConfig
 
 from tests.gpu.utils import init_worker_with_type, get_test_prompts, init_inference_engines, run_inference
+from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.utils.ppo_utils import PolicyLossRegistry, AdvantageEstimatorRegistry
 
@@ -92,6 +93,7 @@ def test_policy_local_engines_e2e(colocate_all, weight_sync_backend, strategy, b
             tp_size=cfg.generator.inference_engine_tensor_parallel_size,
             colocate_all=cfg.trainer.placement.colocate_all,
             backend=backend,
+            model=MODEL,
         )
 
         policy = init_worker_with_type(
@@ -104,7 +106,8 @@ def test_policy_local_engines_e2e(colocate_all, weight_sync_backend, strategy, b
         ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
         asyncio.run(client.reset_prefix_cache())
         ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
-        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL)))
+        sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
+        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL), sampling_params))
 
         print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
     finally:
