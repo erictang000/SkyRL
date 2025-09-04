@@ -506,6 +506,9 @@ def sync_registries():
 
 
 def _safe_exp_delta(delta: torch.Tensor, clip: float = 20.0, out_dtype=None) -> torch.Tensor:
+    """
+    Clamp the delta before exponentiating to avoid potential overflow.
+    """
     y = torch.clamp(delta.to(torch.float32), -clip, clip).exp()
     return y.to(out_dtype or delta.dtype)
 

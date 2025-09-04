@@ -809,7 +809,7 @@ class PolicyWorkerBase(Worker):
         response_length = micro_batch.metadata["response_length"]
         attention_mask = micro_batch["attention_mask"]
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
             policy_logprob = self.model(
                 sequences,
                 response_length,

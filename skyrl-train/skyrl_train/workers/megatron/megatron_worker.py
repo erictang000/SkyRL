@@ -3,8 +3,12 @@ import torch.nn as nn
 import torch.distributed
 import ray
 from transformers import AutoTokenizer, AutoConfig
+from huggingface_hub import snapshot_download
+import os
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Any
+from collections import defaultdict
+from tqdm import tqdm
 
 from mbridge import AutoBridge
 import megatron.core.parallel_state as mpu
@@ -20,6 +24,8 @@ from skyrl_train.distributed.dispatch import MeshRank
 from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
 from skyrl_train.utils.utils import update_model_config, str_to_torch_dtype, get_physical_gpu_id
+from skyrl_train.training_batch import TrainingOutputBatch
+from skyrl_train.workers.worker_utils import BatchIterator, reduce_metrics
 from skyrl_train.workers.worker import (
     PolicyWorkerBase,
     RefWorkerBase,
@@ -27,7 +33,6 @@ from skyrl_train.workers.worker import (
     CriticWorkerBase,
 )
 from skyrl_train.workers.megatron.megatron_policy import MegatronPPOPolicy
-from skyrl_train.dataset.replay_buffer import Experience
 
 
 class MegatronWorker:
@@ -52,7 +57,10 @@ class MegatronWorker:
         self.tf_config = tf_config
         self.tokenizer = tokenizer
 
-    def make_megatron_module(self, model_config_kwargs, wrap_with_ddp=True):
+    def make_megatron_module(self, model_config_kwargs: Dict[str, Any], wrap_with_ddp: bool = True) -> List[nn.Module]:
+        """
+        Creates a megatron GPTModel using the bridge.
+        """
         model = self.bridge.get_model(
             post_model_creation_callbacks=[],  # don't rely on these since we might switch to Megatron-Bridge
             wrap_with_ddp=wrap_with_ddp,
@@ -61,6 +69,49 @@ class MegatronWorker:
         if model_config_kwargs.get("moe_config", {}).get("freeze_moe_router", False):
             freeze_moe_router(model)
         return model
+
+    def forward(self, data):
+        """
+        Override `Worker.forward` to support passing the full mini batch to the MegatronPPOPolicy.forward method.
+        """
+        # Run in micro batches grouped into a single mini-batch
+        micro_bsz = self.cfg.trainer.micro_forward_batch_size_per_gpu
+        micro_batches = data.chunk(micro_bsz)
+
+        # Build micro-batch dicts expected by policy.forward_mini_batch
+        micro_dicts = []
+        device = torch.cuda.current_device()
+        for micro in micro_batches:
+            micro.to(device)
+            sequences = micro["sequences"]
+            attention_mask = micro["attention_mask"]
+            num_actions = micro.metadata["response_length"]
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 0)
+            micro_dicts.append(
+                {
+                    "sequences": sequences,
+                    "attention_mask": attention_mask,
+                    "position_ids": position_ids,
+                    "num_actions": num_actions,
+                }
+            )
+
+        self.model.eval()
+        seq_len = micro_dicts[0]["sequences"].shape[1]
+        mbs = micro_dicts[0]["sequences"].shape[0]
+        with torch.no_grad():
+            log_probs = self.model.forward(
+                micro_batches=micro_dicts,
+                seq_len=seq_len,
+                micro_batch_size=mbs,
+                temperature=self.cfg.generator.sampling_params.temperature,
+            )
+
+        log_probs = log_probs.to("cpu")
+        output = TrainingOutputBatch({"output": log_probs})
+        output.metadata = data.metadata
+        return output
 
 
 class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
@@ -79,10 +130,12 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         self.strategy.backload_to_gpu(self.actor_module, self.optimizer, non_blocking)
 
     def init_worker_process_group(self):
+        """
+        Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
+        """
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
 
-        # override the init_process_group method to use megatron distributed setup to create the mesh
         self.strategy = MegatronStrategy(
             megatron_config=self.cfg.trainer.policy.megatron_config,
             optimizer_config=self.cfg.trainer.policy.optimizer_config,
@@ -101,6 +154,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         )
 
     def init_model(self, model_path, num_training_steps: int = 1e9):
+        """
+        Initialize the model, optimizer, and scheduler for the policy worker.
+        """
         # get hf_config and tf_config
         self.init_configs(
             model_path,
@@ -117,6 +173,11 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # NOTE (erictang000): there is currently a bug in mbridge that causes the model to not load correctly if tie_word_embeddings is set
         # see: https://github.com/NVIDIA/Megatron-LM/issues/533#issuecomment-1760193239
         # this is the case for the Qwen2.5-1.5B and 3B models, but not the 7B model
+        if self._rank == 0 and not os.path.exists(
+            model_path
+        ):  # if not local path, try downloading model weights from huggingface
+            snapshot_download(model_path)  # will be no-op if already downloaded
+        torch.distributed.barrier()
         self.bridge.load_weights(self.actor_module, model_path)
 
         if self._rank == 0:
@@ -145,64 +206,119 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             policy_loss_fn=self.policy_loss_fn,
         )
 
-    def training_step(self, experience: Experience, global_step, local_step, accumulation_steps) -> Dict[str, float]:
+    def ppo_train(self, train_data) -> "TrainingOutputBatch":
         """
-        Perform one micro-batch of training, accumulate gradients, and step the optimizer only after `accumulation_steps` micro-batches.
+        Overrides `PolicyWorkerBase.ppo_train` for megatron.
+
+        Since we want megatron to handle gradient accumulation over micro batches, we directly pass mini batches into the
+        worker MegatronPPOPolicy.forward_backward_mini_batch method.
         """
-        self.model.train()
-        experience.to_device(torch.cuda.current_device())
-
-        sequences = experience.sequences
-        num_actions = experience.num_actions
-        attention_mask = experience.attention_mask
-
-        metrics = self.model.forward_backward_micro_batch(
-            sequences,
-            num_actions,
-            accumulation_steps,
-            old_action_log_probs=experience.action_log_probs,
-            base_action_log_probs=experience.base_action_log_probs,
-            advantages=experience.advantages,
-            loss_mask=experience.loss_mask,
-            rollout_action_logprobs=experience.rollout_logprobs,
-            attention_mask=attention_mask,
-            temperature=self.cfg.generator.sampling_params.temperature,
+        dataloader = BatchIterator(
+            train_data, sample_batch_size=self.cfg.trainer.micro_train_batch_size_per_gpu, drop_last=False
         )
 
-        grad_norm = None
-        if (local_step + 1) % accumulation_steps == 0:
-            self.model._restore_and_finalize_once()
-            grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
-            self.model._set_finalize_noop()
+        micro_batches_per_mini_batch = (
+            self.policy_mini_batch_size_per_gpu // self.cfg.trainer.micro_train_batch_size_per_gpu
+        )
 
-        if self.record_memory:
-            self.save_memory_snapshot(global_step, local_step)
+        status_list = []
+        all_metrics = defaultdict(list)
+        policy_update_steps = 0
 
-        status = {
-            "policy_loss": metrics["policy_loss"],
-            "policy_lr": self.optimizer.param_groups[0]["lr"],
-            "ppo_clip_ratio": metrics["ppo_clip_ratio"],
-            "policy_entropy": metrics["policy_entropy"],
-        }
-        if self.cfg.trainer.algorithm.use_kl_loss:
-            status["policy_kl"] = metrics["policy_kl"]
+        for epoch in range(self.cfg.trainer.update_epochs_per_batch):
+            pbar = tqdm(
+                dataloader,
+                desc=f"Actor Train epoch [{epoch + 1}/{self.cfg.trainer.update_epochs_per_batch}]",
+                disable=not self.strategy.is_rank_0(),
+            )
 
-        if grad_norm is not None:
-            status["raw_grad_norm"] = grad_norm
+            micro_buffer = []
+            for local_step, experience in enumerate(pbar):
+                experience.to_device(torch.cuda.current_device())
+                sequences = experience.sequences
+                attention_mask = experience.attention_mask
+                position_ids = attention_mask.long().cumsum(-1) - 1
+                position_ids.masked_fill_(attention_mask == 0, 0)
 
-        for k, v in experience.info.items():
-            if k == "kl":
-                # just use the same value as loss if available
-                status[k] = (
-                    metrics["policy_kl"].item()
-                    if isinstance(metrics["policy_kl"], torch.Tensor)
-                    else status["policy_kl"]
+                micro_buffer.append(
+                    {
+                        "sequences": sequences,
+                        "attention_mask": attention_mask,
+                        "position_ids": position_ids,
+                        "num_actions": experience.num_actions,
+                        "old_action_log_probs": experience.action_log_probs,
+                        "base_action_log_probs": experience.base_action_log_probs,
+                        "advantages": experience.advantages,
+                        "loss_mask": experience.loss_mask,
+                        "rollout_action_logprobs": experience.rollout_logprobs,
+                    }
                 )
-            else:
-                status[k] = v.mean().item() if isinstance(v, torch.Tensor) else v
 
-        status["response_length"] = num_actions
-        return status
+                if len(micro_buffer) == micro_batches_per_mini_batch:
+                    # run mini-batch forward-backward and then one optimizer step
+                    self.model.train()
+                    seq_len = micro_buffer[0]["sequences"].shape[1]
+                    micro_bsz = micro_buffer[0]["sequences"].shape[0]
+
+                    metrics_list = self.model.forward_backward_mini_batch(
+                        micro_batches=micro_buffer,
+                        seq_len=seq_len,
+                        micro_batch_size=micro_bsz,
+                        temperature=self.cfg.generator.sampling_params.temperature,
+                    )
+
+                    grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
+
+                    # within a DP group, metrics are already the same across all workers - we then just all reduce across
+                    # the whole world size to get the metrics for the global micro batch
+                    for i, metrics in enumerate(metrics_list):
+                        status = {
+                            "policy_loss": metrics["policy_loss"],
+                            "policy_lr": self.optimizer.param_groups[0]["lr"],
+                            "ppo_clip_ratio": metrics["ppo_clip_ratio"],
+                            "policy_entropy": metrics["policy_entropy"],
+                        }
+                        if self.cfg.trainer.algorithm.use_kl_loss:
+                            status["policy_kl"] = metrics["policy_kl"]
+
+                        # Attach grad norm only for the last micro in the mini-batch
+                        if i == len(metrics_list) - 1 and grad_norm is not None:
+                            status["raw_grad_norm"] = grad_norm
+
+                        # attach response_length
+                        status["response_length"] = micro_buffer[i]["num_actions"]
+
+                        status = self.strategy.all_reduce(status)
+                        status_list.append(status)
+                        for k, v in status.items():
+                            all_metrics[k].append(v)
+
+                    short_status = {
+                        "pg": status_list[-1]["policy_loss"],
+                        "glen": status_list[-1]["response_length"],
+                        "policy_lr": status_list[-1]["policy_lr"],
+                        "ent": status_list[-1]["policy_entropy"],
+                    }
+                    if "raw_grad_norm" in status_list[-1]:
+                        short_status["grad_norm"] = status_list[-1]["raw_grad_norm"]
+                    pbar.set_postfix(short_status)
+
+                    policy_update_steps += 1
+                    micro_buffer = []
+
+            # drop any trailing micros that don't fill a mini-batch (keep behavior consistent)
+            micro_buffer = []
+
+        torch.distributed.barrier()
+        # not needed beyond status logging
+        all_metrics.pop("response_length", None)
+
+        status_mean = reduce_metrics(all_metrics)
+        status_mean["policy_update_steps"] = policy_update_steps
+
+        output = TrainingOutputBatch()
+        output.metadata = {"train_status": status_mean}
+        return output
 
     async def broadcast_to_inference_engines(self, inference_engine_client):
         use_prefix_cache = self.cfg.generator.enable_prefix_caching
@@ -284,10 +400,12 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         self.strategy.backload_to_gpu(self.actor_module, None, non_blocking)
 
     def init_worker_process_group(self):
+        """
+        Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
+        """
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
 
-        # override the init_process_group method to use megatron distributed setup to create the mesh
         self.strategy = MegatronStrategy(
             megatron_config=self.cfg.trainer.ref.megatron_config,
             optimizer_config=None,
@@ -306,6 +424,9 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         )
 
     def init_model(self, model_path, num_training_steps: int = 1e9):
+        """
+        Initialize the model for the ref worker.
+        """
         # get hf_config and tf_config
         self.init_configs(
             model_path,
@@ -313,7 +434,6 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
             self.cfg.trainer.ref.megatron_config.transformer_config_kwargs,
         )
 
-        # wrap with DDP for training
         self.actor_module = self.make_megatron_module(
             self.cfg.trainer.ref.megatron_config.model_config_kwargs, wrap_with_ddp=False
         )

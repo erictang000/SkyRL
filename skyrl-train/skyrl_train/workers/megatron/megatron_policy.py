@@ -1,15 +1,13 @@
-from typing import Optional, Union, Callable, List
+from typing import Optional, Callable, List
 from functools import partial
 import torch
 import torch.nn as nn
 
 from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.core.distributed import finalize_model_grads
 import megatron.core.parallel_state as mpu
 from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs, vocab_parallel_entropy
 from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean
 from skyrl_train.distributed.megatron.megatron_utils import (
-    get_model_config,
     make_batch_generator,
     remove_left_padding,
     recover_left_padding,
@@ -33,37 +31,6 @@ class MegatronPPOPolicy:
         self.actor_optimizer = actor_optimizer
         self.policy_loss_fn = policy_loss_fn
 
-        # NOTE (erictang000): this is a potentially brittle way to disable the finalize_model_grads_func
-        # call during each call to forward_backward_micro_batch, since we are manually accumulating gradients
-        # rather than letting megatron's forward_backward_func handle the accumulation.
-        # this may be brittle, since we are modifying the megatron internal flow by overwriting the finalize function
-        # while accumulating. However, this lets us keep our standard gradient accumulation flow and metrics
-        # calculation. We could consider refactoring in the future to make the forward_backward_micro_batch
-        # take in a full mini_batch and handle the dataloader flow there if this becomes a problem.
-        self._saved_finalize = None
-        self._set_finalize_noop()
-
-    @staticmethod
-    def _finalize_noop(*args, **kwargs):
-        # do nothing; used to disable per-call finalization
-        return
-
-    def _set_finalize_noop(self):
-        cfg = get_model_config(self.actor_module[0])
-        if self._saved_finalize is None:
-            self._saved_finalize = cfg.finalize_model_grads_func
-        cfg.finalize_model_grads_func = self._finalize_noop
-
-    def _restore_and_finalize_once(self):
-        # call the real finalize exactly once at the end of the accumulation window
-        cfg = get_model_config(self.actor_module[0])
-        real_finalize = self._saved_finalize or finalize_model_grads
-        # restore
-        cfg.finalize_model_grads_func = real_finalize
-        self._saved_finalize = None
-        # perform one real finalize (TP/DP reductions, scaling, etc.)
-        real_finalize(self.actor_module)
-
     def train(self):
         [module.train() for module in self.actor_module]
 
@@ -75,18 +42,24 @@ class MegatronPPOPolicy:
 
     def forward(
         self,
-        sequences: torch.LongTensor,
-        num_actions: Union[int, list[int]],
-        attention_mask: Optional[torch.Tensor] = None,
+        micro_batches: List[dict],
+        seq_len: int,
+        micro_batch_size: int,
         temperature: float = 1.0,
-        **kwargs,
     ) -> torch.Tensor:
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 0)
+        """
+        Forward-only inference to compute log-probs over a full mini-batch consisting of multiple micro-batches.
 
-        micro_batch_size = sequences.shape[0]
-        seq_len = sequences.shape[1]
+        Args:
+            micro_batches: List of micro-batch dicts with keys: "sequences", "attention_mask", "position_ids",
+                           and "num_actions".
+            seq_len: Padded sequence length per sample.
+            micro_batch_size: Per-micro-batch size.
+            temperature: Optional temperature scaling for logits.
 
+        Returns:
+            torch.Tensor of concatenated log-probs across micro-batches (valid on pipeline last stage only).
+        """
         forward_backward_func = get_forward_backward_func()
 
         def collection_func(logits, data):
@@ -94,7 +67,6 @@ class MegatronPPOPolicy:
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
-            # temperature normalization
             if temperature != 1.0:
                 logits.div_(temperature)
 
@@ -107,24 +79,18 @@ class MegatronPPOPolicy:
                 inference_only=True,
                 chunk_size=None,
             )
-
             return 0.0, {"log_probs": token_logprobs}
 
         def forward_step(batch_iter, model):
             batch = next(batch_iter)
-
             sequences = batch["sequences"]
             attention_mask = batch["attention_mask"].to(bool)
             position_ids = batch["position_ids"]
-
-            seq_len = sequences.shape[1]
 
             new_sequences, new_attention_mask, new_position_ids = remove_left_padding(
                 sequences,
                 attention_mask,
                 position_ids,
-                # NOTE (erictang000) - this is automatically set to True if tp_size > 1
-                # unrelated to ulysses sequence parallel/context parallel
                 self.tf_config.sequence_parallel,
                 pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
             )
@@ -145,55 +111,53 @@ class MegatronPPOPolicy:
 
             return outputs, partial(collection_func, data=batch)
 
-        # batch should be a list of batches inside micro-batches
-        batch = {
-            "sequences": sequences,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-            "num_actions": num_actions,
-        }
-        batch_generator = make_batch_generator([batch], vpp_size=len(self.actor_module))
+        batch_generator = make_batch_generator(micro_batches, vpp_size=len(self.actor_module))
 
         output = forward_backward_func(
             forward_step_func=forward_step,
             data_iterator=batch_generator,
             model=self.actor_module,
-            num_microbatches=1,
-            seq_length=seq_len,  # no use when input_shapes was set
-            micro_batch_size=micro_batch_size,  # no use when input_shapes was set
+            num_microbatches=len(micro_batches),
+            seq_length=seq_len,
+            micro_batch_size=micro_batch_size,
             forward_only=True,
         )
 
         if mpu.is_pipeline_last_stage(ignore_virtual=True):
             log_probs = [o["log_probs"] for o in output]
             log_probs = torch.cat(log_probs, dim=0)
-            # just -num_actions: instead of -num_actions - 1: -1 since from_parallel_logits_to_logprobs removes last token
+            # take last num_actions tokens per micro; concatenate later
+            # Assume all micros have same num_actions
+            num_actions = micro_batches[0]["num_actions"]
             log_probs = log_probs[:, -num_actions:]
         else:
-            # return dummy log_probs that will get .to("cpu")'d for non-last stage (since we only collect from last pp rank)
-            log_probs = torch.zeros(size=(1, 1), dtype=torch.bfloat16, device=sequences.device)
-            log_probs = log_probs.to(sequences.device)
+            # return dummy tensor for non-last pp stages
+            device = micro_batches[0]["sequences"].device
+            log_probs = torch.zeros(size=(1, 1), dtype=torch.bfloat16, device=device)
         return log_probs
 
-    def forward_backward_micro_batch(
+    def forward_backward_mini_batch(
         self,
-        sequences: torch.LongTensor,
-        num_actions: Union[int, list[int]],
-        accumulation_steps: int,
-        old_action_log_probs: torch.Tensor,
-        base_action_log_probs: torch.Tensor,
-        advantages: torch.Tensor,
-        loss_mask: torch.Tensor,
-        rollout_action_logprobs: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
+        micro_batches: List[dict],
+        seq_len: int,
+        micro_batch_size: int,
         temperature: float = 1.0,
-    ):
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 0)
+    ) -> List[dict]:
+        """
+        Run forward-backward over a full mini-batch consisting of multiple micro-batches.
 
-        micro_batch_size = sequences.shape[0]
-        seq_len = sequences.shape[1]
+        Args:
+            micro_batches: A list of micro-batch dicts. Each dict must contain keys:
+                "sequences", "attention_mask", "position_ids", "num_actions",
+                "old_action_log_probs", "base_action_log_probs", "advantages",
+                "loss_mask", "rollout_action_logprobs".
+            seq_len: Sequence length (tokens) per sample (assumed same across micros after padding).
+            micro_batch_size: Micro-batch size per forward pass.
+            temperature: Optional temperature for logits scaling.
 
+        Returns:
+            List[dict]: one metrics dict per micro-batch in order.
+        """
         forward_backward_func = get_forward_backward_func()
 
         def loss_func(logits, data):
@@ -251,7 +215,6 @@ class MegatronPPOPolicy:
                 kl_loss = torch.tensor(0.0)
 
             loss = policy_loss + kl_loss * self.cfg.trainer.algorithm.kl_loss_coef
-            loss = loss / accumulation_steps
 
             metrics = {
                 "policy_loss": policy_loss.detach().item(),
@@ -292,37 +255,27 @@ class MegatronPPOPolicy:
 
             return outputs, partial(loss_func, data=batch)
 
-        # batch should be a list of batches inside micro-batches
-        batch = {
-            "sequences": sequences,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-            "num_actions": num_actions,
-            "old_action_log_probs": old_action_log_probs,
-            "base_action_log_probs": base_action_log_probs,
-            "advantages": advantages,
-            "loss_mask": loss_mask,
-            "rollout_action_logprobs": rollout_action_logprobs,
-        }
-        batch_generator = make_batch_generator([batch], vpp_size=len(self.actor_module))
+        # batch should be a list of micro-batches
+        batch_generator = make_batch_generator(micro_batches, vpp_size=len(self.actor_module))
 
-        metrics = forward_backward_func(
+        metrics_list = forward_backward_func(
             forward_step_func=forward_step,
             data_iterator=batch_generator,
             model=self.actor_module,
-            num_microbatches=1,
-            seq_length=seq_len,  # no use when input_shapes was set
-            micro_batch_size=micro_batch_size,  # no use when input_shapes was set
+            num_microbatches=len(micro_batches),
+            seq_length=seq_len,
+            micro_batch_size=micro_batch_size,
             forward_only=False,
         )
-        # metrics is always a list of length 1 since we only use one micro-batch here
+
         # broadcast metrics to all pp ranks
         if not mpu.is_pipeline_last_stage(ignore_virtual=True):
-            metrics = [None]
+            metrics_list = [None] * len(micro_batches)
         with torch.no_grad():
             torch.distributed.broadcast_object_list(
-                metrics,
+                metrics_list,
                 src=mpu.get_pipeline_model_parallel_last_rank(),
                 group=mpu.get_pipeline_model_parallel_group(),
             )
-        return metrics[0]
+
+        return metrics_list

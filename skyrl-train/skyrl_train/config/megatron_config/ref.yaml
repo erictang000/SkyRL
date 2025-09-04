@@ -6,8 +6,6 @@ expert_model_parallel_size: 1
 expert_tensor_parallel_size: 1
 
 
-seed: 42
-
 model_config_kwargs: {}
 
 # additional transformer config like: num_layers_in_first(/last)_pipeline_stage

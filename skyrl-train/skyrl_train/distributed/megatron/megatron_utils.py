@@ -25,7 +25,6 @@ import torch.nn as nn
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
 from megatron.core.optimizer import ChainedOptimizer
-from megatron.core.utils import get_attr_wrapped_model
 from megatron.core import parallel_state as mpu
 
 ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
@@ -54,10 +53,6 @@ def make_batch_generator(batches, vpp_size):
         # no vpp
         batch_generator = iter(batches)
     return batch_generator
-
-
-def get_model_config(model):
-    return get_attr_wrapped_model(model, "config", allow_none=False)
 
 
 def print_model_size(model: nn.Module, name: str = None):

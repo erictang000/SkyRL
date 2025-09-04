@@ -14,8 +14,6 @@ ddp_config:
   average_in_collective: true
   data_parallel_sharding_strategy: "optim_grads_params"
 
-seed: 42
-
 # kwargs to override the HF model config
 model_config_kwargs: {}
 

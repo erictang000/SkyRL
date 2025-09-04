@@ -15,7 +15,6 @@ from tests.gpu.utils import (
     init_worker_with_type,
     ray_init_for_tests,
     get_rank_0_memory,
-    make_dummy_experience,
     init_inference_engines,
     run_inference,
     get_test_prompts,
@@ -255,6 +254,13 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
     cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
     cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
     cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
+
+    # set batch sizes correctly
+    cfg.trainer.train_batch_size = 4
+    cfg.trainer.policy_mini_batch_size = 2
+    cfg.generator.n_samples_per_prompt = 1
+    cfg.trainer.micro_train_batch_size_per_gpu = 1
+
     actor_group = init_worker_with_type(
         "policy",
         shared_pg=None,
@@ -263,14 +269,10 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
         cfg=cfg,
     )
 
-    experience = BatchIterator.batch_to_experience(batch)
-    global_step, local_step, accumulation_steps = 0, 0, 2
-
-    results_megatron = ray.get(
-        actor_group.async_run_ray_method(
-            "pass_through", "training_step", experience, global_step, local_step, accumulation_steps
-        )
-    )
+    # call ppo_train with a batch of size 4 per gpu
+    batch.metadata["global_step"] = 0
+    results_megatron = ray.get(actor_group.async_run_ray_method("pass_through", "ppo_train", batch))
+    results_megatron = [results_megatron[i].metadata["train_status"] for i in range(len(results_megatron))]
 
     memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
     memory = memory[0]
@@ -288,7 +290,9 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
     ray.shutdown()
     ray_init_for_tests()
 
-    # run the same batch with FSDP
+    # manually run the same batch with FSDP via training step
+    experience = BatchIterator.batch_to_experience(batch)
+    global_step, local_step, accumulation_steps = 0, 0, 2
 
     cfg.trainer.strategy = "fsdp"
     actor_group = init_worker_with_type(
@@ -308,15 +312,16 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
     print("megatron results: ", results_megatron)
     print("fsdp results: ", results_fsdp)
 
+    keys_to_compare = ["policy_loss", "policy_lr", "ppo_clip_ratio", "policy_entropy", "policy_kl"]
     for i, result in enumerate(results_fsdp):
-        for k, v in result.items():
+        for k in keys_to_compare:
             if k == "policy_entropy":
                 # TODO: make entropy calculation only apply to non-padding tokens for all backends
                 # because the logits for padding tokens are all 0 for the non-sample packing case in megatron
                 # the entropy calculation is different (fsdp has random logits for padding tokens)
                 continue
-            assert isinstance(v, (int, float)), f"{k} should be an int or float"
-            assert abs(v - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
+            assert isinstance(result[k], (int, float)), f"{k} should be an int or float"
+            assert abs(result[k] - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
 
 
 @pytest.mark.asyncio
@@ -362,14 +367,8 @@ async def test_megatron_offload_memory_and_correctness(cfg, worker_type):
         actor_group.backload_to_gpu()
         get_rank_0_memory(actor_group, "Before training")
 
-        dummy_experience = make_dummy_experience()
-        # Run first training step to get optimizer initialized and stepped
-        global_step, local_step, accumulation_steps = 0, 0, 1
-        results = ray.get(
-            actor_group.async_run_ray_method(
-                "pass_through", "training_step", dummy_experience, global_step, local_step, accumulation_steps
-            )
-        )
+        batch = get_test_training_batch()
+        results = ray.get(actor_group.async_run_ray_method("pass_through", "ppo_train", batch))
 
         after_training = get_rank_0_memory(actor_group, "After training")
 
@@ -396,11 +395,7 @@ async def test_megatron_offload_memory_and_correctness(cfg, worker_type):
         get_rank_0_memory(actor_group, "After backload")
 
         # Run training again and ensure output consistency
-        results_backload = ray.get(
-            actor_group.async_run_ray_method(
-                "pass_through", "training_step", dummy_experience, global_step + 1, local_step, accumulation_steps
-            )
-        )
+        results_backload = ray.get(actor_group.async_run_ray_method("pass_through", "ppo_train", batch))
 
         for i, result in enumerate(results):
             result_backload = results_backload[i]
