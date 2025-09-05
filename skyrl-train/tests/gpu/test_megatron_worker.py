@@ -29,9 +29,6 @@ from skyrl_train.training_batch import TrainingInputBatch
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 
 
-# NOTE (erictang000): in the normal training flow, the model weights get downloaded in the HF cache by the inference engine
-# we should figure out a way to download the model weights in the test environment (for now trying to do this by
-# ordering the tests so the inference engine is initialized first). Also will be an issue for disaggregated training
 MODEL_NAME = "Qwen/Qwen3-0.6B"
 
 
@@ -322,6 +319,94 @@ async def test_megatron_training_step(cfg, ray_init_fixture, worker_type, tp, pp
                 # because the logits for padding tokens are all 0 for the non-sample packing case in megatron
                 # the entropy calculation is different (fsdp has random logits for padding tokens)
                 continue
+            assert isinstance(result[k], (int, float)), f"{k} should be an int or float"
+            assert abs(result[k] - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("worker_type", "tp", "pp", "gpus_per_node"),
+    [
+        ("policy", 2, 2, 4),
+    ],
+)
+async def test_megatron_dp(cfg, ray_init_fixture, worker_type, tp, pp, gpus_per_node):
+    """
+    Full test: initialize actor group, send dummy experience to training_step, validate output.
+    """
+
+    batch = get_test_training_batch()
+
+    cfg.trainer.strategy = "megatron"
+    cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
+
+    # try tp=2, pp=2 first
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
+
+    # set batch sizes correctly
+    cfg.trainer.train_batch_size = 64
+    cfg.trainer.policy_mini_batch_size = len(batch["sequences"])  # self.policy_mini_batch_size_per_gpu = 2 * 1 / 1 = 2
+    cfg.generator.n_samples_per_prompt = 1
+    cfg.trainer.micro_train_batch_size_per_gpu = 4
+
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+    # call ppo_train with a batch of size 4 per gpu
+    batch.metadata["global_step"] = 0
+    results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
+    results_megatron = [results_megatron[i].metadata["train_status"] for i in range(len(results_megatron))]
+
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after training step", memory)
+
+    for result in results_megatron:
+        assert isinstance(result, dict), "Result should be a dictionary of training stats"
+        assert "policy_loss" in result
+        assert "policy_lr" in result
+        assert "ppo_clip_ratio" in result
+        assert "policy_entropy" in result
+        for k, v in result.items():
+            assert isinstance(v, (int, float)), f"{k} should be an int or float"
+
+    ray.shutdown()
+    ray_init_for_tests()
+
+    # check the grad norm for the same thing but with pp=1, tp=1, dp=4
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 1
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 1
+
+    # set batch sizes correctly
+    cfg.trainer.train_batch_size = 64
+    cfg.trainer.policy_mini_batch_size = len(batch["sequences"])  # self.policy_mini_batch_size_per_gpu = 8 * 1 / 4 = 2
+    cfg.generator.n_samples_per_prompt = 1
+    cfg.trainer.micro_train_batch_size_per_gpu = 4
+
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+    results_megatron_dp = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
+    results_megatron_dp = [results_megatron_dp[i].metadata["train_status"] for i in range(len(results_megatron_dp))]
+
+    print("megatron results: ", results_megatron)
+    print("\n\n")
+    print("megatron results dp: ", results_megatron_dp)
+
+    keys_to_compare = ["policy_loss", "policy_lr", "ppo_clip_ratio", "policy_entropy", "policy_kl", "raw_grad_norm"]
+    for i, result in enumerate(results_megatron_dp):
+        for k in keys_to_compare:
             assert isinstance(result[k], (int, float)), f"{k} should be an int or float"
             assert abs(result[k] - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
 

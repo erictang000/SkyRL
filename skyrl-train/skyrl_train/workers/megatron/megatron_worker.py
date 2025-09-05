@@ -176,7 +176,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             ddp_config=self.cfg.trainer.policy.megatron_config.ddp_config,
         )
 
-        if self._rank == 0 and not os.path.exists(
+        if self._local_rank == 0 and not os.path.exists(
             model_path
         ):  # if not local path, try downloading model weights from huggingface
             snapshot_download(model_path)  # will be no-op if already downloaded
