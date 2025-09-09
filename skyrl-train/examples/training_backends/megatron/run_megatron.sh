@@ -7,7 +7,7 @@ set -x
 # bash examples/training_backends/megatron/run_megatron.sh
 
 DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=8
+NUM_GPUS=4
 LOGGER="wandb"  # change to "console" to print to stdout
 MODEL_NAME="Qwen/Qwen3-0.6B"
 
@@ -15,7 +15,7 @@ INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 
 MEGATRON_TP=2
 MEGATRON_PP=2
-MEGATRON_CP=2
+MEGATRON_CP=1
 
 uv run --isolated --extra $INFERENCE_BACKEND --extra mcore -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
