@@ -41,11 +41,13 @@ class InferenceWeightsManager:
         inference_engine_client: InferenceEngineClient,
         colocate_all: bool,
         sleep_on_exit: bool = True,
+        no_sync: bool = False,
     ):
         self.policy_model = policy_model
         self.inference_engine_client = inference_engine_client
         self.colocate_all = colocate_all
         self.sleep_on_exit = sleep_on_exit
+        self.no_sync = no_sync
 
     def sync_policy_weights_to_inference_engines(self) -> List[ObjectRef]:
         return self.policy_model.async_run_ray_method(
@@ -71,8 +73,9 @@ class InferenceWeightsManager:
         if self.colocate_all:
             asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
 
-        with Timer("sync_weights_to_inference_engines"):
-            ray.get(self.sync_policy_weights_to_inference_engines())
+        if not self.no_sync:
+            with Timer("sync_weights_to_inference_engines"):
+                ray.get(self.sync_policy_weights_to_inference_engines())
 
         if self.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
@@ -99,8 +102,9 @@ class InferenceWeightsManager:
         if self.colocate_all:
             await self.inference_engine_client.wake_up(tags=["weights"])
 
-        with Timer("sync_weights_to_inference_engines"):
-            await self.async_sync_policy_weights_to_inference_engines()
+        if not self.no_sync:
+            with Timer("sync_weights_to_inference_engines"):
+                await self.async_sync_policy_weights_to_inference_engines()
 
         if self.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
