@@ -32,7 +32,7 @@ class InferenceWeightsManager:
     This class is used to synchronize the weights of the policy model to the InferenceEngines.
     It also wakes up the inference engine if `colocate_all` is enabled.
 
-    If `no_sync` is enabled, the weights will not be synchronized, but offloading/backloading will still happen.
+    Optionally puts the inference engine to sleep on exit
     """
 
     def __init__(
@@ -40,12 +40,12 @@ class InferenceWeightsManager:
         policy_model: PPORayActorGroup,
         inference_engine_client: InferenceEngineClient,
         colocate_all: bool,
-        no_sync: bool = False,
+        sleep_on_exit: bool = True,
     ):
         self.policy_model = policy_model
         self.inference_engine_client = inference_engine_client
         self.colocate_all = colocate_all
-        self.no_sync = no_sync
+        self.sleep_on_exit = sleep_on_exit
 
     def sync_policy_weights_to_inference_engines(self) -> List[ObjectRef]:
         return self.policy_model.async_run_ray_method(
@@ -71,9 +71,8 @@ class InferenceWeightsManager:
         if self.colocate_all:
             asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
 
-        if not self.no_sync:
-            with Timer("sync_weights_to_inference_engines"):
-                ray.get(self.sync_policy_weights_to_inference_engines())
+        with Timer("sync_weights_to_inference_engines"):
+            ray.get(self.sync_policy_weights_to_inference_engines())
 
         if self.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
@@ -83,7 +82,7 @@ class InferenceWeightsManager:
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Offloads the inference engine if `colocate_all` is enabled."""
-        if self.colocate_all:
+        if self.colocate_all and self.sleep_on_exit:
             asyncio.run(self.inference_engine_client.sleep())
 
     async def __aenter__(self):
@@ -100,9 +99,8 @@ class InferenceWeightsManager:
         if self.colocate_all:
             await self.inference_engine_client.wake_up(tags=["weights"])
 
-        if not self.no_sync:
-            with Timer("sync_weights_to_inference_engines"):
-                await self.async_sync_policy_weights_to_inference_engines()
+        with Timer("sync_weights_to_inference_engines"):
+            await self.async_sync_policy_weights_to_inference_engines()
 
         if self.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
@@ -111,5 +109,5 @@ class InferenceWeightsManager:
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         """Offloads the inference engine if `colocate_all` is enabled."""
-        if self.colocate_all:
+        if self.colocate_all and self.sleep_on_exit:
             await self.inference_engine_client.sleep()
