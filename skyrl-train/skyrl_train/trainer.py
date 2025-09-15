@@ -298,8 +298,9 @@ class RayPPOTrainer:
                                 pbar.update(1)
                                 continue
 
-                    # if we exit the generation context manager, then the inference engine is asleep
-                    inference_engine_is_active = False
+                        # if we are not continuing sampling, we trigger sleep and mark inference engine as inactive
+                        weights_manager.update_condition(True)
+                        inference_engine_is_active = False
 
                     # 1.2 postprocess rewards
                     with Timer("postprocess_generator_output", self.all_timings):
