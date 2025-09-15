@@ -254,7 +254,7 @@ class RayPPOTrainer:
             with self.eval_weights_manager:
                 with Timer("eval", self.all_timings):
                     eval_metrics = asyncio.run(self.eval())
-                    self.tracker.log(eval_metrics, step=self.global_step)
+                    self.tracker.log(eval_metrics, step=self.global_step, commit=True)
             inference_engine_is_active = True
 
         # initialize kl controller
@@ -366,10 +366,12 @@ class RayPPOTrainer:
                             self.all_metrics.update(eval_metrics)
                     inference_engine_is_active = True
 
-                self.tracker.log(self.all_metrics, step=self.global_step)
+                log_payload = {
+                    **self.all_metrics,
+                    **{f"timing/{k}": v for k, v in self.all_timings.items()},
+                }
+                self.tracker.log(log_payload, step=self.global_step, commit=True)
                 self.all_metrics = {}
-
-                self.tracker.log({"timing/" + k: v for k, v in self.all_timings.items()}, step=self.global_step)
                 self.all_timings = {}
 
                 # update progress bar after logging
