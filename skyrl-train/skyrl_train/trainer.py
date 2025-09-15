@@ -274,7 +274,7 @@ class RayPPOTrainer:
                         self.cfg.generator.n_samples_per_prompt, rand_prompts, self.cfg.generator.sampling_params
                     )
 
-                    # if we inference engine is already active due to continuing sampling or eval, we don't want to trigger weight management
+                    # if the inference engine is already active due to continuing sampling or eval, we don't want to trigger weight management
                     weights_manager = ConditionalWeightsManager(
                         self.weights_manager, condition=not inference_engine_is_active
                     )
