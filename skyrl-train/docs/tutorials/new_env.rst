@@ -27,7 +27,7 @@ SkyRL-Gym includes a simple text-in/text-out environment interface for LLM tasks
          Returns:
             BaseTextEnvStepOutput containing:
             - observations: New messages from the environment
-            - reward: Float reward for the action  
+            - reward: Optional[Float] reward for the action, None if intermediate steps have no reward
             - done: Whether the episode is finished
             - metadata: Additional info (optional)
          """

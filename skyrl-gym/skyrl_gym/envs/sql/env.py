@@ -82,7 +82,7 @@ class SQLEnv(BaseTextEnv):
             return compute_score_single(chat_history_str, self.gold_sql, self.db_file)
         else:
             # No reward for intermediate steps for SQL tasks
-            return 0
+            return None
 
     def _is_done(self, action: str) -> bool:
         if self.turns >= self.max_turns:

@@ -106,7 +106,7 @@ def test_compute_score(mock_db_file, mock_sqlite_connection, step_1_output, step
     reward = output["reward"]
 
     # intermediate step reward is 0
-    assert reward == 0.0
+    assert reward is None
     # check reminder message
     assert reminder_text in obs1[0]["content"]
     if "<sql>" not in step_1_output:

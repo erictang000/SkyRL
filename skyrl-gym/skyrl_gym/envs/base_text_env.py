@@ -8,7 +8,7 @@ ConversationType = List[MessageType]
 
 class BaseTextEnvStepOutput(TypedDict):
     observations: ConversationType  # OpenAI API Messages Format
-    reward: float
+    reward: Optional[float]  # None if intermediate steps have no reward
     done: bool
     metadata: Dict[str, Any]
     postprocessed_action: Optional[str] = None

@@ -182,7 +182,7 @@ def test_successful_search(search_env, mock_search_api):
 
     # Verify result structure
     assert not result["done"]
-    assert result["reward"] == 0.0  # No reward for intermediate steps
+    assert result["reward"] is None  # No reward for intermediate steps
     assert len(result["observations"]) == 1
     assert result["observations"][0]["role"] == "user"
 
@@ -207,7 +207,7 @@ def test_search_with_no_results(search_env, mock_search_api):
 
     # Verify result structure
     assert not result["done"]
-    assert result["reward"] == 0.0
+    assert result["reward"] is None
     assert len(result["observations"]) == 1
 
     # Verify observation contains no results message
@@ -223,7 +223,7 @@ def test_search_timeout_error(search_env, mock_search_api):
 
     # Verify result structure
     assert not result["done"]
-    assert result["reward"] == 0.0
+    assert result["reward"] is None
     assert len(result["observations"]) == 1
 
     # Verify observation contains error message
@@ -240,7 +240,7 @@ def test_search_server_error(search_env, mock_search_api):
 
     # Verify result structure
     assert not result["done"]
-    assert result["reward"] == 0.0
+    assert result["reward"] is None
     assert len(result["observations"]) == 1
 
     # Verify observation contains error message
@@ -276,7 +276,7 @@ def test_invalid_search_parsing(search_env, mock_search_api):
         # Incorrect answer
         ("<answer>Nicolas Sarkozy</answer>", {"target": "Emmanuel Macron"}, 0.0, True),
         # Search action (not done)
-        ("<search>Who is the president?</search>", {"target": "Emmanuel Macron"}, 0.0, False),
+        ("<search>Who is the president?</search>", {"target": "Emmanuel Macron"}, None, False),
         # Answer with extra whitespace
         ("<answer>  Emmanuel Macron  </answer>", {"target": "Emmanuel Macron"}, 1.0, True),
         # Case insensitive match
@@ -284,7 +284,7 @@ def test_invalid_search_parsing(search_env, mock_search_api):
         # Answer without articles
         ("<answer>Emmanuel Macron</answer>", {"target": "The Emmanuel Macron"}, 1.0, True),
         # No answer tag
-        ("Just text without answer tag", {"target": "Emmanuel Macron"}, 0.0, False),
+        ("Just text without answer tag", {"target": "Emmanuel Macron"}, None, False),
     ],
 )
 def test_reward_computation(action, ground_truth, expected_reward, expected_done):
@@ -321,7 +321,7 @@ def test_successful_search_and_answer(mock_search_api):
     # Step 1: Search
     result1 = env.step("<search>Who is the president of France?</search>")
     assert not result1["done"]
-    assert result1["reward"] == 0.0
+    assert result1["reward"] is None
     assert len(result1["observations"]) == 1
     assert "Emmanuel Macron" in result1["observations"][0]["content"]
 
@@ -350,7 +350,7 @@ def test_max_turns_reached(mock_search_api):
     # Step 1: Search
     result1 = env.step("<search>Who is the president of France?</search>")
     assert not result1["done"]
-    assert result1["reward"] == 0.0
+    assert result1["reward"] is None
 
     # Step 2: Another search (should terminate due to max turns)
     result2 = env.step("<search>More info about France?</search>")
@@ -371,7 +371,7 @@ def test_search_then_wrong_answer(mock_search_api):
     # Step 1: Search
     result1 = env.step("<search>Who is the president of France?</search>")
     assert not result1["done"]
-    assert result1["reward"] == 0.0
+    assert result1["reward"] is None
 
     # Step 2: Wrong answer
     result2 = env.step("<answer>Nicolas Sarkozy</answer>")
@@ -471,6 +471,6 @@ def test_tool_execution_exception(search_env):
 
         # Should handle the exception gracefully
         assert not result["done"]
-        assert result["reward"] == 0.0
+        assert result["reward"] is None
         assert len(result["observations"]) == 1
         assert "Tool execution failed" in result["observations"][0]["content"]
