@@ -32,7 +32,8 @@ class InferenceWeightsManager:
     This class is used to synchronize the weights of the policy model to the InferenceEngines.
     It also wakes up the inference engine if `colocate_all` is enabled.
 
-    Optionally puts the inference engine to sleep on exit
+    If `no_sync` is enabled, the weights will not be synchronized.
+    Optionally puts the inference engine to sleep on exit if `sleep_on_exit` is `True`
     """
 
     def __init__(
