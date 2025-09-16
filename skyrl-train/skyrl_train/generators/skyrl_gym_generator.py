@@ -246,6 +246,8 @@ class SkyRLGymGenerator(GeneratorInterface):
 
             if len(input_ids) > max_input_length:
                 stop_reason = "length"
+                if per_step_rewards[-1][0] is None:
+                    per_step_rewards[-1] = (0.0, per_step_rewards[-1][1])
                 break
 
         await self._run_in_executor_if_available(env.close)
