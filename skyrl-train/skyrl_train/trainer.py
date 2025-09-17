@@ -382,6 +382,7 @@ class RayPPOTrainer:
 
                 del training_input, generator_output
 
+            # Ensure that the policy model is on GPU at the end of every epoch
             if inference_engine_is_active and self.cfg.trainer.placement.colocate_all:
                 asyncio.run(self.inference_engine_client.sleep())
                 self.policy_model.backload_to_gpu()
