@@ -279,8 +279,9 @@ class RayPPOTrainer:
                         self.weights_manager, condition=not inference_engine_is_active
                     )
 
-                    # NOTE: Policy model is on GPU at the beginning of each training step
-                    # After exiting the context manager, policy model is on CPU with `colocate_all` enabled.
+                    # NOTE: Policy model is on GPU at the beginning of each training step, unless eval was run prior to the step
+                    # in which case the inference engine is active and the policy model is on CPU.
+                    # After exiting the context manager, the policy model is on CPU with `colocate_all` enabled
                     # Policy model stays on cpu because the training loop will carefully backload different models depending on colocation strategy
                     with weights_manager:
                         # 1.1 generation phase
@@ -383,6 +384,10 @@ class RayPPOTrainer:
 
             if self.cfg.trainer.update_ref_every_epoch and self.ref_model is not None:
                 with Timer("update_ref_with_policy", self.all_timings):
+                    if inference_engine_is_active and self.cfg.trainer.placement.colocate_all:
+                        asyncio.run(self.inference_engine_client.sleep())
+                        self.policy_model.backload_to_gpu()
+                        inference_engine_is_active = False
                     self.update_ref_with_policy()
 
         pbar.close()
