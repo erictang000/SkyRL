@@ -382,12 +382,12 @@ class RayPPOTrainer:
 
                 del training_input, generator_output
 
+            if inference_engine_is_active and self.cfg.trainer.placement.colocate_all:
+                asyncio.run(self.inference_engine_client.sleep())
+                self.policy_model.backload_to_gpu()
+                inference_engine_is_active = False
             if self.cfg.trainer.update_ref_every_epoch and self.ref_model is not None:
                 with Timer("update_ref_with_policy", self.all_timings):
-                    if inference_engine_is_active and self.cfg.trainer.placement.colocate_all:
-                        asyncio.run(self.inference_engine_client.sleep())
-                        self.policy_model.backload_to_gpu()
-                        inference_engine_is_active = False
                     self.update_ref_with_policy()
 
         pbar.close()
