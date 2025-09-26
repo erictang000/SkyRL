@@ -21,7 +21,7 @@ torch_profiler_config:
   save_path: null
 
 # kwargs to override the Megatron OptimizerConfig object
-# internally will use arguments from trainer.policy.optimizer_config, then override with these megatron kwargs
+# any overlapping arguments with those in trainer.policy.optimizer_config will be overridden by the values here
 optimizer_config_kwargs:
   overlap_cpu_optimizer_d2h_h2d: false
   use_precision_aware_optimizer: false
