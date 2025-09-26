@@ -20,6 +20,14 @@ torch_profiler_config:
   ranks: []
   save_path: null
 
+# kwargs to override the Megatron OptimizerConfig object
+# internally will use arguments from trainer.policy.optimizer_config, then override with these megatron kwargs
+optimizer_config_kwargs:
+  overlap_cpu_optimizer_d2h_h2d: false
+  use_precision_aware_optimizer: false
+  optimizer_cpu_offload: false
+  optimizer_offload_fraction: 0.0
+
 # kwargs to override the Megatron TransformerConfig object
 transformer_config_kwargs:
   # Recompute config - used for gradient/activation checkpointing
