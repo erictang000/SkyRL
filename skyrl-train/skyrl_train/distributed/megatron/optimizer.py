@@ -24,7 +24,6 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 
 
 def init_megatron_optim_config(optim_config: dict, optimizer_config_kwargs: dict) -> OptimizerConfig:
-    # TODO (erictang000): add support for pass through megatron optimizer kwargs
     optim_args = {
         "optimizer": optim_config.get("optimizer", "adam"),
         "lr": optim_config.get("lr"),
