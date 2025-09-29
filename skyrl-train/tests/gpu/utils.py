@@ -22,7 +22,7 @@ from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.utils import get_ray_pg_ready_with_timeout
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.generators.base import GeneratorInput, ConversationType
-from skyrl_train.utils.utils import peer_access_supported, print_mem, initialize_ray, validate_cfg
+from skyrl_train.utils.utils import peer_access_supported, print_mem, validate_cfg
 from skyrl_train.inference_engines.ray_wrapped_inference_engine import create_ray_wrapped_inference_engines
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 from skyrl_train.inference_engines.base import InferenceEngineInput
@@ -385,7 +385,7 @@ def init_inference_engines(
 ):
     assert use_local, "This test does not yet support remote engines."
     assert backend in ["vllm", "sglang"]
-    initialize_ray(cfg)
+    # initialize_ray(cfg)
     if colocate_all:
         pg = placement_group([{"GPU": 1, "CPU": 1}] * tp_size * num_inference_engines, strategy="PACK")
         get_ray_pg_ready_with_timeout(pg, timeout=30)
@@ -412,6 +412,7 @@ def init_inference_engines(
         tokenizer=tokenizer,
         backend=backend,
         sleep_level=sleep_level,
+        engine_init_kwargs=cfg.generator.engine_init_kwargs,
     )
     client = InferenceEngineClient(eps, tokenizer, cfg)
     if sleep:

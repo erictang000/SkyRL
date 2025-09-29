@@ -20,7 +20,7 @@ from tests.gpu.utils import (
     get_test_prompts,
     Timer,
 )
-from skyrl_train.utils.utils import print_mem, validate_cfg
+from skyrl_train.utils.utils import print_mem, validate_cfg, initialize_ray
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.distributed.dispatch import concatenate_outputs_after_mesh_dispatch
 from skyrl_train.utils.torch_utils import logprobs_from_logits
@@ -113,18 +113,9 @@ def test_megatron_policy_weight_sync():
     """
     Test that we can sync weights between policy and inference for megatron then run inference
     """
-    try:
-        cfg = get_test_actor_config(model_name=MODEL_NAME)
-        cfg.trainer.placement.colocate_all = True
-        cfg.generator.weight_sync_backend = "nccl"
-        cfg.trainer.strategy = "megatron"
-        cfg.generator.backend = "vllm"
-        cfg.generator.inference_engine_tensor_parallel_size = 4
 
-        # set tp and pp to 2 to check that gather for weight sync works correctly
-        cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 2
-        cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 2
-
+    @ray.remote(num_cpus=1)
+    def test_megatron_policy_weight_sync_inner(cfg):
         # If colocate is True, this will load the engine, sleep, and wake up the engine
         client, pg = init_inference_engines(
             model=MODEL_NAME,
@@ -132,6 +123,8 @@ def test_megatron_policy_weight_sync():
             use_local=True,
             async_engine=cfg.generator.async_engine,
             tp_size=cfg.generator.inference_engine_tensor_parallel_size,
+            gpu_memory_utilization=cfg.generator.gpu_memory_utilization,
+            num_inference_engines=cfg.generator.num_inference_engines,
             colocate_all=cfg.trainer.placement.colocate_all,
             backend="vllm",
             sleep_level=2,  # since we explicitly sync weights
@@ -143,9 +136,12 @@ def test_megatron_policy_weight_sync():
             "policy",
             shared_pg=pg,
             colocate_all=cfg.trainer.placement.colocate_all,
-            num_gpus_per_node=cfg.generator.inference_engine_tensor_parallel_size,
+            num_nodes=cfg.trainer.placement.policy_num_nodes,
+            num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
             cfg=cfg,
         )
+        policy.offload_to_cpu()
+        policy.backload_to_gpu()
         ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
         asyncio.run(client.wake_up(tags=["weights"]))
         # TODO (erictang000): improve this timing
@@ -161,8 +157,33 @@ def test_megatron_policy_weight_sync():
         outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME), sampling_params))
 
         print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
-    finally:
-        ray.shutdown()
+
+    MODEL_NAME = "/home/ray/qwen235b"
+    cfg = get_test_actor_config(model_name=MODEL_NAME)
+    cfg.trainer.placement.colocate_all = True
+    cfg.generator.weight_sync_backend = "nccl"
+    cfg.trainer.strategy = "megatron"
+    cfg.generator.backend = "vllm"
+    cfg.generator.num_inference_engines = 4
+    cfg.generator.inference_engine_tensor_parallel_size = 16
+    cfg.generator.gpu_memory_utilization = 0.8
+    cfg.generator.engine_init_kwargs = OmegaConf.create({"max_model_len": 2048})
+
+    # set tp and pp to 2 to check that gather for weight sync works correctly
+    cfg.trainer.placement.policy_num_nodes = 8
+    cfg.trainer.placement.policy_num_gpus_per_node = 8
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 4
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 16
+    cfg.trainer.policy.megatron_config.expert_model_parallel_size = 4
+    cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = 1
+    tf_config_override = OmegaConf.create(cfg.trainer.policy.megatron_config.transformer_config_kwargs)
+    tf_config_override.num_layers_in_last_pipeline_stage = 4
+
+    cfg.trainer.policy.megatron_config.transformer_config_kwargs = tf_config_override
+
+    initialize_ray(cfg)
+
+    ray.get(test_megatron_policy_weight_sync_inner.remote(cfg))
 
 
 @pytest.mark.asyncio
