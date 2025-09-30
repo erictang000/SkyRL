@@ -1,0 +1,137 @@
+Megatron Backend
+================
+
+SkyRL supports NVIDIA's `Megatron-Core <https://developer.nvidia.com/megatron-core>`_ library as an RL training backend, inheriting support for 5D parallelism (tensor+sequence, pipeline, context, expert, and data parallelism), and optimized performance for large scale models (100B+ parameters).
+
+Comparison to FSDP
+------------------
+We show performance comparisons for the Megatron and FSDP2 backends on the Search-R1 task (4K max context length) for various model sizes in the table below. Training speed for small scale dense models with Megatron
+is similar t
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 15 20 20 20 10
+
+   * - Model
+     - Backend
+     - Compute
+     - Policy Training Time (s)
+     - Forward Pass Time (s)
+     - Avg Num Tokens
+   * - Qwen2.5-3B-Instruct
+     - Megatron
+     - 8xH100
+     - 48
+     - 39
+     - 658
+   * - Qwen2.5-3B-Instruct
+     - FSDP2
+     - 8xH100
+     - 42
+     - 28
+     - 658
+   * - Qwen2.5-7B-Instruct
+     - Megatron
+     - 8xH100
+     - 93
+     - 46
+     - 819
+   * - Qwen2.5-7B-Instruct
+     - FSDP2
+     - 8xH100
+     - 100
+     - 33
+     - 834
+   * - Qwen3-30B-A3B
+     - Megatron
+     - 4x8xH100
+     - 189
+     - 145
+     - 1158
+
+For all experiments, we used a train batch size of 512. For Qwen2.5 3B and 7B megatron was configured with only data parallel=8. 
+For Qwen3-30B-A3B megatron was configured with DP=4, TP=2, and EP=8, and the FSDP2 backend was unable to complete a training step due to memory constraints. 
+All statistics shown were averaged over the first 10 steps of training. Micro batch sizes were tuned to be the max possible for each backend.
+
+A script for running the Qwen3-30B-A3B experiment can be found `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_search_megatron.sh>`_.
+
+Reward Curves for above runs shown below:
+
+.. image:: images/search-r1-3b.svg
+
+.. image:: images/search-r1-30b.svg
+
+
+Installation
+------------
+
+Setting up the Docker image
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+To get started, you can follow the instructions for installing via Docker in the :doc:`../getting-started/installation` page, but instead of using the default image, use the ``erictang000/skyrl-train-ray-2.48.0-py3.12-cu12.8-megatron`` image.
+
+This ensures that the necessary dependencies needed for Megatron (i.e. ``TransformerEngine``) are installed and don't need to be built on each node for each run, which can be time consuming.
+
+Environment Variables
+~~~~~~~~~~~~~~~~~~~~~
+After following the installation instructions, set the following environment variables for the ``TransformerEngine`` depdendency to be correctly picked up by the uv + ray integration:
+
+.. code-block:: bash
+
+    export SKYRL_PYTHONPATH_EXPORT=1
+    # where TransformerEngine is installed (via pip) on your machine
+    export PYTHONPATH="/home/ray/anaconda3/lib/python3.12/site-packages"
+
+Flash Attention
+~~~~~~~~~~~~~~~
+Next, in order to use flash attention with the megatron backend, you must use ``flash_attn`` version ``2.7.4.post1`` or lower for compatibility with ``TransformerEngine==2.5.0``.
+You can replace the ``flash-attn`` wheel in the ``pyproject.toml`` file with the following to use the ``2.7.4.post1`` release, and you can find wheels for other versions `here <https://github.com/Dao-AILab/flash-attention/releases>`_.
+
+.. code-block:: bash
+
+    flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.7cxx11abiFALSE-cp312-cp312-linux_x86_64.whl" }
+
+
+Configuration
+-------------
+We provide the following options for configuring the Megatron backend:
+
+.. code-block:: yaml
+    :caption: ``skyrl_train/config/megatron/policy.yaml``
+
+    # @package megatron_config.policy
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: null
+
+    ddp_config:
+        # pass through kwargs to configure the Megatron DDPConfig object
+        # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/distributed/distributed_data_parallel_config.py#L8
+        ...
+    
+    optimizer_config_kwargs:
+        # pass through kwargs to configure the Megatron OptimizerConfig object
+        # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/optimizer/optimizer_config.py#L12
+        ...
+    
+    transformer_config_kwargs:
+        # pass through kwargs to configure the Megatron TransformerConfig object
+        # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/transformer/transformer_config.py#L33
+        ...
+
+These default values can be overridden by passing in the corresponding arguments ``trainer.policy.megatron_config`` in the launch script.
+
+Parallelism Resources
+----------------------
+Understanding and configuring parallelism strategies for large models can be challenging.
+Some helpful resources for understanding large scale parallelism can also be found in the `Huggingface Ultra-Scale Playbook <https://huggingface.co/spaces/nanotron/ultrascale-playbook>`_, 
+the `The Mesh Parallelism Zoo <https://blog.ezyang.com/2025/08/the-parallelism-mesh-zoo/>`_, and the `Visualizing 6-D Parallelism <https://main-horse.github.io/posts/visualizing-6d>`_.
+
+Below, we show a diagram displaying all 5 parallelism strategies - tensor, pipeline, context, expert, and data parallelism - being enabled simultaneously. Note that in Megatron,
+an expert parallel group can span multiple data parallel groups.
+
+.. image:: images/parallelism.svg
+
+
+
