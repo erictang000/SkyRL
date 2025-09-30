@@ -31,7 +31,6 @@ optimizer_config_kwargs:
 # kwargs to override the Megatron TransformerConfig object
 transformer_config_kwargs:
   # Recompute config - used for gradient/activation checkpointing
-  # We enable gradient checkpointing by default
   # for details see: https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/transformer/transformer_config.py#L33
   # options: ["full", "selective", null]
   recompute_granularity: null
