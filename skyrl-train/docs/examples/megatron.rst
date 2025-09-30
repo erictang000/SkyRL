@@ -1,7 +1,10 @@
 Megatron Backend for 5D Parallelism
 ===================================
 
-SkyRL supports NVIDIA's `Megatron-Core <https://developer.nvidia.com/megatron-core>`_ library as an RL training backend, inheriting support for 5D parallelism (tensor+sequence, pipeline, context, expert, and data parallelism), and optimized performance for large scale models (100B+ parameters).
+SkyRL supports NVIDIA's `Megatron-Core <https://developer.nvidia.com/megatron-core>`_ library as an RL training backend, inheriting support for 5D parallelism (tensor+sequence, pipeline, context, expert, and data parallelism), and optimized performance for large scale models.
+
+We provide example scripts for running efficient large scale MoE training with models like ``Qwen3-30B-A3B`` using Megatron in the `examples/megatron <https://github.com/NovaSky-AI/SkyRL/tree/main/skyrl-train/examples/megatron>`_ directory.
+For details on configuring the Megatron backend, and enabling checkpointing, see :ref:`megatron-configurations`, and :ref:`megatron-checkpointing`.
 
 Comparison to FSDP
 ------------------
@@ -53,10 +56,6 @@ For all experiments, we used a train batch size of 512. For Qwen2.5 3B and 7B Me
 For Qwen3-30B-A3B Megatron was configured with DP=4, TP=2, and EP=8, and the FSDP2 backend was unable to complete a training step due to memory constraints. 
 All statistics shown were averaged over the first 10 steps of training. Micro batch sizes were tuned to be the max possible for each backend.
 
-A script for running the Qwen3-30B-A3B experiment can be found `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_search_megatron.sh>`_.
-
-Reward Curves for above runs shown below:
-
 .. list-table::
    :widths: 50 50
    :header-rows: 0
@@ -68,20 +67,25 @@ Reward Curves for above runs shown below:
          :width: 400px
          :align: center
 
-.. centered:: Left: Qwen2.5-3B-Instruct reward curve for Megatron and FSDP2. Right: Qwen3-30B-A3B reward curve for Megatron vs Qwen2.5-3B-Instruct reward curve for FSDP2.
+.. centered:: Left: Matching Qwen2.5-3B-Instruct reward curves for Megatron and FSDP2. Right: Qwen3-30B-A3B reward curve for Megatron (330 steps on 4 H100 nodes over 4 days) vs Qwen2.5-3B FSDP baseline.
+
+A script for running the Qwen3-30B-A3B experiment can be found `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_search_megatron.sh>`_. 
+Additionally, we provide a script for running basic GSM8K training on Qwen3-235B-A22B with Megatron `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_megatron_qwen3-235b-a22b.sh>`_. 
+Note that although training at 100B+ scale using Megatron is currently possible, we are in the process of further optimizing peformance for higher throughput training.
+
 
 Installation
 ------------
 
 Setting up the Docker image
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-To get started, you can follow the instructions for installing via Docker in the :doc:`../getting-started/installation` page, but instead of using the default image, use the ``erictang000/skyrl-train-ray-2.48.0-py3.12-cu12.8-megatron`` image.
+To get started, you can follow the instructions for installing via Docker in the :doc:`../getting-started/installation` page, but using the ``erictang000/skyrl-train-ray-2.48.0-py3.12-cu12.8-megatron`` image instead of the default image.
 
 This ensures that the necessary dependencies needed for Megatron (i.e. ``TransformerEngine``) are installed and don't need to be built on each node for each run, which can be time consuming.
 
 Environment Variables
 ~~~~~~~~~~~~~~~~~~~~~
-After following the installation instructions, set the following environment variables for the ``TransformerEngine`` dependency to be correctly picked up by the uv + ray integration:
+After following the installation instructions, set the following environment variables for the ``TransformerEngine`` dependency to be correctly picked up by the uv + ray integration (since we currently exclude it from the pyproject.toml file to avoid building it on each node):
 
 .. code-block:: bash
 
@@ -101,8 +105,8 @@ You can replace the ``flash-attn`` wheel in the ``pyproject.toml`` file with the
 
 Configuration
 -------------
-We provide the following options for fully configuring the Megatron backend. We expose the underlying Megatron optimizer, DDP, and model config objects
-for advanced users to fully take advantage of all of Megatron-Core's feature flags.
+We provide the following options for fully configuring the Megatron backend, exposing the underlying Megatron optimizer, DDP, and model config objects
+for advanced users to fully take advantage of all of Megatron-Core's feature flags. For more details, see the :ref:`megatron-configurations` section.
 
 .. code-block:: yaml
     :caption: ``skyrl_train/config/megatron/policy.yaml``
@@ -134,11 +138,10 @@ These default values can be overridden by passing in the corresponding arguments
 Parallelism Resources
 ----------------------
 Understanding and configuring parallelism strategies for large models can be challenging.
-Some helpful resources for understanding and tuning large scale parallelism strategies can also be found in the `Huggingface Ultra-Scale Playbook <https://huggingface.co/spaces/nanotron/ultrascale-playbook?section=finding_the_best_training_configuration>`_, 
+Some helpful resources for understanding and tuning large scale parallelism strategies can be found at the `Huggingface Ultra-Scale Playbook <https://huggingface.co/spaces/nanotron/ultrascale-playbook?section=finding_the_best_training_configuration>`_, 
 the `The Mesh Parallelism Zoo <https://blog.ezyang.com/2025/08/the-parallelism-mesh-zoo/>`_, and the `Visualizing 6-D Parallelism <https://main-horse.github.io/posts/visualizing-6d>`_.
 
-Below, we show a diagram displaying all 5 parallelism strategies - tensor, pipeline, context, expert, and data parallelism - being enabled simultaneously. Note that in Megatron,
-an expert parallel group can span multiple data parallel groups.
+Below, we show a diagram displaying how all 5 parallelism strategies - tensor, pipeline, context, expert, and data parallelism - can be utilized in SkyRL, as well as how dispatching data across these parallel groups works.
 
 .. image:: images/parallelism.svg
 

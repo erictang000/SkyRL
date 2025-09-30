@@ -158,6 +158,8 @@ We use the same configuration group for FSDP1 and FSDP2
 
     In `skyrl-train`, we offload worker state in certain colocation settings - however this happens only after the training step/ log probability computation - thus optimizer step and model forward pass happen as usual with sharded parameters on GPU. For more details, refer to the guide on :doc:`model placement and colocation <placement>`
 
+.. _megatron-configurations:
+
 Megatron Configuration
 ~~~~~~~~~~~~~~~~~~~~~~
 

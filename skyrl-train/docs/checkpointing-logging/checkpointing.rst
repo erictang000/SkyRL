@@ -25,7 +25,7 @@ Directory Structure
 
 The checkpointing directory structure depends on the training backend used. 
 
-FSDP
+FSDP Checkpointing
 ~~~~~~~~~~~~~~~~~~~~
 
 FSDP checkpoints are organized according to the following directory hierarchy:
@@ -58,8 +58,10 @@ FSDP checkpoints are organized according to the following directory hierarchy:
     └── global_step_30/                      # Checkpoint at training step 30
         └── ...
 
-Megatron
-~~~~~~~~~~~~~~~~~~~~
+.. _megatron-checkpointing:
+
+Megatron Checkpointing
+~~~~~~~~~~~~~~~~~~~~~~
 
 Megatron checkpoints are handled by the Megatron `dist_checkpointing <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/dist_checkpointing.html>`_ library to perform checkpointing in parallel across ranks. 
 This comes with support for reloading checkpoints in a different parallelism scheme than the one they were saved in.
@@ -80,8 +82,8 @@ This comes with support for reloading checkpoints in a different parallelism sch
     └── global_step_30/                      # Checkpoint at training step 30
         └── ...
 
-DeepSpeed
-~~~~~~~~~~~~~~~~~~~~
+DeepSpeed Checkpointing
+~~~~~~~~~~~~~~~~~~~~~~~
 
 DeepSpeed checkpoints follow a similar directory structure but the model checkpoint files under ``policy`` and ``critic`` are created by the DeepSpeed checkpoint API, and are not explicitly managed by SkyRL.
 
