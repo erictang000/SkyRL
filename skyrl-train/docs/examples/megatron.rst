@@ -71,8 +71,11 @@ All statistics shown were averaged over the first 10 steps of training. Micro ba
 
 A script for running the Qwen3-30B-A3B experiment can be found `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_search_megatron.sh>`_. 
 Additionally, we provide a script for running basic GSM8K training on Qwen3-235B-A22B with Megatron `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_megatron_qwen3-235b-a22b.sh>`_. 
-Note that although training at 100B+ scale using Megatron is currently possible, we are in the process of further optimizing peformance for higher throughput training.
+Note that although training at 100B+ scale using Megatron is currently possible, we are in the process of further optimizing peformance.
 
+For more details on configuring the Megatron backend, and enabling checkpointing, see :ref:`megatron-configurations`, and :ref:`megatron-checkpointing`.
+
+.. _megatron-installation:
 
 Installation
 ------------
