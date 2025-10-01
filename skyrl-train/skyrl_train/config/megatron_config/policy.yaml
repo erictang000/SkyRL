@@ -23,6 +23,7 @@ torch_profiler_config:
 # kwargs to override the Megatron OptimizerConfig object
 # any overlapping arguments with those in trainer.policy.optimizer_config will be overridden by the values here
 optimizer_config_kwargs:
+  # set these all to true (and optimizer_offload_fraction=1.0) for optimizer cpu offloading
   overlap_cpu_optimizer_d2h_h2d: false
   use_precision_aware_optimizer: false
   optimizer_cpu_offload: false
@@ -32,6 +33,7 @@ optimizer_config_kwargs:
 transformer_config_kwargs:
   # Recompute config - used for gradient/activation checkpointing
   # for details see: https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/transformer/transformer_config.py#L33
+  # options: ["full", "selective", null]
   recompute_granularity: null
   recompute_modules: ["core_attn"]
   recompute_method: null
