@@ -67,7 +67,7 @@ All statistics shown were averaged over the first 10 steps of training. Micro ba
          :width: 400px
          :align: center
 
-.. centered:: Left: Matching Qwen2.5-3B-Instruct reward curves for Megatron and FSDP2. Right: Qwen3-30B-A3B reward curve for Megatron (330 steps on 4 H100 nodes over 4 days) vs Qwen2.5-3B FSDP baseline.
+.. centered:: Left: Matching Qwen2.5-3B-Instruct reward curves for Megatron and FSDP2. Right: Qwen3-30B-A3B reward curve for Megatron (330 steps on 4 8xH100 nodes over 4 days).
 
 A script for running the Qwen3-30B-A3B experiment can be found `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_search_megatron.sh>`_. 
 Additionally, we provide a script for running basic GSM8K training on Qwen3-235B-A22B with Megatron `here <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/megatron/run_megatron_qwen3-235b-a22b.sh>`_. 
