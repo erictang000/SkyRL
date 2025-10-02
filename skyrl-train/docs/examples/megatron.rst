@@ -121,20 +121,17 @@ for advanced users to fully take advantage of all of Megatron-Core's feature fla
     expert_model_parallel_size: 1
     expert_tensor_parallel_size: null
 
-    ddp_config:
-        # pass through kwargs to configure the Megatron DistributedDataParallelConfig object
-        # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/distributed/distributed_data_parallel_config.py#L8
-        ...
-    
-    optimizer_config_kwargs:
-        # pass through kwargs to configure the Megatron OptimizerConfig object
-        # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/optimizer/optimizer_config.py#L12
-        ...
-    
-    transformer_config_kwargs:
-        # pass through kwargs to configure the Megatron TransformerConfig object
-        # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/transformer/transformer_config.py#L33
-        ...
+    ddp_config: # pass-through config to Megatron's `DistributedDataParallelConfig` object
+      # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/distributed/distributed_data_parallel_config.py#L8
+      ...
+    optimizer_config_kwargs: # pass-through kwargs to Megatron's `OptimizerConfig` object
+      # any overlapping arguments with those we attempt to resolve in trainer.policy.optimizer_config will be overridden by the values here
+      # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/optimizer/optimizer_config.py#L12
+      ...
+    transformer_config_kwargs: # pass-through kwargs to the Megatron's `TransformerConfig` object
+      # https://github.com/NVIDIA/Megatron-LM/blob/core_r0.13.0/megatron/core/transformer/transformer_config.py#L33
+      ...
+
 
 These default values can be overridden by passing in the corresponding arguments to ``trainer.policy.megatron_config`` in the launch script.
 
