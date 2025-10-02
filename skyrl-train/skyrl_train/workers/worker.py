@@ -258,11 +258,12 @@ class Worker(DistributedTorchRayActor):
                 sock.bind(("", 0))
                 master_port = sock.getsockname()[1]
 
-            num_inference_engines, tensor_parallel_size = (
+            num_inference_engines, tensor_parallel_size, data_parallel_size = (
                 self.cfg.generator.num_inference_engines,
                 self.cfg.generator.inference_engine_tensor_parallel_size,
+                self.cfg.generator.inference_engine_data_parallel_size,
             )
-            world_size = num_inference_engines * tensor_parallel_size + 1
+            world_size = num_inference_engines * tensor_parallel_size * data_parallel_size + 1
 
             backend = self.cfg.generator.weight_sync_backend
 
@@ -1032,30 +1033,6 @@ class CriticWorkerBase(Worker):
             load_lr_scheduler_states=load_lr_scheduler_states,
         )
         return states
-
-
-class RewardWorkerBase(Worker):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.model: nn.Module = None
-
-    def _forward_micro_batch(
-        self,
-        micro_batch: TrainingInputBatch,
-    ) -> TrainingOutputBatch:
-        device = torch.cuda.current_device()
-        micro_batch.to(device)
-        sequences = micro_batch["sequences"]
-        attention_mask = micro_batch["attention_mask"]
-        self.model.eval()
-        with torch.no_grad(), torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
-            reward = self.model(sequences, attention_mask)
-        reward = reward.to("cpu")
-        output = TrainingOutputBatch(
-            {"output": reward},
-        )
-        output.metadata = micro_batch.metadata
-        return output
 
 
 class RefWorkerBase(Worker):

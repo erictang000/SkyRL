@@ -1,10 +1,11 @@
 set -x
 
 # Colocated GRPO training+generation for Moonlight-16B-A3B-Instruct on GSM8K with Megatron.
+# Runs on 2 nodes of 8xH100s
 
 # uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # export WANDB_API_KEY=<your_key_here>
-# bash examples/training_backends/megatron/run_megatron_moonlight.sh
+# bash examples/megatron/run_megatron_moonlight.sh
 
 # running moonlight16b
 # huggingface-cli download moonshotai/Moonlight-16B-A3B-Instruct --local-dir ~/moonlight16b
@@ -32,6 +33,8 @@ INFERENCE_ENGINE_TP=8
 FLASH_ATTN=false
 
 export SKYRL_PYTHONPATH_EXPORT=1
+# make sure PYTHONPATH is set to the location of TransformerEngine installation
+export PYTHONPATH="$HOME/anaconda3/lib/python3.12/site-packages"
 
 uv run --isolated --extra $INFERENCE_BACKEND --extra mcore --with blobfile -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
