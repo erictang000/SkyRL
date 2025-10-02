@@ -63,50 +63,56 @@ def get_test_training_batch(batch_size=4) -> TrainingInputBatch:
     Attention masks are 1 for non-padding tokens, 0 for padding tokens
     The rest of the fields are filled with dummy data
     """
-    assert batch_size % 4 == 0, "batch size must be divisible by 4"
-    num_repeats = batch_size // 4
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
-    sentences = [
-        "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-        "<|im_start|>user\nThe selling price of a bicycle that had sold $220 last year was increased by 15",
-        "What is the new price? Let's think step by step and output the final answer after `####`.<|im_end|>\n",
-        "<|im_start|>assistant\nTo find the new price of the bicycle after the increase,",
-    ] * num_repeats
+    import pickle
+    with open("/mnt/cluster_storage/searchr1_qwen30b_batch.pkl", "rb") as f:
+        batch = pickle.load(f)
+    return batch
 
-    sequences = [tokenizer.encode(sentence) for sentence in sentences]
-    attention_masks = [[1] * len(seq) for seq in sequences]
-    num_actions = 10
-    # max seq len 1 longer than the longest sequence so we always have some padding
-    max_seq_length = max([len(seq) for seq in sequences]) + 7
+    # assert batch_size % 4 == 0, "batch size must be divisible by 4"
+    # num_repeats = batch_size // 4
+    # tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
-    pad_token_id = tokenizer.pad_token_id
-    pad_before = [4, 0, 1, 6] * num_repeats
-    pad_after = [max_seq_length - len(seq) - pad_before[i] for i, seq in enumerate(sequences)]
+    # sentences = [
+    #     "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+    #     "<|im_start|>user\nThe selling price of a bicycle that had sold $220 last year was increased by 15",
+    #     "What is the new price? Let's think step by step and output the final answer after `####`.<|im_end|>\n",
+    #     "<|im_start|>assistant\nTo find the new price of the bicycle after the increase,",
+    # ] * num_repeats
 
-    for i, (pad_before, pad_after) in enumerate(zip(pad_before, pad_after)):
-        sequences[i] = [pad_token_id] * pad_before + sequences[i] + [pad_token_id] * pad_after
-        attention_masks[i] = [0] * pad_before + attention_masks[i] + [0] * pad_after
+    # sequences = [tokenizer.encode(sentence) for sentence in sentences]
+    # attention_masks = [[1] * len(seq) for seq in sequences]
+    # num_actions = 10
+    # # max seq len 1 longer than the longest sequence so we always have some padding
+    # max_seq_length = max([len(seq) for seq in sequences]) + 7
 
-    attention_masks = torch.tensor(attention_masks)
-    sequences = torch.tensor(sequences)
+    # pad_token_id = tokenizer.pad_token_id
+    # pad_before = [4, 0, 1, 6] * num_repeats
+    # pad_after = [max_seq_length - len(seq) - pad_before[i] for i, seq in enumerate(sequences)]
 
-    data = TrainingInputBatch(
-        {
-            "sequences": sequences,
-            "attention_mask": attention_masks,
-            "action_log_probs": torch.tensor([[0.1] * num_actions] * batch_size),
-            "base_action_log_probs": torch.tensor([[0.2] * num_actions] * batch_size),
-            "rollout_logprobs": torch.tensor([[0.11] * num_actions] * batch_size),
-            "values": torch.tensor([[0.1] * num_actions] * batch_size),
-            "returns": torch.tensor([[0.1] * num_actions] * batch_size),
-            "advantages": torch.tensor([[0.5] * num_actions] * batch_size),
-            "loss_mask": torch.tensor([[1] * num_actions] * batch_size),
-            "response_mask": torch.tensor([[1] * num_actions] * batch_size),
-        }
-    )
-    data.metadata = {"response_length": num_actions}
-    return data
+    # for i, (pad_before, pad_after) in enumerate(zip(pad_before, pad_after)):
+    #     sequences[i] = [pad_token_id] * pad_before + sequences[i] + [pad_token_id] * pad_after
+    #     attention_masks[i] = [0] * pad_before + attention_masks[i] + [0] * pad_after
+
+    # attention_masks = torch.tensor(attention_masks)
+    # sequences = torch.tensor(sequences)
+
+    # data = TrainingInputBatch(
+    #     {
+    #         "sequences": sequences,
+    #         "attention_mask": attention_masks,
+    #         "action_log_probs": torch.tensor([[0.1] * num_actions] * batch_size),
+    #         "base_action_log_probs": torch.tensor([[0.2] * num_actions] * batch_size),
+    #         "rollout_logprobs": torch.tensor([[0.11] * num_actions] * batch_size),
+    #         "values": torch.tensor([[0.1] * num_actions] * batch_size),
+    #         "returns": torch.tensor([[0.1] * num_actions] * batch_size),
+    #         "advantages": torch.tensor([[0.5] * num_actions] * batch_size),
+    #         "loss_mask": torch.tensor([[1] * num_actions] * batch_size),
+    #         "response_mask": torch.tensor([[1] * num_actions] * batch_size),
+    #     }
+    # )
+    # data.metadata = {"response_length": num_actions}
+    # return data
 
 
 def test_megatron_policy_weight_sync():
@@ -118,7 +124,7 @@ def test_megatron_policy_weight_sync():
     def test_megatron_policy_weight_sync_inner(cfg):
         # If colocate is True, this will load the engine, sleep, and wake up the engine
         client, pg = init_inference_engines(
-            model=MODEL_NAME,
+            model=cfg.trainer.policy.model.path,
             cfg=cfg,
             use_local=True,
             async_engine=cfg.generator.async_engine,
@@ -131,7 +137,7 @@ def test_megatron_policy_weight_sync():
         )
 
         asyncio.run(client.sleep())
-
+        
         policy = init_worker_with_type(
             "policy",
             shared_pg=pg,
@@ -143,7 +149,27 @@ def test_megatron_policy_weight_sync():
         policy.offload_to_cpu()
         policy.backload_to_gpu()
         ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
+
+        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+        memory = memory[0]
+        print_mem("memory before training step", memory)
+        batch = get_test_training_batch()
+
+        ray.get(policy.async_run_ray_method("mesh", "ppo_train", batch))
+
+        # empty cache?
+        ray.get(policy.async_run_ray_method("pass_through", "empty_cache"))
+        # policy.offload_to_cpu()
+        # policy.backload_to_gpu()
+
+        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+        memory = memory[0]
+        print_mem("memory after training step", memory)
+
         asyncio.run(client.wake_up(tags=["weights"]))
+        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+        memory = memory[0]
+        print_mem("memory after infer backload", memory)
         # TODO (erictang000): improve this timing
         # currently this is ~30 seconds for a 14B MoE model (on 8xL40S)
         # or ~20 seconds on 8xH100
@@ -151,35 +177,47 @@ def test_megatron_policy_weight_sync():
         with Timer("sync_weights"):
             ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
 
+        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+        memory = memory[0]
+        print_mem("memory after sync weights", memory)
+
         policy.offload_to_cpu()
+
+        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+        memory = memory[0]
+        print_mem("memory after offload to cpu", memory)
         asyncio.run(client.wake_up(tags=["kv_cache"]))
+
+        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+        memory = memory[0]
+        print_mem("memory after kv cache wake up", memory)
         sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
-        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME), sampling_params))
+        outputs = asyncio.run(run_inference(client, get_test_prompts(cfg.trainer.policy.model.path), sampling_params))
 
         print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
 
-    MODEL_NAME = "/home/ray/qwen235b"
-    cfg = get_test_actor_config(model_name=MODEL_NAME)
+    model_name = "Qwen/Qwen3-0.6B"
+    cfg = get_test_actor_config(model_name=model_name)
     cfg.trainer.placement.colocate_all = True
     cfg.generator.weight_sync_backend = "nccl"
     cfg.trainer.strategy = "megatron"
     cfg.generator.backend = "vllm"
-    cfg.generator.num_inference_engines = 4
-    cfg.generator.inference_engine_tensor_parallel_size = 16
-    cfg.generator.gpu_memory_utilization = 0.8
+    cfg.generator.num_inference_engines = 1
+    cfg.generator.inference_engine_tensor_parallel_size = 8
+    cfg.generator.gpu_memory_utilization = 0.6
     cfg.generator.engine_init_kwargs = OmegaConf.create({"max_model_len": 2048})
+    cfg.trainer.policy.record_memory = False
 
     # set tp and pp to 2 to check that gather for weight sync works correctly
-    cfg.trainer.placement.policy_num_nodes = 8
+    cfg.trainer.placement.policy_num_nodes = 1
     cfg.trainer.placement.policy_num_gpus_per_node = 8
-    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 4
-    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 16
-    cfg.trainer.policy.megatron_config.expert_model_parallel_size = 4
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 1
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 1
+    cfg.trainer.policy.megatron_config.expert_model_parallel_size = 1
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = 1
-    tf_config_override = OmegaConf.create(cfg.trainer.policy.megatron_config.transformer_config_kwargs)
-    tf_config_override.num_layers_in_last_pipeline_stage = 4
-
-    cfg.trainer.policy.megatron_config.transformer_config_kwargs = tf_config_override
+    # cfg.trainer.policy.megatron_config.transformer_config_kwargs.recompute_granularity = "full"
+    # cfg.trainer.policy.megatron_config.transformer_config_kwargs.recompute_method = "uniform"
+    # cfg.trainer.policy.megatron_config.transformer_config_kwargs.recompute_num_layers = 1
 
     initialize_ray(cfg)
 

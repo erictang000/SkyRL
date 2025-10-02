@@ -29,7 +29,7 @@ from skyrl_train.inference_engines.base import InferenceEngineInput
 from skyrl_train.inference_engines.remote_inference_engine import create_remote_inference_engines
 from skyrl_train.utils.constants import SKYRL_PYTHONPATH_EXPORT
 
-TEST_DATA_PATH = os.path.expanduser("~/data/gsm8k/validation.parquet")
+TEST_DATA_PATH = os.path.expanduser("/mnt/cluster_storage/gsm8k/validation.parquet")
 
 
 def get_test_actor_config() -> DictConfig:
