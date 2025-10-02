@@ -13,7 +13,7 @@ ddp_config:
   overlap_param_gather: false
   average_in_collective: true
 
-# kwargs to override the HF model config
+# pass-through kwargs to the HuggingFace model config (i.e. for overriding vocab size, etc)
 model_config_kwargs: {}
 
 torch_profiler_config:
