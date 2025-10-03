@@ -73,15 +73,33 @@ class InferenceWeightsManager:
         """
         if self.colocate_all:
             asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
+            from skyrl_train.utils import print_mem
+            memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after wake up inf engine", memory)
 
         if not self.no_sync:
             with Timer("sync_weights_to_inference_engines"):
                 ray.get(self.sync_policy_weights_to_inference_engines())
 
+            from skyrl_train.utils import print_mem
+            memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after sync weights", memory)
+
         if self.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
                 self.policy_model.offload_to_cpu()
+            from skyrl_train.utils import print_mem
+            memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after offload to cpu", memory)
             asyncio.run(self.inference_engine_client.wake_up(tags=["kv_cache"]))
+
+            from skyrl_train.utils import print_mem
+            memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after wake up kv cache", memory)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):

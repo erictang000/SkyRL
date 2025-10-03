@@ -65,7 +65,7 @@ def get_test_training_batch(batch_size=4) -> TrainingInputBatch:
     """
 
     import pickle
-    with open("/mnt/cluster_storage/searchr1_qwen30b_batch.pkl", "rb") as f:
+    with open("/mnt/cluster_storage/qwen3-0.6b-gsm8k_batch.pkl", "rb") as f:
         batch = pickle.load(f)
     return batch
 
@@ -147,54 +147,57 @@ def test_megatron_policy_weight_sync():
             cfg=cfg,
         )
         policy.offload_to_cpu()
-        policy.backload_to_gpu()
         ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
+        for i in range(5):
+            policy.backload_to_gpu()
 
-        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
-        memory = memory[0]
-        print_mem("memory before training step", memory)
-        batch = get_test_training_batch()
+            memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory before training step", memory)
+            batch = get_test_training_batch()
 
-        ray.get(policy.async_run_ray_method("mesh", "ppo_train", batch))
+            ray.get(policy.async_run_ray_method("mesh", "ppo_train", batch))
 
-        # empty cache?
-        ray.get(policy.async_run_ray_method("pass_through", "empty_cache"))
-        # policy.offload_to_cpu()
-        # policy.backload_to_gpu()
+            # empty cache?
+            ray.get(policy.async_run_ray_method("pass_through", "empty_cache"))
+            # policy.offload_to_cpu()
+            # policy.backload_to_gpu()
 
-        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
-        memory = memory[0]
-        print_mem("memory after training step", memory)
+            memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after training step", memory)
 
-        asyncio.run(client.wake_up(tags=["weights"]))
-        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
-        memory = memory[0]
-        print_mem("memory after infer backload", memory)
-        # TODO (erictang000): improve this timing
-        # currently this is ~30 seconds for a 14B MoE model (on 8xL40S)
-        # or ~20 seconds on 8xH100
-        # ~75 seconds on 8xH100 for Qwen3-30B-A3B
-        with Timer("sync_weights"):
-            ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
+            asyncio.run(client.wake_up(tags=["weights"]))
+            memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after infer backload", memory)
+            # TODO (erictang000): improve this timing
+            # currently this is ~30 seconds for a 14B MoE model (on 8xL40S)
+            # or ~20 seconds on 8xH100
+            # ~75 seconds on 8xH100 for Qwen3-30B-A3B
+            with Timer("sync_weights"):
+                ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
 
-        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
-        memory = memory[0]
-        print_mem("memory after sync weights", memory)
+            memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after sync weights", memory)
 
-        policy.offload_to_cpu()
+            policy.offload_to_cpu()
 
-        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
-        memory = memory[0]
-        print_mem("memory after offload to cpu", memory)
-        asyncio.run(client.wake_up(tags=["kv_cache"]))
+            memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after offload to cpu", memory)
+            asyncio.run(client.wake_up(tags=["kv_cache"]))
 
-        memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
-        memory = memory[0]
-        print_mem("memory after kv cache wake up", memory)
-        sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
-        outputs = asyncio.run(run_inference(client, get_test_prompts(cfg.trainer.policy.model.path), sampling_params))
+            memory = ray.get(policy.async_run_ray_method("pass_through", "get_cuda_memory"))
+            memory = memory[0]
+            print_mem("memory after kv cache wake up", memory)
+            sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
+            outputs = asyncio.run(run_inference(client, get_test_prompts(cfg.trainer.policy.model.path), sampling_params))
 
-        print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
+            # print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
+
+            asyncio.run(client.sleep())
 
     model_name = "Qwen/Qwen3-0.6B"
     cfg = get_test_actor_config(model_name=model_name)
@@ -203,14 +206,14 @@ def test_megatron_policy_weight_sync():
     cfg.trainer.strategy = "megatron"
     cfg.generator.backend = "vllm"
     cfg.generator.num_inference_engines = 1
-    cfg.generator.inference_engine_tensor_parallel_size = 8
+    cfg.generator.inference_engine_tensor_parallel_size = 4
     cfg.generator.gpu_memory_utilization = 0.6
     cfg.generator.engine_init_kwargs = OmegaConf.create({"max_model_len": 2048})
     cfg.trainer.policy.record_memory = False
 
     # set tp and pp to 2 to check that gather for weight sync works correctly
     cfg.trainer.placement.policy_num_nodes = 1
-    cfg.trainer.placement.policy_num_gpus_per_node = 8
+    cfg.trainer.placement.policy_num_gpus_per_node = 4
     cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 1
     cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 1
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = 1

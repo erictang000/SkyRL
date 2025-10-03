@@ -26,7 +26,7 @@ from skyrl_train.dataset.preprocess import (
     convert_prompts_responses_to_batch_tensors,
 )
 from skyrl_train.utils import ppo_utils
-from skyrl_train.utils import trainer_utils, io
+from skyrl_train.utils import trainer_utils, io, print_mem
 from skyrl_train.utils import Timer, get_ray_pg_ready_with_timeout
 from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
 from skyrl_train.utils.ppo_utils import (
@@ -193,6 +193,10 @@ class RayPPOTrainer:
                         self.weights_manager, condition=not inference_engine_is_active
                     )
 
+                    memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+                    memory = memory[0]
+                    print_mem("memory before generation", memory)
+
                     # NOTE: Policy model is on GPU at the beginning of each training step, unless eval was run prior to the step
                     # in which case the inference engine is active and the policy model is on CPU.
                     # After exiting the context manager, the policy model is on CPU with `colocate_all` enabled
@@ -254,10 +258,18 @@ class RayPPOTrainer:
                         with Timer("dump_data_batch"):
                             self.dump_data(training_input, file_name=f"global_step_{self.global_step}_training_input")
 
+                    memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+                    memory = memory[0]
+                    print_mem("memory before training step", memory)
+
                     # 4. train policy/critic model
                     # Policy model is backloaded to GPU during training
                     with Timer("train_critic_and_policy", self.all_timings):
                         status = self.train_critic_and_policy(training_input)
+
+                    memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
+                    memory = memory[0]
+                    print_mem("memory after training step", memory)
 
                 # 5. conditionally save checkpoints and hf model
                 if self.cfg.trainer.ckpt_interval > 0 and self.global_step % self.cfg.trainer.ckpt_interval == 0:
