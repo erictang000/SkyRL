@@ -27,12 +27,12 @@ from skyrl_train.workers.worker import (
 
 
 class FSDPPolicyRayActorBase(PolicyWorkerBase):
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True):
+    def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
         self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(self.model, self.optimizer, pin_memory, non_blocking)
+        self.strategy.offload_to_cpu(self.model, self.optimizer, pin_memory, non_blocking, offload_optimizer, offload_model)
 
-    def backload_to_gpu(self, non_blocking=True):
-        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking)
+    def backload_to_gpu(self, non_blocking=True, backload_optimizer=True, backload_model=True):
+        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking, backload_optimizer, backload_model)
 
     def init_model(self, model_path, num_training_steps: int = None):
         assert self.cfg.trainer.strategy in ("fsdp", "fsdp2")
@@ -232,12 +232,12 @@ class FSDPPolicyRayActorBase(PolicyWorkerBase):
 
 
 class FSDPCriticRayActorBase(CriticWorkerBase):
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True):
+    def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
         self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(self.model, self.optimizer, pin_memory, non_blocking)
+        self.strategy.offload_to_cpu(self.model, self.optimizer, pin_memory, non_blocking, offload_optimizer, offload_model)
 
-    def backload_to_gpu(self, non_blocking=True):
-        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking)
+    def backload_to_gpu(self, non_blocking=True, backload_optimizer=True, backload_model=True):
+        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking, backload_optimizer, backload_model)
 
     def init_model(self, model_path, num_training_steps: int = None):
         assert self.cfg.trainer.strategy in ("fsdp", "fsdp2")
