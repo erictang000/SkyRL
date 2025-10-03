@@ -19,7 +19,7 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
         """
         Main training loop for PPO
         """
-        assert not self.cfg.trainer.placement.colocate_all, "colocate_all is not supported for async training"
+        assert not self.colocate_all, "colocate_all is not supported for async training"
 
         self.global_step = 0
 
