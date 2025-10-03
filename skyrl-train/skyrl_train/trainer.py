@@ -164,7 +164,7 @@ class RayPPOTrainer:
         for epoch in range(self.cfg.trainer.epochs):
             for iter, rand_prompts in enumerate(self.train_dataloader):
                 with Timer("step", self.all_timings):
-                    # inference engine is always active when starting the training step
+                    # for colocate_all=true, inference engine is always on GPU when starting the training step
 
                     # 0. truncate data to have even shards
                     rand_prompts = self._remove_tail_data(rand_prompts)

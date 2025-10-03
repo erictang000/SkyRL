@@ -8,6 +8,7 @@ import ray
 
 # TODO (erictang000): remove this file once no longer in use by SkyRLAgent
 
+
 class ConditionalWeightsManager:
     def __init__(self, weights_manager, condition):
         self.weights_manager = weights_manager
