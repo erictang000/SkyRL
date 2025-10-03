@@ -71,6 +71,7 @@ class RayPPOTrainer:
         eval_dataset: Optional[PromptDataset] = None,
     ):
         self.cfg = cfg
+        self.colocate_all = cfg.trainer.placement.colocate_all
         self.tracker = tracker
         self.tokenizer = tokenizer
         self.train_dataset = train_dataset
@@ -131,7 +132,7 @@ class RayPPOTrainer:
             self.init_weight_sync_state()
 
         # Load policy model to GPU before loading checkpoint.
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             self.policy_model.backload_to_gpu()
 
         # Load checkpoint state if resumption is enabled.
@@ -139,12 +140,12 @@ class RayPPOTrainer:
             with Timer("load_checkpoints"):
                 self.global_step = self.load_checkpoints()
 
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             self.policy_model.offload_to_cpu(offload_optimizer=True, offload_model=False)
             asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
         with Timer("sync_weights"):
             ray.get(self.sync_policy_weights_to_inference_engines())
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
                 self.policy_model.offload_to_cpu(offload_optimizer=False, offload_model=True)
             asyncio.run(self.inference_engine_client.wake_up(tags=["kv_cache"]))
@@ -251,17 +252,18 @@ class RayPPOTrainer:
                         self.cfg.trainer.update_ref_every_epoch
                         and self.ref_model is not None
                         and iter == len(self.train_dataloader) - 1
+                        and epoch != self.cfg.trainer.epochs - 1  # skip updating ref at the end of the last epoch
                     ):
                         with Timer("update_ref_with_policy", self.all_timings):
                             self.update_ref_with_policy()
 
                     # 7. sync weights to inference engines
-                    if self.cfg.trainer.placement.colocate_all:
+                    if self.colocate_all:
                         self.policy_model.offload_to_cpu(offload_optimizer=True, offload_model=False)
                         asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
                     with Timer("sync_weights", self.all_timings):
                         ray.get(self.sync_policy_weights_to_inference_engines())
-                    if self.cfg.trainer.placement.colocate_all:
+                    if self.colocate_all:
                         with Timer("offload_policy_model_to_cpu"):
                             self.policy_model.offload_to_cpu(offload_optimizer=False, offload_model=True)
                         asyncio.run(self.inference_engine_client.wake_up(tags=["kv_cache"]))
@@ -294,6 +296,9 @@ class RayPPOTrainer:
                 del training_input, generator_output
 
         pbar.close()
+        if self.colocate_all:
+            asyncio.run(self.inference_engine_client.sleep())
+            self.policy_model.backload_to_gpu()
         if self.cfg.trainer.ckpt_interval > 0:
             with Timer("save_checkpoints", self.all_timings):
                 self.save_checkpoints()
@@ -707,26 +712,26 @@ class RayPPOTrainer:
         values = None
 
         # calculate critic values
-        if self.cfg.trainer.placement.colocate_all and self.critic_model is not None:
+        if self.colocate_all and self.critic_model is not None:
             self.critic_model.backload_to_gpu(backload_optimizer=False, backload_model=True)
 
         if self.critic_model is not None:
             value_refs = self.critic_model.async_run_ray_method("mesh", "forward", data=data_fwd_pass)
-            if self.cfg.trainer.placement.colocate_all:
+            if self.colocate_all:
                 all_rank_values = ray.get(value_refs)
                 values = collect_results(self.critic_model.actor_infos, all_rank_values, key="output")
                 self.critic_model.offload_to_cpu(offload_optimizer=False, offload_model=True)
 
         # calculate ref log probs
         if self.ref_model is not None:
-            if self.cfg.trainer.placement.colocate_policy_ref or self.cfg.trainer.placement.colocate_all:
+            if self.cfg.trainer.placement.colocate_policy_ref or self.colocate_all:
                 self.ref_model.backload_to_gpu()
 
             base_action_log_probs_refs = self.ref_model.async_run_ray_method("mesh", "forward", data=data_fwd_pass)
 
         if self.ref_model is not None:
             # handle colocate policy and ref model
-            if self.cfg.trainer.placement.colocate_policy_ref or self.cfg.trainer.placement.colocate_all:
+            if self.cfg.trainer.placement.colocate_policy_ref or self.colocate_all:
                 all_rank_base_log_probs: List[TrainingOutputBatch] = ray.get(base_action_log_probs_refs)
                 base_log_probs = collect_results(self.ref_model.actor_infos, all_rank_base_log_probs, key="output")
                 self.ref_model.offload_to_cpu()
@@ -735,11 +740,11 @@ class RayPPOTrainer:
             base_log_probs = None
 
         # calculate action log probs
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             self.policy_model.backload_to_gpu(backload_optimizer=False, backload_model=True)
 
         action_log_probs_refs = self.policy_model.async_run_ray_method("mesh", "forward", data=data_fwd_pass)
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             all_rank_action_log_probs: List[TrainingOutputBatch] = ray.get(action_log_probs_refs)
             action_log_probs = collect_results(self.policy_model.actor_infos, all_rank_action_log_probs, key="output")
             self.policy_model.offload_to_cpu(offload_optimizer=False, offload_model=True)
@@ -747,7 +752,7 @@ class RayPPOTrainer:
         # wait all models done
         # if not colocate_policy_ref, then need to gather base_log_probs
         # if self.critic_model is not None, then need to gather value
-        if not self.cfg.trainer.placement.colocate_all:
+        if not self.colocate_all:
             if not self.cfg.trainer.placement.colocate_policy_ref:
                 if self.critic_model is not None:
                     all_rank_values = ray.get(value_refs)
@@ -766,7 +771,7 @@ class RayPPOTrainer:
             all_rank_action_log_probs: List[TrainingOutputBatch] = ray.get(action_log_probs_refs)
             action_log_probs = collect_results(self.policy_model.actor_infos, all_rank_action_log_probs, key="output")
 
-        if not self.cfg.trainer.placement.colocate_all:
+        if not self.colocate_all:
             empty_cache_refs = self.policy_model.async_run_ray_method("pass_through", "empty_cache")
             if self.ref_model is not None:
                 empty_cache_refs.extend(self.ref_model.async_run_ray_method("pass_through", "empty_cache"))
@@ -868,7 +873,7 @@ class RayPPOTrainer:
         Run the training step for the policy and critic models (this is overlapped if colocate_all is False).
         """
         data.metadata["global_step"] = self.global_step
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             if self.critic_model is not None:
                 with Timer("critic_train", self.all_timings):
                     self.critic_model.backload_to_gpu()
@@ -977,6 +982,8 @@ class RayPPOTrainer:
     def save_checkpoints(self):
         """
         Save the model, optimizer, and training states to disk.
+
+        If colocate_all is True, assumes that the policy model is currently on GPU.
         """
         # Create global step folder structure
         global_step_folder = os.path.join(self.cfg.trainer.ckpt_path, f"global_step_{self.global_step}")
@@ -997,7 +1004,7 @@ class RayPPOTrainer:
 
         # Save critic checkpoint (if it exists)
         if self.critic_model is not None:
-            if self.cfg.trainer.placement.colocate_all:
+            if self.colocate_all:
                 self.policy_model.offload_to_cpu()
                 self.critic_model.backload_to_gpu()
 
@@ -1010,7 +1017,7 @@ class RayPPOTrainer:
                 )
             )
 
-            if self.cfg.trainer.placement.colocate_all:
+            if self.colocate_all:
                 self.critic_model.offload_to_cpu()
                 self.policy_model.backload_to_gpu()
 
@@ -1062,6 +1069,8 @@ class RayPPOTrainer:
         """
         Load complete checkpoint state and return the global_step to resume from.
         Returns 0 if no checkpoint is loaded.
+
+        If colocate_all is True, assumes that the policy model is currently on GPU.
         """
         checkpoint_path = None
         # Check if resumption is enabled
@@ -1203,10 +1212,10 @@ class RayPPOTrainer:
         )
         # NOTE (sumanthrh): This is for the memory efficient case where we can't keep policy and ref model state on GPU together
         # We thus offload the policy model to CPU and then load the ref model from the policy model checkpoint, and then backload the policy model to GPU
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             self.policy_model.offload_to_cpu()
         ray.get(self.ref_model.async_init_model(policy_export_dir))
-        if self.cfg.trainer.placement.colocate_all:
+        if self.colocate_all:
             self.ref_model.offload_to_cpu()
             self.policy_model.backload_to_gpu()
 
