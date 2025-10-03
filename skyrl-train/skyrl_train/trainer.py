@@ -141,7 +141,7 @@ class RayPPOTrainer:
 
         if self.cfg.trainer.placement.colocate_all:
             asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
-        with Timer("sync_weights_to_inference_engines"):
+        with Timer("sync_weights"):
             ray.get(self.sync_policy_weights_to_inference_engines())
         if self.cfg.trainer.placement.colocate_all:
             with Timer("offload_policy_model_to_cpu"):
