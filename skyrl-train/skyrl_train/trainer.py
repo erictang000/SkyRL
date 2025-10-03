@@ -295,6 +295,7 @@ class RayPPOTrainer:
 
         pbar.close()
         if self.colocate_all:
+            asyncio.run(self.inference_engine_client.sleep())
             self.policy_model.backload_to_gpu()
         if self.cfg.trainer.ckpt_interval > 0:
             with Timer("save_checkpoints", self.all_timings):
