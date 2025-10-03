@@ -16,7 +16,7 @@ Trainer
 ~~~~~~~
 Performs the optimization steps based on configured RL algorithm. Updates model parameters based on generated trajectories and their assigned rewards.
 
-- `Base Training Worker interface <https://github.com/NovaSky-AI/SkyRL/blob/1c6ff519fe3b06cb8afd1ed6846348373d227bea/skyrl-train/skyrl_train/workers/worker.py#L180y>`_
+- `Base Training Worker interface <https://github.com/NovaSky-AI/SkyRL/blob/1c6ff519fe3b06cb8afd1ed6846348373d227bea/skyrl-train/skyrl_train/workers/worker.py#L180>`_
 
   - `FSDPWorker <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/skyrl_train/workers/fsdp/fsdp_worker.py>`_
   - `DeepSpeedWorker <https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/skyrl_train/workers/deepspeed/deepspeed_worker.py>`_
@@ -55,5 +55,5 @@ Controller
 ~~~~~~~~~~
 Manages physical placement, initialization, and control flow of training execution for each of the above components.
 
-- The training control loop currently sits in `trainer.py <https://github.com/NovaSky-AI/SkyRL/blob/1c6ff519fe3b06cb8afd1ed6846348373d227bea/skyrl-train/skyrl_train/trainer.py#L1288>`_
+- The training control loop currently sits in `trainer.py <https://github.com/NovaSky-AI/SkyRL/blob/1c6ff519fe3b06cb8afd1ed6846348373d227bea/skyrl-train/skyrl_train/trainer.py#L128>`_
 - It is a WIP to move the control loop to a separate component for even greater flexibility.
