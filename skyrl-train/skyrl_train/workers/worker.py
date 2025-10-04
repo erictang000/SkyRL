@@ -516,7 +516,10 @@ class PPORayActorGroup:
             nonblocking: Whether this operation is synchronous or asynchronous.
             If `nonblocking=True`, then the function returns a list of object refs.
         """
-        refs = [actor.offload_to_cpu.remote(offload_optimizer=offload_optimizer, offload_model=offload_model) for actor in self._actor_handlers]
+        refs = [
+            actor.offload_to_cpu.remote(offload_optimizer=offload_optimizer, offload_model=offload_model)
+            for actor in self._actor_handlers
+        ]
         if nonblocking:
             return refs
         return ray.get(refs)
@@ -528,7 +531,10 @@ class PPORayActorGroup:
             nonblocking: Whether this operation is synchronous or asynchronous.
             If `nonblocking=True`, then the function returns a list of ObjectRefs.
         """
-        refs = [actor.backload_to_gpu.remote(backload_optimizer=backload_optimizer, backload_model=backload_model) for actor in self._actor_handlers]
+        refs = [
+            actor.backload_to_gpu.remote(backload_optimizer=backload_optimizer, backload_model=backload_model)
+            for actor in self._actor_handlers
+        ]
         if nonblocking:
             return refs
         return ray.get(refs)

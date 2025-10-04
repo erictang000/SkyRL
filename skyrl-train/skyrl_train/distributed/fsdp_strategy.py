@@ -108,7 +108,9 @@ class FSDPStrategy(DistributedStrategy):
 
         self.device_mesh = create_device_mesh(world_size=self.world_size, fsdp_size=self.fsdp_config.fsdp_size)
 
-    def offload_to_cpu(self, model, optimizer, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
+    def offload_to_cpu(
+        self, model, optimizer, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True
+    ):
         """
         Offload model weights and optimizer to CPU memory.
 
