@@ -26,8 +26,8 @@ from skyrl_train.generators.utils import get_metrics_from_generator_output, prep
 from skyrl_train.dataset.preprocess import (
     convert_prompts_responses_to_batch_tensors,
 )
-from skyrl_train.utils import ppo_utils, print_mem
-from skyrl_train.utils import trainer_utils, io
+from skyrl_train.utils import ppo_utils, trainer_utils
+from skyrl_train.utils.io import io
 from skyrl_train.utils import Timer, get_ray_pg_ready_with_timeout
 from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
 from skyrl_train.utils.ppo_utils import (
@@ -260,9 +260,6 @@ class RayPPOTrainer:
                     # 7. sync weights to inference engines
                     if self.colocate_all:
                         self.policy_model.offload_to_cpu(offload_optimizer=True, offload_model=False)
-                        memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
-                        memory = memory[0]
-                        print_mem("memory before sync weights", memory)
                         asyncio.run(self.inference_engine_client.wake_up(tags=["weights"]))
                     with Timer("sync_weights", self.all_timings):
                         ray.get(self.sync_policy_weights_to_inference_engines())
@@ -745,9 +742,6 @@ class RayPPOTrainer:
         # calculate action log probs
         if self.colocate_all:
             self.policy_model.backload_to_gpu(backload_optimizer=False, backload_model=True)
-            memory = ray.get(self.policy_model.async_run_ray_method("pass_through", "get_cuda_memory"))
-            memory = memory[0]
-            print_mem("memory before policy forward pass", memory)
 
         action_log_probs_refs = self.policy_model.async_run_ray_method("mesh", "forward", data=data_fwd_pass)
         if self.colocate_all:
