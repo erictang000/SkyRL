@@ -305,11 +305,11 @@ class FSDPCriticRayActorBase(CriticWorkerBase):
 
 
 class FSDPRefRayActorBase(RefWorkerBase):
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True):
+    def offload_to_cpu(self, pin_memory=True, non_blocking=True, **kwargs):
         self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
         self.strategy.offload_to_cpu(self.model, None, pin_memory, non_blocking)
 
-    def backload_to_gpu(self, non_blocking=True):
+    def backload_to_gpu(self, non_blocking=True, **kwargs):
         self.strategy.backload_to_gpu(self.model, None, non_blocking)
 
     def init_model(self, model_path):
