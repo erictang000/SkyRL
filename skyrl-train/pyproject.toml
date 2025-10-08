@@ -126,9 +126,10 @@ mcore = [
   # export CPATH="$CUDNN_PATH/include:${CPATH:-}"
   # export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
   # uv pip install --no-build-isolation "transformer_engine[pytorch]==2.5.0" --verbose
-  # "transformer-engine[pytorch]==2.5.0",
+  "transformer-engine[pytorch]==2.7.0",
   "mbridge==0.15.1",
-  "megatron-core@git+https://github.com/NVIDIA/Megatron-LM.git@core_r0.13.0",
+  "megatron-bridge==0.2.0rc6",
+  "megatron-core@git+https://github.com/NVIDIA/Megatron-LM.git@core_v0.15.0rc6",
 ]
 flashrl = [
     # TODO (sumanthrh): Shift to install from git source

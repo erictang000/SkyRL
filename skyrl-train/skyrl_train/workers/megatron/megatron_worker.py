@@ -10,7 +10,8 @@ from collections import defaultdict
 from tqdm import tqdm
 from omegaconf import OmegaConf
 
-from mbridge import AutoBridge
+# from mbridge import AutoBridge
+from megatron.bridge import AutoBridge
 import megatron.core.parallel_state as mpu
 from megatron.core.optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -66,14 +67,20 @@ class MegatronWorker:
         transformer_config_kwargs = OmegaConf.to_container(transformer_config_kwargs, resolve=True)
         transformer_config_kwargs["attention_backend"] = "flash" if flash_attn else "fused"
 
-        bridge = AutoBridge.from_config(hf_config)
-        bridge.set_extra_args(**transformer_config_kwargs)
-        tf_config = bridge.config
+        bridge = AutoBridge.from_hf_pretrained(model_path, trust_remote_code=True)
+        provider = bridge.to_megatron_provider()
+        provider.tensor_model_parallel_size = 2
+        provider.pipeline_model_parallel_size = 1
+        provider.attention_backend = "flash" if flash_attn else "fused"
+        for k, v in transformer_config_kwargs.items():
+            setattr(provider, k, v)
+        provider.finalize()
+
+        self.provider = provider
         self.bridge = bridge
 
         self.hf_config = hf_config
         self.strategy.hf_config = hf_config
-        self.tf_config = tf_config
         self.tokenizer = tokenizer
 
     def make_megatron_module(
@@ -85,13 +92,12 @@ class MegatronWorker:
         """
         Creates a megatron GPTModel (optionally DDP wrapped) using the bridge.
         """
-        model = self.bridge.get_model(
-            post_model_creation_callbacks=[],  # don't rely on these since we might switch to Megatron-Bridge
-            wrap_with_ddp=wrap_with_ddp,
-            ddp_config=ddp_config,
-        )
-        if model_config_kwargs.get("moe_config", {}).get("freeze_moe_router", False):
-            freeze_moe_router(model)
+        from megatron.core.distributed.distributed_data_parallel_config import DistributedDataParallelConfig
+        default_ddp_config = DistributedDataParallelConfig()
+        if ddp_config is not None:
+            for k, v in ddp_config.items():
+                setattr(default_ddp_config, k, v)
+        model = self.provider.provide_distributed_model(ddp_config=default_ddp_config, wrap_with_ddp=wrap_with_ddp)
         return model
 
     def forward(self, data):
@@ -217,12 +223,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             snapshot_download(model_path)  # will be no-op if already downloaded
         torch.distributed.barrier()
 
-        # load weights
-        # NOTE (erictang000): there is currently a bug in mbridge that causes the model to not load correctly if tie_word_embeddings is set
-        # see: https://github.com/NVIDIA/Megatron-LM/issues/533#issuecomment-1760193239
-        # this is the case for the Qwen2.5-1.5B and 3B models, but not the 7B model
-        self.bridge.load_weights(self.actor_module, model_path)
-
         if self._rank == 0:
             print_model_size(self.actor_module[0])
 
@@ -249,7 +249,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         self.model = MegatronModelWrapper(
             config=self.cfg,
             hf_config=self.hf_config,
-            tf_config=self.tf_config,
             actor_module=self.actor_module,
             actor_optimizer=self.optimizer,
             policy_loss_fn=self.policy_loss_fn,
@@ -389,7 +388,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             cache_reset_task = inference_engine_client.reset_prefix_cache()
 
         torch.cuda.empty_cache()
-        per_tensor_param = self.bridge.export_weights(self.actor_module)
+        per_tensor_param = self.bridge.export_hf_weights(self.actor_module)
         weights_update_request = {"names": [], "dtypes": [], "shapes": [], "extras": []}
         current_size = 0
 
@@ -503,13 +502,12 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         )
 
         # load weights
-        self.bridge.load_weights(self.actor_module, model_path)
         if self._rank == 0:
             print_model_size(self.actor_module[0])
 
         # create worker model
         self.model = MegatronModelWrapper(
-            config=self.cfg, hf_config=self.hf_config, tf_config=self.tf_config, actor_module=self.actor_module
+            config=self.cfg, hf_config=self.hf_config, actor_module=self.actor_module
         )
 
     def get_weight_statistics(self):
