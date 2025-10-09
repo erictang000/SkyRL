@@ -24,13 +24,11 @@ class MegatronModelWrapper:
     def __init__(
         self,
         config,
-        hf_config,
         actor_module: List[nn.Module],
         actor_optimizer: Optional[torch.optim.Optimizer] = None,
         policy_loss_fn: Optional[Callable] = None,
     ):
         self.cfg = config
-        self.hf_config = hf_config
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
         self.policy_loss_fn = policy_loss_fn

@@ -23,7 +23,7 @@ from skyrl_train.distributed.megatron.optimizer import (
 )
 from skyrl_train.distributed.dispatch import MeshRank
 from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
-from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
+from skyrl_train.distributed.megatron.megatron_utils import print_model_size
 from skyrl_train.utils.utils import update_model_config, str_to_torch_dtype, get_physical_gpu_id
 from skyrl_train.training_batch import TrainingOutputBatch
 from skyrl_train.workers.worker_utils import BatchIterator, reduce_metrics
@@ -51,7 +51,12 @@ class MegatronWorker:
             """
             )
 
-    def init_configs(self, model_path, model_config_kwargs, transformer_config_kwargs, flash_attn=False):
+    def init_configs(
+        self, model_path, megatron_config, model_config_kwargs, transformer_config_kwargs, bf16=True, flash_attn=False
+    ):
+        """
+        Initialize the Megatron-Bridge bridge and provider objects + hf_config and tokenizer
+        """
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         hf_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
 
@@ -69,8 +74,12 @@ class MegatronWorker:
 
         bridge = AutoBridge.from_hf_pretrained(model_path, trust_remote_code=True)
         provider = bridge.to_megatron_provider()
-        provider.tensor_model_parallel_size = 2
-        provider.pipeline_model_parallel_size = 1
+        provider.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
+        provider.pipeline_model_parallel_size = megatron_config.pipeline_model_parallel_size
+        provider.pipeline_dtype = torch.bfloat16 if bf16 else torch.float32
+        provider.context_parallel_size = megatron_config.context_parallel_size
+        provider.expert_model_parallel_size = megatron_config.expert_model_parallel_size
+        provider.expert_tensor_parallel_size = megatron_config.expert_tensor_parallel_size
         provider.attention_backend = "flash" if flash_attn else "fused"
         for k, v in transformer_config_kwargs.items():
             setattr(provider, k, v)
@@ -79,25 +88,29 @@ class MegatronWorker:
         self.provider = provider
         self.bridge = bridge
 
-        self.hf_config = hf_config
         self.strategy.hf_config = hf_config
         self.tokenizer = tokenizer
 
     def make_megatron_module(
         self,
-        model_config_kwargs: Dict[str, Any],
         wrap_with_ddp: bool = True,
         ddp_config: Optional[Dict[str, Any]] = None,
+        bf16: bool = True,
     ) -> List[nn.Module]:
         """
         Creates a megatron GPTModel (optionally DDP wrapped) using the bridge.
         """
         from megatron.core.distributed.distributed_data_parallel_config import DistributedDataParallelConfig
+
         default_ddp_config = DistributedDataParallelConfig()
+        if wrap_with_ddp:
+            default_ddp_config.use_distributed_optimizer = True
         if ddp_config is not None:
             for k, v in ddp_config.items():
                 setattr(default_ddp_config, k, v)
-        model = self.provider.provide_distributed_model(ddp_config=default_ddp_config, wrap_with_ddp=wrap_with_ddp)
+        model = self.provider.provide_distributed_model(
+            ddp_config=default_ddp_config, wrap_with_ddp=wrap_with_ddp, bf16=bf16
+        )
         return model
 
     def forward(self, data):
@@ -202,19 +215,21 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         Initialize the model, optimizer, and scheduler for the policy worker.
         """
-        # get hf_config and tf_config
+        # initialize the bridge and provider objects
         self.init_configs(
             model_path,
+            self.cfg.trainer.policy.megatron_config,
             self.cfg.trainer.policy.megatron_config.model_config_kwargs,
             self.cfg.trainer.policy.megatron_config.transformer_config_kwargs,
+            bf16=self.cfg.trainer.bf16,
             flash_attn=self.cfg.trainer.flash_attn,
         )
 
         # wrap with DDP for training
         self.actor_module = self.make_megatron_module(
-            self.cfg.trainer.policy.megatron_config.model_config_kwargs,
             wrap_with_ddp=True,
             ddp_config=self.cfg.trainer.policy.megatron_config.ddp_config,
+            bf16=self.cfg.trainer.bf16,
         )
 
         if self._local_rank == 0 and not os.path.exists(
@@ -248,7 +263,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # create worker model
         self.model = MegatronModelWrapper(
             config=self.cfg,
-            hf_config=self.hf_config,
             actor_module=self.actor_module,
             actor_optimizer=self.optimizer,
             policy_loss_fn=self.policy_loss_fn,
@@ -489,16 +503,20 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         """
         Initialize the model for the ref worker.
         """
-        # get hf_config and tf_config
+        # initialize the bridge and provider objects
         self.init_configs(
             model_path,
+            self.cfg.trainer.ref.megatron_config,
             self.cfg.trainer.ref.megatron_config.model_config_kwargs,
             self.cfg.trainer.ref.megatron_config.transformer_config_kwargs,
+            bf16=self.cfg.trainer.bf16,
             flash_attn=self.cfg.trainer.flash_attn,
         )
 
         self.actor_module = self.make_megatron_module(
-            self.cfg.trainer.ref.megatron_config.model_config_kwargs, wrap_with_ddp=False, ddp_config=None
+            wrap_with_ddp=False,
+            ddp_config=None,
+            bf16=self.cfg.trainer.bf16,
         )
 
         # load weights
@@ -506,9 +524,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
             print_model_size(self.actor_module[0])
 
         # create worker model
-        self.model = MegatronModelWrapper(
-            config=self.cfg, hf_config=self.hf_config, actor_module=self.actor_module
-        )
+        self.model = MegatronModelWrapper(config=self.cfg, actor_module=self.actor_module)
 
     def get_weight_statistics(self):
         """Compute lightweight statistics for model weights"""
