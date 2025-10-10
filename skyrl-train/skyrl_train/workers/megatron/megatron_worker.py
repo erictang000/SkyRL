@@ -80,7 +80,12 @@ class MegatronWorker:
         provider.context_parallel_size = megatron_config.context_parallel_size
         provider.expert_model_parallel_size = megatron_config.expert_model_parallel_size
         provider.expert_tensor_parallel_size = megatron_config.expert_tensor_parallel_size
+        provider.sequence_parallel = megatron_config.tensor_model_parallel_size > 1
         provider.attention_backend = "flash" if flash_attn else "fused"
+        provider.variable_seq_lengths = True
+        provider.masked_softmax_fusion = True
+        provider.moe_token_dispatcher_type = "alltoall"
+
         for k, v in transformer_config_kwargs.items():
             setattr(provider, k, v)
         provider.finalize()
