@@ -85,6 +85,7 @@ def get_test_trainer_config(strategy: str, fsdp2_cpu_offload: bool = False) -> D
         cfg.trainer.placement.policy_num_gpus_per_node = 4
         # Disable critic for megatron
         cfg.trainer.critic.model.path = ""
+        cfg.trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer = False
 
     # Use temporary directories
     cfg.trainer.export_path = tempfile.mkdtemp(prefix="trainer_ckpt_test_")

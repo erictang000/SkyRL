@@ -75,8 +75,8 @@ flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/down
 # The wheels on PyPI don't come with pre-compiled kernels and the package will JIT compile them at runtime which is slow.
 # additionally, different inference engines may pin different compatible flashinfer versions, so we provide the option to pin different versions for vllm/sglang
 flashinfer-python = [
-    { url = "https://download.pytorch.org/whl/cu128/flashinfer/flashinfer_python-0.2.6.post1%2Bcu128torch2.7-cp39-abi3-linux_x86_64.whl", marker = "extra =='vllm'" },
-    { url = "https://download.pytorch.org/whl/cu128/flashinfer/flashinfer_python-0.2.6.post1%2Bcu128torch2.7-cp39-abi3-linux_x86_64.whl", marker = "extra == 'sglang' and extra != 'vllm'" }
+    { url = "https://download.pytorch.org/whl/cu128/flashinfer/flashinfer_python-0.2.6.post1%2Bcu128torch2.7-cp39-abi3-linux_x86_64.whl", marker = "extra =='vllm' or extra == 'mcore'" },
+    { url = "https://download.pytorch.org/whl/cu128/flashinfer/flashinfer_python-0.2.6.post1%2Bcu128torch2.7-cp39-abi3-linux_x86_64.whl", marker = "extra == 'sglang' and extra != 'vllm' and extra != 'mcore'" }
 ]
 
 [project.optional-dependencies]
@@ -125,6 +125,7 @@ mcore = [
   # export CPATH="$CUDNN_PATH/include:${CPATH:-}"
   # export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
   # uv pip install --no-build-isolation "transformer_engine[pytorch]==2.7.0" --verbose
+  "flashinfer-python",
   "transformer-engine[pytorch]==2.7.0",
   "mbridge==0.15.1",
   "megatron-bridge==0.2.0rc6",
