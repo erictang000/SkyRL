@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 class RequestType(str, Enum):
     """Types of requests that can be processed."""
+
     CREATE_MODEL = "create_model"
     FORWARD_BACKWARD = "forward_backward"
     OPTIM_STEP = "optim_step"
@@ -71,3 +72,8 @@ class SaveWeightsForSamplerOutput(BaseModel):
 class ModelMetadata(BaseModel):
     adapter_index: int
     lora_config: LoraConfig
+
+
+# Metrics tracked in the engine
+class EngineMetrics(BaseModel):
+    seq_len_jit_times: dict[int, float] = {}
