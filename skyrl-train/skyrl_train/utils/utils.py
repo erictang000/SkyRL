@@ -571,8 +571,8 @@ def prepare_runtime_environment(cfg: DictConfig) -> dict[str, str]:
         # see https://github.com/ray-project/ray/issues/56697 for why this is needed
         # note that this could potentially cause unexpected issues if there are overlapping installations between the base image
         # and the pyproject.toml file - to resolve these, make sure to specify exact versions of dependencies in the pyproject.toml
-        logger.info(f"Exporting `PYTHONPATH` to ray runtime env: {os.environ['PYTHONPATH']}")
-        env_vars["PYTHONPATH"] = os.environ["PYTHONPATH"]
+        logger.info(f"Exporting `SKYRL_PYTHONPATH` to ray runtime env: {os.environ['PYTHONPATH']}")
+        env_vars["PYTHONPATH"] = os.environ["SKYRL_PYTHONPATH"]
 
     return env_vars
 

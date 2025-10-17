@@ -24,7 +24,7 @@ SKYRL_PYTHONPATH_EXPORT = str(os.environ.get("SKYRL_PYTHONPATH_EXPORT", "False")
     "yes",
 )
 """
-Whether to export ``PYTHONPATH`` environment variable from the driver to the workers with Ray's runtime env.
+Whether to export ``SKYRL_PYTHONPATH`` environment variable from the driver to the workers with Ray's runtime env.
 
 See https://github.com/ray-project/ray/issues/56697 for details on why this is needed.
 """
