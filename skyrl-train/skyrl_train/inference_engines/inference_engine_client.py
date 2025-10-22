@@ -278,6 +278,9 @@ class InferenceEngineClient(InferenceEngineInterface):
     def tp_size(self) -> int:
         raise NotImplementedError("InferenceEngineClient does not implement tp_size()")
 
+    def pp_size(self) -> int:
+        raise NotImplementedError("InferenceEngineClient does not implement pp_size()")
+
     def dp_size(self) -> int:
         raise NotImplementedError("InferenceEngineClient does not implement dp_size()")
 
