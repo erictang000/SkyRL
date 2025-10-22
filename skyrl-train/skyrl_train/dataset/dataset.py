@@ -1,8 +1,10 @@
 import datasets
 from loguru import logger
 import os
-from typing import List
+from typing import List, Set
 from transformers import PreTrainedTokenizerBase
+import hashlib
+import json
 
 
 class PromptDataset:
@@ -84,3 +86,33 @@ class PromptDataset:
 
     def __len__(self):
         return len(self.dataframe)
+
+    @staticmethod
+    def _compute_prompt_key(messages) -> str:
+        """Compute a stable key for a prompt using canonical JSON and SHA1."""
+        canonical = json.dumps(messages, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+    def filter_out_by_prompt_keys(self, excluded_keys: Set[str]) -> int:
+        """Filter out rows whose prompt key is in excluded_keys. Returns number of removed rows."""
+        if not excluded_keys:
+            return 0
+        before = len(self.dataframe)
+
+        def keep_fn(doc):
+            try:
+                key = PromptDataset._compute_prompt_key(doc[self.prompt_key])
+            except Exception:
+                # If serialization fails, keep the row to be safe
+                return True
+            return key not in excluded_keys
+
+        self.dataframe = self.dataframe.filter(
+            keep_fn,
+            num_proc=self.num_workers,
+            desc=f"Filtering {len(excluded_keys)} easy prompts by historical pass rate",
+        )
+        after = len(self.dataframe)
+        removed = before - after
+        logger.info(f"Filtered out {removed} prompts; dataset size {before} -> {after}")
+        return removed

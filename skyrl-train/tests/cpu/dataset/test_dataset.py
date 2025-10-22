@@ -1,3 +1,6 @@
+"""
+uv run --isolated --extra dev pytest tests/cpu/dataset/test_dataset.py
+"""
 import pytest
 from unittest.mock import MagicMock, patch
 from datasets import Dataset

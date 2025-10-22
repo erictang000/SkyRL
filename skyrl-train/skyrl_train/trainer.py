@@ -2,7 +2,8 @@ import asyncio
 import math
 import os
 import shutil
-from typing import Any, List, Optional, Dict, Tuple, Union
+from typing import Any, List, Optional, Dict, Tuple, Union, Set
+from collections import defaultdict
 from jaxtyping import Float
 from pathlib import Path
 import ray
@@ -99,6 +100,10 @@ class RayPPOTrainer:
         self._node_ids: Optional[List[str]] = None
 
         self.dynamic_sampling_state: Optional[DynamicSamplingState] = None
+
+        # Per-prompt pass-rate tracking
+        self._prompt_key_to_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"pass": 0, "total": 0})
+        self._exclude_prompt_keys: Set[str] = set()
 
         self.reward_kl_controller: Optional[Union[FixedKLController, AdaptiveKLController]] = None
         configure_ray_worker_logging()
@@ -197,6 +202,8 @@ class RayPPOTrainer:
                     # 1.2 postprocess rewards
                     with Timer("postprocess_generator_output", self.all_timings):
                         generator_output = self.postprocess_generator_output(generator_output, uids)
+                        # Update per-prompt pass stats
+                        self._update_pass_stats(generator_output, generator_input["trajectory_ids"]) 
 
                     # 2. print example just for debugging
                     vis = self.tokenizer.decode(generator_output["response_ids"][0])
@@ -294,6 +301,9 @@ class RayPPOTrainer:
                 self.global_step += 1
 
                 del training_input, generator_output
+
+            # End-of-epoch dataset filtering based on historical pass rate
+            self._maybe_filter_dataset_by_pass_rate(epoch)
 
         pbar.close()
         if self.colocate_all:
@@ -969,6 +979,74 @@ class RayPPOTrainer:
             self.dynamic_sampling_state = None
 
         return processed_output, processed_uids, keep_sampling
+
+    def _update_pass_stats(self, generator_output: GeneratorOutput, trajectory_ids: List[Any]) -> None:
+        """Update per-prompt pass stats for this batch using pass@n semantics.
+
+        A prompt counts as pass=1 for the batch if any of its trajectories' reward > 0.
+        Rewards may be token-level or trajectory-level; for token-level we use the last token's reward.
+        """
+        rewards = generator_output["rewards"]
+        # Group last-token/trajectory rewards by instance_id
+        per_traj_reward = []
+        if rewards and isinstance(rewards[0], list):
+            for r in rewards:
+                if not len(r):
+                    continue
+                per_traj_reward.append(float(r[-1]))
+        else:
+            per_traj_reward = [float(r) for r in rewards]
+
+        uid_to_rewards: Dict[str, List[float]] = {}
+        for i, traj in enumerate(trajectory_ids):
+            instance_uid = str(traj.instance_id)
+            uid_to_rewards.setdefault(instance_uid, []).append(per_traj_reward[i])
+
+        # For each prompt occurrence in this batch, update stats by prompt key
+        for uid_str, rewards_list in uid_to_rewards.items():
+            try:
+                row_idx = int(uid_str)
+            except Exception:
+                # If UID isn't an integer index, skip tracking
+                continue
+            messages = self.train_dataset.dataframe[row_idx][self.train_dataset.prompt_key]
+            prompt_key = PromptDataset._compute_prompt_key(messages)
+            # Skip if already excluded to save work
+            if prompt_key in self._exclude_prompt_keys:
+                continue
+            self._prompt_key_to_stats[prompt_key]["total"] += 1
+            if any(r > 0 for r in rewards_list):
+                self._prompt_key_to_stats[prompt_key]["pass"] += 1
+
+    def _maybe_filter_dataset_by_pass_rate(self, epoch: int) -> None:
+        """At end of epoch, filter dataset by historical pass rate threshold, if configured."""
+        # Read optional configs; safe defaults mean feature disabled unless explicitly set
+        threshold = getattr(self.cfg.trainer, "prompt_pass_filter_threshold", None)
+        min_count = getattr(self.cfg.trainer, "prompt_pass_filter_min_count", 3)
+        if threshold is None:
+            return
+
+        # Build set of prompt keys to exclude
+        to_exclude: Set[str] = set()
+        for key, stats in self._prompt_key_to_stats.items():
+            total = stats.get("total", 0)
+            passed = stats.get("pass", 0)
+            if total >= min_count and total > 0 and (passed / total) >= float(threshold):
+                to_exclude.add(key)
+
+        # Avoid re-filtering previously excluded prompts
+        to_exclude -= self._exclude_prompt_keys
+        if not len(to_exclude):
+            return
+
+        removed = self.train_dataset.filter_out_by_prompt_keys(to_exclude)
+        if removed > 0:
+            # Remember excluded keys and rebuild dataloader for next epoch
+            self._exclude_prompt_keys.update(to_exclude)
+            self.train_dataloader = build_dataloader(self.cfg, self.train_dataset, is_train=True)
+            logger.info(
+                f"Epoch {epoch}: removed {removed} easy prompts (threshold={threshold}, min_count={min_count})."
+            )
 
     def _get_dp_group_models(self, rank: int, model_type: str = ""):
         model = getattr(self, model_type)
