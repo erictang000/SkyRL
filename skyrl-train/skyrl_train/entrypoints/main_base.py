@@ -164,6 +164,7 @@ class BasePPOExp:
                 [{"GPU": 1, "CPU": 1}]
                 * self.cfg.generator.num_inference_engines
                 * self.cfg.generator.inference_engine_tensor_parallel_size
+                * self.cfg.generator.inference_engine_pipeline_parallel_size
                 * self.cfg.generator.inference_engine_data_parallel_size,
                 strategy="PACK",
             )
