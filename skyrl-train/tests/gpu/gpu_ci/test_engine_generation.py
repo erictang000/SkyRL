@@ -38,7 +38,9 @@ def get_test_actor_config() -> DictConfig:
         return cfg
 
 
-def init_ray_inference_engines(backend: str, tp_size: int, pp_size: int, dp_size: int, config: DictConfig) -> InferenceEngineClient:
+def init_ray_inference_engines(
+    backend: str, tp_size: int, pp_size: int, dp_size: int, config: DictConfig
+) -> InferenceEngineClient:
     """Initialize ray-wrapped inference engines for the specified backend"""
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     engine = create_ray_wrapped_inference_engines(

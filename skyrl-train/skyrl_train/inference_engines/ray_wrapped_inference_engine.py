@@ -154,9 +154,7 @@ def create_ray_wrapped_inference_engines(
                 tp_pp_size = tensor_parallel_size * pipeline_parallel_size
                 base_dp_pg_index = base_pg_index + dp_rank * tp_pp_size
                 dp_rank_bundles = (
-                    list(range(base_dp_pg_index, base_dp_pg_index + tp_pp_size))
-                    if tp_pp_size > 1
-                    else None
+                    list(range(base_dp_pg_index, base_dp_pg_index + tp_pp_size)) if tp_pp_size > 1 else None
                 )
                 dp_rank_sched = PlacementGroupSchedulingStrategy(
                     placement_group=shared_pg,
