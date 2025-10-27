@@ -5,12 +5,10 @@ set -x
 # uv run --isolated examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # bash examples/on_policy_distillation/run_on_policy_distill_math.sh
 
-DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=4
+DATA_DIR="/mnt/cluster_storage/gsm8k"
 LOGGER=wandb
 
 # On Policy Distillation args
-
 TEACHER_MODEL="Qwen/Qwen3-8B"
 STUDENT_MODEL="Qwen/Qwen3-8B-Base"
 ADVANTAGE_ESTIMATOR="no_op"
@@ -18,22 +16,37 @@ POLICY_LOSS="importance_sampling"
 USE_KL_IN_REWARD=true # this adds the kl penalty to the adva
 USE_KL_LOSS=false # turns off kl loss in the loss since we are using it directly in the reward
 
+# Placement args
+POLICY_NUM_NODES=2
+REF_NUM_NODES=2
+NUM_GPUS_PER_NODE=8
+NUM_INFERENCE_ENGINES=8
+INFERENCE_ENGINE_TP_SIZE=2
+
+# enable efa
+export SKYRL_LD_LIBRARY_PATH_EXPORT=true
+export LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
 
 uv run --isolated --extra vllm -m examples.on_policy_distillation.main_on_policy_distill \
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/validation.parquet']" \
-  trainer.algorithm.advantage_estimator="grpo" \
+  trainer.algorithm.advantage_estimator=$ADVANTAGE_ESTIMATOR \
+  trainer.algorithm.policy_loss_type=$POLICY_LOSS \
   trainer.policy.model.path=$STUDENT_MODEL \
   trainer.ref.model.path=$TEACHER_MODEL \
   trainer.placement.colocate_all=true \
   trainer.strategy=fsdp2 \
-  trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
-  trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
-  generator.num_inference_engines=1 \
-  generator.inference_engine_tensor_parallel_size=4 \
+  trainer.placement.policy_num_nodes=$POLICY_NUM_NODES \
+  trainer.placement.ref_num_nodes=$REF_NUM_NODES \
+  trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
+  trainer.placement.ref_num_gpus_per_node=$NUM_GPUS_PER_NODE \
+  trainer.policy.fsdp_config.fsdp_size=$NUM_GPUS_PER_NODE \
+  trainer.ref.fsdp_config.fsdp_size=$NUM_GPUS_PER_NODE \
+  generator.num_inference_engines=$NUM_INFERENCE_ENGINES \
+  generator.inference_engine_tensor_parallel_size=$INFERENCE_ENGINE_TP_SIZE \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
-  trainer.eval_before_train=true \
+  trainer.eval_before_train=false \
   trainer.eval_interval=5 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=1024 \
@@ -48,13 +61,14 @@ uv run --isolated --extra vllm -m examples.on_policy_distillation.main_on_policy
   trainer.algorithm.use_kl_in_reward=$USE_KL_IN_REWARD \
   generator.backend=vllm \
   generator.run_engines_locally=true \
+  generator.async_engine=false \
   generator.batched=true \
-  environment.env_class=gsm8k \
+  environment.env_class=aime \
   generator.n_samples_per_prompt=5 \
   generator.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="gsm8k_on_policy_distillation" \
-  trainer.run_name="on_policy_distillation_math" \
+  trainer.project_name="aime_on_policy_distillation" \
+  trainer.run_name="on_policy_distillation_aime" \
   trainer.resume_mode=null \
-  trainer.ckpt_path="$HOME/ckpts/gsm8k_1.5B_on_policy_distillation" \
+  trainer.ckpt_path="$HOME/ckpts/aime_1.5B_on_policy_distillation" \
   $@

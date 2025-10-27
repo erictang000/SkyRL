@@ -54,7 +54,7 @@ def compute_no_op_advantage(
 
 @register_policy_loss("importance_sampling")
 def compute_importance_sampling_policy_loss(
-    log_probs, old_log_probs, advantages, config, loss_mask=None, rollout_log_probs=None
+    log_probs, old_log_probs, advantages, config, loss_mask=None, rollout_logprobs=None, **kwargs
 ):
     # as defined here: https://tinker-docs.thinkingmachines.ai/losses#policy-gradient-importance_sampling
     loss = (-torch.exp(log_probs - old_log_probs) * advantages).sum()
