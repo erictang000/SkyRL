@@ -12,6 +12,7 @@ from skyrl_train.utils.ppo_utils import (
     register_advantage_estimator,
     register_policy_loss,
     compute_approx_kl,
+    reduce_loss,
 )
 from skyrl_train.training_batch import TrainingInputBatch
 
@@ -57,7 +58,9 @@ def compute_importance_sampling_policy_loss(
     log_probs, old_log_probs, advantages, config, loss_mask=None, rollout_logprobs=None, **kwargs
 ):
     # as defined here: https://tinker-docs.thinkingmachines.ai/losses#policy-gradient-importance_sampling
-    loss = (-torch.exp(log_probs - old_log_probs) * advantages).sum()
+    loss = -torch.exp(log_probs - old_log_probs) * advantages
+
+    loss = reduce_loss(loss, loss_mask, "seq_mean_token_sum_norm", config.max_seq_len)
     # return loss and a dummy clip ratio value as we aren't clipping here
     return loss, 0.0
 
