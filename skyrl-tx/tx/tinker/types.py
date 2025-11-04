@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Literal, Sequence
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
@@ -107,12 +107,7 @@ class ForwardBackwardOutput(BaseModel):
     metrics: dict
 
 
-class ForwardBackwardError(BaseModel):
-    error: str
-    status: str
-
-
-class SampleError(BaseModel):
+class ErrorResponse(BaseModel):
     error: str
     status: str
 
@@ -156,6 +151,7 @@ class SamplingParams(BaseModel):
     temperature: float
     max_tokens: int
     seed: int
+    stop: Sequence[int] | None = None
 
 
 class ModelMetadata(BaseModel):
