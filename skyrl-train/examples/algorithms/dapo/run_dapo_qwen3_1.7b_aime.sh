@@ -2,10 +2,10 @@ set -x
 
 # Colocated DAPO training+generation for Qwen3-4B-Base on DAPO training data and validate on AIME 2024.
 # uv run examples/algorithms/dapo/prepare_dapo_data.sh
-# bash examples/algorithms/dapo/run_dapo_aime_qwen3_4b.sh
+# bash examples/algorithms/dapo/run_dapo_qwen3_1.7b_aime.sh
 
-MODEL_NAME="Qwen/Qwen3-4B-Base"
-DATA_DIR="/mnt/cluster_storage/data/dapo"
+MODEL_NAME="Qwen/Qwen3-1.7B-Base"
+DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 NUM_NODES=2
@@ -39,10 +39,7 @@ MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=16
 EVAL_N_SAMPLES_PER_PROMPT=32
 ENFORCE_EAGER=true # cuda graphs can cause some instability
-LR=1e-6
-
-export SKYRL_LD_LIBRARY_PATH_EXPORT=true
-export LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
+LR=1e-5
 
 uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
@@ -96,11 +93,11 @@ uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="aime_on_policy_distillation" \
-  trainer.run_name="qwen3_4b_base_aime_rl_baseline_dapo_temp1_topp1_lr_$LR" \
-  trainer.export_path="$HOME/exports/qwen3_4b_base_aime_rl_baseline_dapo_temp1_topp1_lr_$LR" \
-  trainer.hf_save_interval=1 \
+  trainer.project_name="dapo_aime" \
+  trainer.run_name="dapo_qwen3_1.7b_base" \
+  trainer.export_path="$HOME/exports/dapo_qwen3_1.7b_base" \
+  trainer.hf_save_interval=10 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/qwen3_4b_base_aime_rl_baseline_dapo_temp1_topp1_lr_$LR" \
+  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_1.7b_base" \
   $@
