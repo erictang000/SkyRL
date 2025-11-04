@@ -4,14 +4,12 @@ from omegaconf import DictConfig
 import numpy as np
 from skyrl_train.entrypoints.main_base import BasePPOExp
 import hydra
-from jaxtyping import Float
 from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.utils import initialize_ray
 from skyrl_train.entrypoints.main_base import config_dir, validate_cfg
 from skyrl_train.utils.ppo_utils import (
     register_advantage_estimator,
     register_policy_loss,
-    compute_approx_kl,
     reduce_loss,
 )
 from skyrl_train.training_batch import TrainingInputBatch
@@ -30,17 +28,12 @@ class OnPolicyDistillationTrainer(RayPPOTrainer):
     ) -> TrainingInputBatch:
         """Computes the KL penalty and sets the rewards to the KL penalty"""
         loss_masks_all: torch.Tensor = data["loss_mask"]
-        rewards: torch.Tensor = data["rewards"]
         teacher_action_log_probs: torch.Tensor = data["base_action_log_probs"]
         action_log_probs: torch.Tensor = data["action_log_probs"]
 
         # set rewards to the KL penalty
-        kl: Float[torch.Tensor, "batch_size seqlen"] = compute_approx_kl(  # type: ignore
-            action_log_probs,
-            teacher_action_log_probs,
-            loss_mask=loss_masks_all,
-        )
-        rewards = -kl
+        # note: tinker seems to use k1 or k2: https://github.com/thinking-machines-lab/tinker-cookbook/blob/3dd0463472dda5847efee80010b50514fa3068ef/tinker_cookbook/rl/metrics.py#L40
+        rewards = -(action_log_probs - teacher_action_log_probs) * loss_masks_all
         data["rewards"] = rewards
         return data
 
@@ -50,6 +43,7 @@ class OnPolicyDistillationTrainer(RayPPOTrainer):
 def compute_no_op_advantage(
     token_level_rewards: torch.Tensor, response_mask: torch.Tensor, index: np.ndarray, **kwargs
 ):
+    # just pass through the rewards
     return token_level_rewards, token_level_rewards
 
 
