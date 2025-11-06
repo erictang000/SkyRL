@@ -8,4 +8,7 @@ This folder contains scripts for running On-Policy Distillation on SkyRL.
 
 On-Policy distillation has been shown to be an effective technique for efficiently post-training models ([Agarwal et al](https://arxiv.org/abs/2306.13649), [Gu et al](https://arxiv.org/abs/2306.08543), [Qwen3 team](https://arxiv.org/abs/2505.09388), [Thinking Machines](https://thinkingmachines.ai/blog/on-policy-distillation)).
 
-`main_on_policy_distill.py` provides a simple example for modifying SkyRL to implement On-Policy distillation by replacing the ref model with a teacher model, and making some minor modifications to the reward/loss logic!
+Here, we show an example of On-Policy Distillation using the reverse KL loss:
+<img width="471" height="51" alt="image" src="https://github.com/user-attachments/assets/4d5a9649-832a-4ba9-86af-5de063f2773f" />
+
+In `main_on_policy_distill.py` we provide a simple example for modifying SkyRL to implement On-Policy distillation by replacing the ref model with a teacher model, and modifying the reward/advantage computation logic to use the reverse KL loss. 
