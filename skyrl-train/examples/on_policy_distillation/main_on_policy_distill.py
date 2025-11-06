@@ -1,7 +1,6 @@
 import torch
 import ray
 from omegaconf import DictConfig
-import numpy as np
 from skyrl_train.entrypoints.main_base import BasePPOExp
 import hydra
 from skyrl_train.trainer import RayPPOTrainer
@@ -40,9 +39,7 @@ class OnPolicyDistillationTrainer(RayPPOTrainer):
 
 # Using the decorator
 @register_advantage_estimator("no_op")
-def compute_no_op_advantage(
-    token_level_rewards: torch.Tensor, **kwargs
-):
+def compute_no_op_advantage(token_level_rewards: torch.Tensor, **kwargs):
     # just pass through the rewards
     return token_level_rewards, token_level_rewards
 
