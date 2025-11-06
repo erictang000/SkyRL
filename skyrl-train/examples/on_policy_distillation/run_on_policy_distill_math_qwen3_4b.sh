@@ -5,14 +5,14 @@ set -x
 # uv run examples/algorithms/dapo/prepare_dapo_data.sh
 # bash examples/on_policy_distillation/run_on_policy_distill_math.sh
 
-DATA_DIR="/mnt/cluster_storage/data/dapo"
+DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 LOGGER=wandb
 
 # On Policy Distillation args
 # set this to the huggingface path of your teacher model
-TEACHER_MODEL="/mnt/cluster_storage/qwen3_4b_dapo_step90/"
+TEACHER_MODEL="$HOME/ckpts/dapo_qwen3_4b_base/global_step_90/"
 STUDENT_MODEL="Qwen/Qwen3-4B-Base"
 ADVANTAGE_ESTIMATOR="no_op"
 POLICY_LOSS="importance_sampling"
@@ -20,10 +20,8 @@ USE_KL_IN_REWARD=true # this adds the kl penalty to the advantage
 USE_KL_LOSS=false # turns off kl loss in the loss since we are using it directly in the reward
 
 # Placement args
-POLICY_NUM_NODES=2
-REF_NUM_NODES=2
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=16
+NUM_INFERENCE_ENGINES=8
 INFERENCE_ENGINE_TP_SIZE=1
 
 # sampling params
@@ -39,10 +37,6 @@ EVAL_N_SAMPLES_PER_PROMPT=32
 ENFORCE_EAGER=true
 LR=1e-5
 
-# enable efa
-export SKYRL_LD_LIBRARY_PATH_EXPORT=true
-export LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
-
 uv run --isolated --extra vllm -m examples.on_policy_distillation.main_on_policy_distill \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$TEST_FILE']" \
@@ -52,12 +46,8 @@ uv run --isolated --extra vllm -m examples.on_policy_distillation.main_on_policy
   trainer.ref.model.path=$TEACHER_MODEL \
   trainer.placement.colocate_all=true \
   trainer.strategy=fsdp2 \
-  trainer.placement.policy_num_nodes=$POLICY_NUM_NODES \
-  trainer.placement.ref_num_nodes=$REF_NUM_NODES \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS_PER_NODE \
-  trainer.policy.fsdp_config.fsdp_size=$NUM_GPUS_PER_NODE \
-  trainer.ref.fsdp_config.fsdp_size=$NUM_GPUS_PER_NODE \
   generator.num_inference_engines=$NUM_INFERENCE_ENGINES \
   generator.inference_engine_tensor_parallel_size=$INFERENCE_ENGINE_TP_SIZE \
   trainer.epochs=20 \
