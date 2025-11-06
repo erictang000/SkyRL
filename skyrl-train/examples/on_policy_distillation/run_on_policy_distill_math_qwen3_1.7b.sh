@@ -3,7 +3,7 @@ set -x
 # Running on policy distillation for Math on the DAPO math dataset, with eval on AIME 2024.
 # Uses Qwen-3-1.7B-Base as the student model and an RL trained Qwen-3-4B as the teacher model
 # uv run examples/algorithms/dapo/prepare_dapo_data.sh
-# bash examples/on_policy_distillation/run_on_policy_distill_math.sh
+# bash examples/on_policy_distillation/run_on_policy_distill_math_qwen3_1.7b.sh
 
 DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
@@ -11,7 +11,7 @@ TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 LOGGER=wandb
 
 # On Policy Distillation args
-# set this to the huggingface path of your teacher model
+# set this to the huggingface/local path of your teacher model
 TEACHER_MODEL="$HOME/ckpts/dapo_qwen3_4b_base/global_step_90/"
 STUDENT_MODEL="Qwen/Qwen3-1.7B-Base"
 ADVANTAGE_ESTIMATOR="no_op"
@@ -72,7 +72,7 @@ uv run --isolated --extra vllm -m examples.on_policy_distillation.main_on_policy
   trainer.policy.optimizer_config.lr=$LR \
   trainer.policy.optimizer_config.num_warmup_steps=0 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
-  trainer.algorithm.ep=$USE_KL_LOSS \
+  trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
   trainer.algorithm.use_kl_in_reward=$USE_KL_IN_REWARD \
   generator.backend=vllm \
   generator.run_engines_locally=true \
