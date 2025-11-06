@@ -1,8 +1,8 @@
 set -x
 
-# Running on policy distillation for Math on GSM8K
+# Running on policy distillation for Math on the DAPO math dataset, with eval on AIME 2024.
 # Uses Qwen-3-1.7B-Base as the student model and an RL trained Qwen-3-4B as the teacher model
-# uv run --isolated examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
+# uv run examples/algorithms/dapo/prepare_dapo_data.sh
 # bash examples/on_policy_distillation/run_on_policy_distill_math.sh
 
 DATA_DIR="/mnt/cluster_storage/data/dapo"
@@ -13,7 +13,7 @@ LOGGER=wandb
 # On Policy Distillation args
 # set this to the huggingface path of your teacher model
 TEACHER_MODEL="/mnt/cluster_storage/qwen3_4b_dapo_step90/"
-STUDENT_MODEL="Qwen/Qwen3-4B-Base"
+STUDENT_MODEL="Qwen/Qwen3-1.7B-Base"
 ADVANTAGE_ESTIMATOR="no_op"
 POLICY_LOSS="importance_sampling"
 USE_KL_IN_REWARD=true # this adds the kl penalty to the advantage
@@ -82,7 +82,7 @@ uv run --isolated --extra vllm -m examples.on_policy_distillation.main_on_policy
   trainer.policy.optimizer_config.lr=$LR \
   trainer.policy.optimizer_config.num_warmup_steps=0 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
-  trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
+  trainer.algorithm.ep=$USE_KL_LOSS \
   trainer.algorithm.use_kl_in_reward=$USE_KL_IN_REWARD \
   generator.backend=vllm \
   generator.run_engines_locally=true \
