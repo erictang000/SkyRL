@@ -31,13 +31,12 @@ from transformers import PreTrainedModel
 from loguru import logger
 from skyrl_train.distributed.ulysses import set_ulysses_sequence_parallel_group, apply_monkey_patch
 from skyrl_train.distributed.utils import init_custom_process_group
-from skyrl_train.utils.torch_utils import chunked_entropy_from_logits
 from skyrl_train.utils.ppo_utils import PolicyLossRegistry, ppo_critic_loss, compute_approx_kl
 from skyrl_train.workers.worker_utils import BatchIterator, reduce_metrics
 from skyrl_train.dataset.replay_buffer import Experience
 from skyrl_train.training_batch import TrainingInputBatch, TrainingOutputBatch
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
-from skyrl_train.utils.utils import configure_ray_worker_logging
+from skyrl_train.utils.utils import configure_ray_worker_logging, get_tcp_url
 from omegaconf import DictConfig
 from pathlib import Path
 
@@ -156,7 +155,13 @@ class DistributedTorchRayActor:
                 ("maskp", POINTER(c_ulong)),
             ]
 
-        LIBNUMA = CDLL(find_library("numa"))
+        try:
+            LIBNUMA = CDLL(find_library("numa"))
+        except Exception as e:
+            logger.error(f"Skipping NUMA affinity setup because libnuma is not installed: {e}")
+            _SET_AFFINITY = True
+            return
+
         LIBNUMA.numa_parse_nodestring.argtypes = [c_char_p]
         LIBNUMA.numa_parse_nodestring.restype = POINTER(bitmask_t)
         LIBNUMA.numa_run_on_node_mask.argtypes = [POINTER(bitmask_t)]
@@ -174,8 +179,9 @@ class DistributedTorchRayActor:
         numa_nodes = LIBNUMA.numa_num_configured_nodes()
         if numa_nodes <= 0:
             numa_nodes = 1
-        num_gpu_pre_numa_node = 8 // numa_nodes
-        numa_bind(self._local_rank // num_gpu_pre_numa_node)
+        num_gpu_pre_numa_node = max(1, 8 // numa_nodes)
+        target_nid = min(numa_nodes - 1, self._local_rank // num_gpu_pre_numa_node)
+        numa_bind(target_nid)
         _SET_AFFINITY = True
 
 
@@ -260,12 +266,13 @@ class Worker(DistributedTorchRayActor):
                 sock.bind(("", 0))
                 master_port = sock.getsockname()[1]
 
-            num_inference_engines, tensor_parallel_size, data_parallel_size = (
+            num_inference_engines, tensor_parallel_size, pipeline_parallel_size, data_parallel_size = (
                 self.cfg.generator.num_inference_engines,
                 self.cfg.generator.inference_engine_tensor_parallel_size,
+                self.cfg.generator.inference_engine_pipeline_parallel_size,
                 self.cfg.generator.inference_engine_data_parallel_size,
             )
-            world_size = num_inference_engines * tensor_parallel_size * data_parallel_size + 1
+            world_size = num_inference_engines * tensor_parallel_size * pipeline_parallel_size * data_parallel_size + 1
 
             backend = self.cfg.generator.weight_sync_backend
 
@@ -290,7 +297,7 @@ class Worker(DistributedTorchRayActor):
                 asyncio.to_thread(
                     init_custom_process_group,
                     backend=backend,
-                    init_method=f"tcp://{master_addr}:{master_port}",
+                    init_method=get_tcp_url(master_addr, master_port),
                     world_size=world_size,
                     rank=0,
                     group_name=group_name,
@@ -754,15 +761,11 @@ class PolicyWorkerBase(Worker):
             )
         # entropy
         with torch.no_grad():
-            if self.cfg.trainer.use_sample_packing:
-                # batch_size, seqlen
-                entropy_BS = output["entropy"]
-                entropy_BS = entropy_BS[:, -num_actions - 1 : -1]
-            else:
-                action_logits = output["logits"][:, -num_actions - 1 : -1, :]
-                entropy_BS = chunked_entropy_from_logits(action_logits, requires_grad=False)
+            # batch_size, seqlen
+            entropy_BS = output["entropy"]
+            entropy_BS = entropy_BS[:, -num_actions - 1 : -1]
 
-            entropy = entropy_BS.sum().item() / entropy_BS.numel()
+            entropy = masked_mean(entropy_BS, loss_mask)
 
         # kl loss
         if self.cfg.trainer.algorithm.use_kl_loss:
@@ -794,7 +797,7 @@ class PolicyWorkerBase(Worker):
             "policy_loss": policy_loss.item(),
             "policy_lr": self.scheduler.get_last_lr()[0],
             "ppo_clip_ratio": clip_ratio,
-            "policy_entropy": entropy,
+            "policy_entropy": entropy.item(),
         }
         if self.cfg.trainer.algorithm.use_kl_loss:
             status["policy_kl"] = kl_loss.item()
