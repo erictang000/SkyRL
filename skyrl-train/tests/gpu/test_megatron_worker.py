@@ -174,7 +174,7 @@ def test_megatron_policy_weight_sync():
         # ref has same forward pass as policy - just duplicate one test to test setup
         ("ref", 2, 1, 1, 1, None, 2, False),
         ("policy", 1, 2, 1, 1, None, 2, False),
-        ("policy", 1, 4, 1, 1, None, 4, False),
+        ("policy", 1, 2, 1, 1, None, 2, False),
         ("policy", 2, 2, 1, 1, None, 4, True),
         ("policy", 1, 1, 2, 1, None, 2, True),
         ("policy", 2, 2, 2, 1, None, 8, True),

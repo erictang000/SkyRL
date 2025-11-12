@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
     "loguru",
     "tqdm",
+    "ninja",
     "tensorboard",
     "func_timeout",
     "transformers>=4.51.0",
@@ -67,9 +68,15 @@ conflicts = [
         { extra = "flashrl" },
     ]
 ]
+no-build-isolation-package = [
+    "transformer-engine-torch",
+    "transformer-engine",
+]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{requirement = "torch", match-runtime = true}]
+transformer-engine = [{ requirement = "torch", match-runtime = true }, "build_tools"]
+transformer-engine-torch = [{ requirement = "torch", match-runtime = true }, "build_tools"]
 
 [tool.uv.extra-build-variables]
 flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE"}
@@ -143,8 +150,8 @@ mcore = [
   "flashinfer-python",
   "torchvision",
   "mbridge==0.15.1",
-  "megatron-bridge==0.2.0rc6",
-  "megatron-core@git+https://github.com/NVIDIA/Megatron-LM.git@core_v0.15.0rc6",
+  "megatron-bridge==0.1.0rc4",
+  "megatron-core==0.14.0",
 ]
 flashrl = [
     # NOTE: Custom vLLM wheel must be installed separately.
