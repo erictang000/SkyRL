@@ -426,7 +426,7 @@ async def test_megatron_dp(ray_init_fixture, worker_type, tp, pp, gpus_per_node)
     cfg.trainer.micro_train_batch_size_per_gpu = 4
 
     # set torch profiler config
-    cfg.trainer.policy.megatron_config.torch_profiler_config.enable = True
+    cfg.trainer.policy.megatron_config.torch_profiler_config.enable = False
     cfg.trainer.policy.megatron_config.torch_profiler_config.ranks = [0]
     cfg.trainer.policy.megatron_config.torch_profiler_config.save_path = f"/home/ray/megatron_prof/tp{tp}_pp{pp}/"
 
