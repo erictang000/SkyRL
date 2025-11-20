@@ -13,7 +13,6 @@ from collections import defaultdict
 from tqdm import tqdm
 from omegaconf import OmegaConf
 
-# from mbridge import AutoBridge
 from megatron.bridge import AutoBridge
 import megatron.core.parallel_state as mpu
 from megatron.core.optimizer import DistributedOptimizer
