@@ -261,7 +261,7 @@ The evaluation results are shown below for `Qwen/Qwen2.5-3B-Instruct <https://hu
 
 Qwen/Qwen3-30B-A3B
 ^^^^^^^^^^^^^^^^^^^
-Evaluation results for `Qwen3-30B-A3B <https://huggingface.co/Qwen/Qwen3-30B-A3B>`_ on SearchR1, with experiments using 4 8xH100 nodes using the :doc:`Megatron <../examples/megatron>` backend, are shown below. These results can be reproduced with commit `9b878cd`.
+Evaluation results for `Qwen3-30B-A3B <https://huggingface.co/Qwen/Qwen3-30B-A3B>`_ on SearchR1, with experiments using 4 8xH100 nodes using the :doc:`Megatron <../examples/megatron>` backend, are shown below. These results can be reproduced with commit `9b878cd <https://github.com/NovaSky-AI/SkyRL/commit/9b878cdfe133b0ffe8a827f0ef91c63341f99cf6>`_.
 
 .. raw:: html
 
