@@ -527,7 +527,6 @@ async def test_megatron_offload_memory_and_correctness(ray_init_fixture, worker_
     cfg.trainer.policy.megatron_config.context_parallel_size = 1
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = 4
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = 1
-    cfg.trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer = False
     actor_group = init_worker_with_type(
         worker_type,
         shared_pg=None,
