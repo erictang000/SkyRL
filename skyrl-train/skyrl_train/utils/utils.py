@@ -301,11 +301,11 @@ def validate_cfg(cfg: DictConfig):
 
         if cfg.trainer.target_modules is not None:
             logger.warning(
-                "`trainer.target_modules` is deprecated, use `trainer.policy.model.lora.target_modules` instead"
+                "`trainer.target_modules` is deprecated, use `trainer.policy.model.lora.target_modules` or `trainer.critic.model.lora.target_modules` instead"
             )
         if cfg.trainer.exclude_modules is not None:
             logger.warning(
-                "`trainer.exclude_modules` is deprecated, use `trainer.policy.model.lora.exclude_modules` instead"
+                "`trainer.exclude_modules` is deprecated, use `trainer.policy.model.lora.exclude_modules` or `trainer.critic.model.lora.exclude_modules` instead"
             )
 
     # Validate placement
