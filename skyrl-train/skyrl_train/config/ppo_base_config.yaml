@@ -182,8 +182,8 @@ trainer:
   max_prompt_length: 512
   flash_attn: true
   disable_fast_tokenizer: false
-  target_modules: null # NOTE: these are now deprecated, use policy.model.lora.target_modules instead
-  exclude_modules: null # NOTE: these are now deprecated, use policy.model.lora.exclude_modules instead
+  target_modules: null # NOTE: these are now deprecated, use trainer.policy.model.lora.target_modules or trainer.critic.model.lora.target_modules instead
+  exclude_modules: null # NOTE: these are now deprecated, use trainer.policy.model.lora.exclude_modules or trainer.critic.model.lora.exclude_modules instead
   project_name: "skyrl"
   run_name: "test_run"
   logger: "wandb"
