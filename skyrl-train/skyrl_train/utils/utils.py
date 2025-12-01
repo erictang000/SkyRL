@@ -300,9 +300,13 @@ def validate_cfg(cfg: DictConfig):
         assert cfg.trainer.strategy in ("fsdp", "fsdp2"), "LoRA enabled requires fsdp/fsdp2 training backend"
 
         if cfg.trainer.target_modules is not None:
-            logger.warning("`trainer.target_modules` is deprecated, use `trainer.policy.model.lora.target_modules` instead")
+            logger.warning(
+                "`trainer.target_modules` is deprecated, use `trainer.policy.model.lora.target_modules` instead"
+            )
         if cfg.trainer.exclude_modules is not None:
-            logger.warning("`trainer.exclude_modules` is deprecated, use `trainer.policy.model.lora.exclude_modules` instead")
+            logger.warning(
+                "`trainer.exclude_modules` is deprecated, use `trainer.policy.model.lora.exclude_modules` instead"
+            )
 
     # Validate placement
     if cfg.trainer.placement.colocate_all:
