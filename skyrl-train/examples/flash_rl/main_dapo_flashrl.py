@@ -67,7 +67,6 @@ class DAPOTrainer(RayPPOTrainer):
         overlong_buffer_len = self.cfg.trainer.algorithm.overlong_buffer.len
         overlong_buffer_penalty_factor = self.cfg.trainer.algorithm.overlong_buffer.penalty_factor
         # modify rewards here
-        prompt_token_ids = generator_output["prompt_token_ids"]
         response_ids = generator_output["response_ids"]
         rewards = generator_output["rewards"]
 
