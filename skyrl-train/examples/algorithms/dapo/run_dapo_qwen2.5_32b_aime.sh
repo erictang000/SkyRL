@@ -5,7 +5,7 @@ set -x
 # bash examples/algorithms/dapo/run_dapo_qwen2.5_32b_aime.sh
 
 MODEL_NAME="Qwen/Qwen2.5-32B"
-DATA_DIR="$HOME/data/dapo"
+DATA_DIR="/mnt/cluster_storage/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 NUM_NODES=2
@@ -37,14 +37,19 @@ MAX_PROMPT_LENGTH=$((1024 * 2))
 MAX_RESPONSE_LENGTH=$((1024 * 20))
 
 # repro run parameters
-SEQUENCE_PARALLEL_SIZE=1
+SEQUENCE_PARALLEL_SIZE=4
 TRAIN_BATCH_SIZE=512
 MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=16
 EVAL_N_SAMPLES_PER_PROMPT=32
 ENFORCE_EAGER=true # cuda graphs can cause some instability
-MICRO_FORWARD_BATCH_SIZE_PER_GPU=4
-MICRO_TRAIN_BATCH_SIZE_PER_GPU=1
+MICRO_FORWARD_BATCH_SIZE_PER_GPU=2
+MICRO_TRAIN_BATCH_SIZE_PER_GPU=2
+USE_TIS=false
+TIS_RATIO=-1
+
+export SKYRL_LD_LIBRARY_PATH_EXPORT=true
+export LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
 
 uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
@@ -66,6 +71,8 @@ uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   generator.eval_sampling_params.temperature=$TEMPERATURE \
   trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
   trainer.algorithm.clip_ratio_c=$CLIP_RATIO_C \
+  trainer.algorithm.use_tis=$USE_TIS \
+  trainer.algorithm.tis_imp_ratio_cap=$TIS_RATIO \
   trainer.policy.model.path="$MODEL_NAME" \
   trainer.policy.sequence_parallel_size=$SEQUENCE_PARALLEL_SIZE \
   trainer.placement.colocate_all=true \
@@ -101,8 +108,8 @@ uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   generator.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_aime" \
-  trainer.run_name="dapo_qwen_2.5_32b" \
+  trainer.run_name="dapo_qwen_2.5_32b_fixed_buffer_token_mean_sp4" \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_qwen_2.5_32b" \
+  trainer.ckpt_path="$HOME/ckpts/dapo_qwen_2.5_32b_fixed_buffer_token_mean_sp4" \
   $@
