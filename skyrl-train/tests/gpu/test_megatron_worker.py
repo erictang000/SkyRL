@@ -197,7 +197,7 @@ def test_megatron_policy_weight_sync(colocate_all, inference_tp, megatron_tp, me
         "tp2_pp2_policy_seq_packing",
         "cp_2_policy_seq_packing",
         "tp_2_pp_2_cp_2_policy_seq_packing",
-        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing",
+        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing", # TEST THIS ONE AGAIN
     ],
 )
 async def test_megatron_forward(ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing):
