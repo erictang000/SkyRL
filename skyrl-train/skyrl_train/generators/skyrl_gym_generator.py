@@ -254,8 +254,10 @@ class SkyRLGymGenerator(GeneratorInterface):
                 per_step_rewards.append((step_reward, None))
             elif self.use_conversation_multi_turn:
                 # b. Token-in-token-out. Follow multi-turn chat history format.
-                input_ids, loss_mask, response_end_idx = self._get_next_input_ids_with_multiturn_chat_template(
-                    input_ids, loss_mask, output_ids, new_obs, done, added_eos
+                input_ids, loss_mask, response_end_idx, rollout_logprobs = (
+                    self._get_next_input_ids_with_multiturn_chat_template(
+                        input_ids, loss_mask, output_ids, new_obs, done, added_eos, rollout_logprobs
+                    )
                 )
                 per_step_rewards.append((step_reward, response_end_idx))
             else:
@@ -298,7 +300,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         if not self.use_conversation_multi_turn:
             if stop_reason != "length" and response_ids and response_ids[-1] != self.tokenizer.eos_token_id:
                 response_ids.append(self.tokenizer.eos_token_id)
-                loss_mask.append(1)
+                loss_mask.append(0)
                 if rollout_logprobs is not None:
                     rollout_logprobs.append(0.0)
                 appended_eos_token = True
@@ -581,6 +583,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         new_obs: ConversationType,
         done: bool,
         added_eos: bool,
+        logprobs: Optional[List[float]],
     ):
         """
         Update the loss mask and input ids given a new model response and observation, following
@@ -633,7 +636,11 @@ class SkyRLGymGenerator(GeneratorInterface):
         # mask
         loss_mask += [1] * len(output_ids) if not added_eos else [1] * (len(output_ids) - 1) + [0]
 
-        # 2. apply chat template for observations, also generate generation prompt for next turn
+        # 2. handle logprobs
+        if added_eos and logprobs is not None:
+            logprobs.append(0.0)
+
+        # 3. apply chat template for observations, also generate generation prompt for next turn
         if len(new_obs) > 0:
             # For Qwen, this will generate `\n<|user|>Some observation<|im_end|>\n`. Note that the
             # first `\n` is generated since we stripped it in ``base_conversation_token_ids``.
@@ -645,12 +652,16 @@ class SkyRLGymGenerator(GeneratorInterface):
             )[len(self.base_conversation_token_ids) :]
             input_ids += observation_ids
             loss_mask += [0] * len(observation_ids)
+            if logprobs is not None:
+                logprobs.extend([0.0] * len(observation_ids))
         else:
             if not done:
                 input_ids += self.generation_prompt_ids
                 loss_mask += [0] * len(self.generation_prompt_ids)
+                if logprobs is not None:
+                    logprobs.extend([0.0] * len(self.generation_prompt_ids))
 
-        return input_ids, loss_mask, response_end_idx
+        return input_ids, loss_mask, response_end_idx, logprobs
 
     def _get_next_input_ids_with_single_turn_chat_template(
         self,
