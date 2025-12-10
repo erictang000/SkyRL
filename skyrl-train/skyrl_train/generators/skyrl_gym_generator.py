@@ -299,6 +299,8 @@ class SkyRLGymGenerator(GeneratorInterface):
             if stop_reason != "length" and response_ids and response_ids[-1] != self.tokenizer.eos_token_id:
                 response_ids.append(self.tokenizer.eos_token_id)
                 loss_mask.append(1)
+                if rollout_logprobs is not None:
+                    rollout_logprobs.append(0.0)
                 appended_eos_token = True
 
         # Build reward output
@@ -695,9 +697,11 @@ class SkyRLGymGenerator(GeneratorInterface):
         """
         # just update raw tokens and loss mask
         new_resp_tokens = output_ids.copy()
-        if new_resp_tokens[-1] == self.tokenizer.eos_token_id:
+        if new_resp_tokens and new_resp_tokens[-1] == self.tokenizer.eos_token_id:
             # remove the eos token since we are continuing the current assistant message
             new_resp_tokens = new_resp_tokens[:-1]
+            if logprobs is not None:
+                logprobs.pop()
         loss_mask += [1] * len(new_resp_tokens)
         input_ids += new_resp_tokens
         response_end_idx = len(input_ids) - 1

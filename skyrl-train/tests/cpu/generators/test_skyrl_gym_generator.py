@@ -239,6 +239,7 @@ def validate_generator_output(output: GeneratorOutput) -> bool:
 @patch("skyrl_gym.make")
 @pytest.mark.parametrize("use_conversation_multi_turn", [True, False])
 @pytest.mark.parametrize("logprobs_setting", [None, 0])
+@pytest.mark.parametrize("mock_llm_output_ids", [[1, 10, 12, 4], [1, 10, 12]])
 async def test_agent_loop_single_turn(
     mock_make,
     mock_tokenizer,
@@ -247,6 +248,7 @@ async def test_agent_loop_single_turn(
     generator_cfg,
     use_conversation_multi_turn,
     logprobs_setting,
+    mock_llm_output_ids,
     mock_env_cfg,
 ):
     """
@@ -264,11 +266,11 @@ async def test_agent_loop_single_turn(
     def mock_generate(_):
         result = {
             "responses": ["4"],
-            "response_ids": [MOCK_LLM_OUTPUT_IDS.copy()],
+            "response_ids": [mock_llm_output_ids.copy()],
             "stop_reasons": ["stop"],
         }
         if logprobs_setting is not None:
-            result["response_logprobs"] = [[-0.1, -0.2, -0.3, -0.4]]
+            result["response_logprobs"] = [[-0.1] * len(mock_llm_output_ids)]
         return result
 
     mock_llm.generate = AsyncMock(side_effect=mock_generate)
@@ -293,13 +295,13 @@ async def test_agent_loop_single_turn(
     else:
         assert output.rollout_logprobs is None
 
-    assert output.response_ids == MOCK_LLM_OUTPUT_IDS
+    assert output.response_ids == mock_llm_output_ids or output.response_ids == mock_llm_output_ids + [4]
     if isinstance(output.reward, list):
         assert sum(output.reward) == 1.0
     else:
         assert output.reward == 1.0
     assert output.stop_reason == "stop"
-    assert output.loss_mask == [1] * len(MOCK_LLM_OUTPUT_IDS)
+    assert output.loss_mask == [1] * len(output.response_ids)
 
 
 @pytest.mark.asyncio
