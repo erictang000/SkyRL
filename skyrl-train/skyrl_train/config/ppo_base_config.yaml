@@ -215,7 +215,7 @@ generator:
   inference_engine_data_parallel_size: 1
   n_samples_per_prompt: 5
   async_engine: true
-  batched: false
+  batched: true
   max_input_length: ${trainer.max_prompt_length} # max generator input length used for multi-turn conversations - for single turn set equal to max_prompt_length
   # VLLM_ENABLE_V1_MULTIPROCESSING=0 for reproducibility
   vllm_v1_disable_multiproc: true
