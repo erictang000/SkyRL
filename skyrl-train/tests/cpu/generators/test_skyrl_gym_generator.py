@@ -288,6 +288,22 @@ async def test_agent_loop_single_turn(
     extras = {"answer": "4"}
     output = await generator.agent_loop(prompt, mock_env_cfg.env_class, extras, max_tokens=8, max_input_length=512)
 
+    has_eos_in_mock = mock_llm_output_ids and mock_llm_output_ids[-1] == mock_tokenizer.eos_token_id
+
+    if use_conversation_multi_turn:
+        expected_response_ids = mock_llm_output_ids
+        expected_loss_mask = [1] * len(expected_response_ids)
+    else:
+        expected_response_ids = mock_llm_output_ids.copy()
+        if not has_eos_in_mock:
+            expected_response_ids.append(mock_tokenizer.eos_token_id)
+
+        # Loss mask: all 1s except last token if EOS was appended
+        if has_eos_in_mock:
+            expected_loss_mask = [1] * len(expected_response_ids)
+        else:
+            expected_loss_mask = [1] * (len(expected_response_ids) - 1) + [0]
+
     if logprobs_setting is not None:
         assert output.rollout_logprobs is not None
         assert len(output.rollout_logprobs) == len(output.response_ids)
@@ -295,20 +311,14 @@ async def test_agent_loop_single_turn(
     else:
         assert output.rollout_logprobs is None
 
-    if use_conversation_multi_turn:
-        assert output.response_ids == mock_llm_output_ids
-    else:
-        expected_ids = mock_llm_output_ids.copy()
-        if expected_ids and expected_ids[-1] != mock_tokenizer.eos_token_id:
-            expected_ids.append(mock_tokenizer.eos_token_id)
-        assert output.response_ids == expected_ids
+    assert output.response_ids == expected_response_ids
+    assert output.loss_mask == expected_loss_mask
 
     if isinstance(output.reward, list):
         assert sum(output.reward) == 1.0
     else:
         assert output.reward == 1.0
     assert output.stop_reason == "stop"
-    assert output.loss_mask == [1] * len(output.response_ids)
 
 
 @pytest.mark.asyncio
