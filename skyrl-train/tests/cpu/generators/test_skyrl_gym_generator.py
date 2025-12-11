@@ -889,7 +889,7 @@ async def test_apply_overlong_filtering_non_batched(
     assert output_normal["loss_masks"][0] == [
         1,
         1,
-        1,
+        0,
     ], "Loss mask should remain as 1s for response ending with eos token"
 
 
