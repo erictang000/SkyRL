@@ -224,8 +224,6 @@ class SkyRLGymGenerator(GeneratorInterface):
                 if output.endswith(tuple(stop_strs)) and output_ids[-1] != self.tokenizer.eos_token_id:
                     output_ids.append(self.tokenizer.eos_token_id)
                     added_eos = True
-                    if get_logprobs:
-                        rollout_logprobs.append(0.0)
 
             # 2. Environment step
             env_step_output: BaseTextEnvStepOutput = await self._run_in_executor_if_available(env.step, output)
@@ -640,7 +638,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         if added_eos and logprobs is not None:
             logprobs.append(0.0)
 
-        # 3. apply chat template for observations, also generate generation prompt for next turn
+        # 2. apply chat template for observations, also generate generation prompt for next turn
         if len(new_obs) > 0:
             # For Qwen, this will generate `\n<|user|>Some observation<|im_end|>\n`. Note that the
             # first `\n` is generated since we stripped it in ``base_conversation_token_ids``.

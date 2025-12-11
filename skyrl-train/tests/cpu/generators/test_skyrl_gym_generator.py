@@ -299,7 +299,7 @@ async def test_agent_loop_single_turn(
         assert output.response_ids == mock_llm_output_ids
     else:
         expected_ids = mock_llm_output_ids.copy()
-        if not expected_ids or expected_ids[-1] != mock_tokenizer.eos_token_id:
+        if expected_ids and expected_ids[-1] != mock_tokenizer.eos_token_id:
             expected_ids.append(mock_tokenizer.eos_token_id)
         assert output.response_ids == expected_ids
 
