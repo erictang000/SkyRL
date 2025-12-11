@@ -569,6 +569,7 @@ Generator Configuration
       top_p: 1.0
       min_p: 0.0
       top_k: -1
+      logprobs: 0
 
     # number of samples per prompt for evaluation
     eval_n_samples_per_prompt: 1
