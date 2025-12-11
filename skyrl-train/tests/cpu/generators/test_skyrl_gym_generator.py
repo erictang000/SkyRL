@@ -288,21 +288,22 @@ async def test_agent_loop_single_turn(
     extras = {"answer": "4"}
     output = await generator.agent_loop(prompt, mock_env_cfg.env_class, extras, max_tokens=8, max_input_length=512)
 
-    has_eos_in_mock = mock_llm_output_ids and mock_llm_output_ids[-1] == mock_tokenizer.eos_token_id
-
     if use_conversation_multi_turn:
         expected_response_ids = mock_llm_output_ids
         expected_loss_mask = [1] * len(expected_response_ids)
     else:
-        expected_response_ids = mock_llm_output_ids.copy()
-        if not has_eos_in_mock:
-            expected_response_ids.append(mock_tokenizer.eos_token_id)
+        has_eos_in_mock = mock_llm_output_ids and mock_llm_output_ids[-1] == mock_tokenizer.eos_token_id
 
-        # Loss mask: all 1s except last token if EOS was appended
+        expected_response_ids = mock_llm_output_ids.copy()
         if has_eos_in_mock:
-            expected_loss_mask = [1] * len(expected_response_ids)
+            # Had EOS: removed then re-added, so final IDs same as mock
+            expected_response_ids = mock_llm_output_ids
         else:
-            expected_loss_mask = [1] * (len(expected_response_ids) - 1) + [0]
+            # No EOS: just add it
+            expected_response_ids = mock_llm_output_ids + [mock_tokenizer.eos_token_id]
+
+        # In single-turn, final EOS ALWAYS has mask=0 (whether original or added)
+        expected_loss_mask = [1] * (len(expected_response_ids) - 1) + [0]
 
     if logprobs_setting is not None:
         assert output.rollout_logprobs is not None
