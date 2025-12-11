@@ -183,17 +183,12 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         current_sampling_params = sampling_params if sampling_params is not None else self.generator_cfg.sampling_params
 
-        # Try dict access first, fall back to attribute access
-        try:
-            logprobs_value = (
-                current_sampling_params.get("logprobs")
-                if hasattr(current_sampling_params, "get")
-                else current_sampling_params.logprobs
-            )
-        except (AttributeError, KeyError):
-            logprobs_value = None
-
-        get_logprobs = logprobs_value is not None
+        if sampling_params is not None:
+            # Runtime override (dict)
+            get_logprobs = sampling_params.get("logprobs") is not None
+        else:
+            # Config (DictConfig or MagicMock in tests)
+            get_logprobs = self.generator_cfg.sampling_params.logprobs is not None
 
         rollout_logprobs = [] if get_logprobs else None
         # Accumulate per-step rewards. Format: (reward, response_end_token_idx)
