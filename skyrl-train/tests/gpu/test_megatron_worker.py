@@ -177,17 +177,18 @@ def test_megatron_policy_weight_sync(colocate_all, inference_tp, megatron_tp, me
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing"),
+    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "lora"),
     [
-        ("policy", 2, 1, 1, 1, None, 2, False),
+        ("policy", 2, 1, 1, 1, None, 2, False, False),
         # ref has same forward pass as policy - just duplicate one test to test setup
-        ("ref", 2, 1, 1, 1, None, 2, False),
-        ("policy", 1, 2, 1, 1, None, 2, False),
-        ("policy", 2, 2, 1, 1, None, 4, False),
-        ("policy", 2, 2, 1, 1, None, 4, True),
-        ("policy", 1, 1, 2, 1, None, 2, True),
-        ("policy", 2, 2, 2, 1, None, 8, True),
-        ("policy", 4, 2, 1, 4, 1, 8, True),
+        ("ref", 2, 1, 1, 1, None, 2, False, False),
+        ("policy", 1, 2, 1, 1, None, 2, False, False),
+        ("policy", 2, 2, 1, 1, None, 4, False, False),
+        ("policy", 2, 2, 1, 1, None, 4, True, False),
+        ("policy", 2, 2, 1, 1, None, 4, True, True),
+        ("policy", 1, 1, 2, 1, None, 2, True, False),
+        ("policy", 2, 2, 2, 1, None, 8, True, False),
+        ("policy", 4, 2, 1, 4, 1, 8, True, False),
     ],
     ids=[
         "tp2_pp1_policy",
@@ -195,12 +196,13 @@ def test_megatron_policy_weight_sync(colocate_all, inference_tp, megatron_tp, me
         "tp1_pp2_policy",
         "tp2_pp2_policy_unpacked",
         "tp2_pp2_policy_seq_packing",
+        "tp2_pp2_lora",
         "cp_2_policy_seq_packing",
         "tp_2_pp_2_cp_2_policy_seq_packing",
         "tp4_pp2_cp1_ep4_etp1_policy_seq_packing",
     ],
 )
-async def test_megatron_forward(ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing):
+async def test_megatron_forward(ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, lora):
     """
     Test that the Megatron forward pass is numerically equivalent to just running a huggingface model forward.
     """
@@ -215,6 +217,9 @@ async def test_megatron_forward(ray_init_fixture, worker_type, tp, pp, cp, ep, e
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
     cfg.trainer.use_sample_packing = use_sample_packing
     batch = get_test_training_batch(max(4, gpus_per_node))
+    if lora:
+        cfg.trainer.policy.model.lora.rank = 16
+        cfg.trainer.policy.model.lora.alpha = 16
 
     actor_group = init_worker_with_type(
         worker_type,
