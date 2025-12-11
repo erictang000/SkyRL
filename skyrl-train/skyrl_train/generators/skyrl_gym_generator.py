@@ -180,7 +180,11 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         initial_prompt_length = len(input_ids)
         loss_mask = []  # this excludes the prompt
-        get_logprobs = self.generator_cfg.sampling_params.logprobs is not None
+
+        current_sampling_params = sampling_params if sampling_params is not None else self.generator_cfg.sampling_params
+
+        get_logprobs = current_sampling_params.get("logprobs") is not None
+
         rollout_logprobs = [] if get_logprobs else None
         # Accumulate per-step rewards. Format: (reward, response_end_token_idx)
         per_step_rewards: List[Tuple[float, Optional[int]]] = []
@@ -211,9 +215,7 @@ class SkyRLGymGenerator(GeneratorInterface):
 
             # Append eos when sampling_params.stop is not None. Does not affect 3.a as chat templates add eos_token.
             # sampling_params is not None for eval, but None for training (which uses engine.sampling_params which are from cfg)
-            current_sampling_params = (
-                sampling_params if sampling_params is not None else self.generator_cfg.sampling_params
-            )
+
             stop_strs = current_sampling_params.get("stop", None)
             added_eos = False
             if (
