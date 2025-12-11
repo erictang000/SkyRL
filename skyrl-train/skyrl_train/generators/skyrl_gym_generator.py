@@ -291,8 +291,15 @@ class SkyRLGymGenerator(GeneratorInterface):
             ), "loss_mask at index after response end should be all 0"
             loss_mask = loss_mask[: response_end_idx - initial_prompt_length + 1]
             response_ids = input_ids[initial_prompt_length : response_end_idx + 1]
+            if rollout_logprobs is not None:
+                rollout_logprobs = rollout_logprobs[: response_end_idx - initial_prompt_length + 1]
+
             per_step_rewards = [(reward, idx - initial_prompt_length) for reward, idx in per_step_rewards]
         assert len(loss_mask) == len(response_ids), "loss_mask and response_ids should have the same length"
+        if rollout_logprobs is not None:
+            assert len(rollout_logprobs) == len(
+                response_ids
+            ), "rollout_logprobs and response_ids should have the same length"
 
         appended_eos_token = False
         if not self.use_conversation_multi_turn:

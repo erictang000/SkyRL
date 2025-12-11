@@ -890,7 +890,7 @@ async def test_apply_overlong_filtering_non_batched(
         1,
         1,
         0,
-    ], "Loss mask should remain as 1s for response ending with eos token"
+    ], "Final EOS has mask=0 in single-turn mode"
 
 
 @pytest.mark.asyncio
