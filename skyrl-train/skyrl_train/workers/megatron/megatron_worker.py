@@ -42,7 +42,14 @@ from skyrl_train.utils.profiler import Profiler
 
 class MegatronWorker:
     def init_configs(
-        self, model_path, megatron_config, model_config_kwargs, transformer_config_kwargs, bf16=True, flash_attn=False, lora_config=None
+        self,
+        model_path,
+        megatron_config,
+        model_config_kwargs,
+        transformer_config_kwargs,
+        bf16=True,
+        flash_attn=False,
+        lora_config=None,
     ):
         """
         Initialize the Megatron-Bridge bridge and provider objects + hf_config and tokenizer
@@ -92,7 +99,11 @@ class MegatronWorker:
 
     def configure_lora(self, lora_config):
         self.lora_cls = LoRA(
-            target_modules=["linear_qkv", "linear_proj", "linearx_fc1", "linear_fc2"] if lora_config.target_modules == "all-linear" else lora_config.target_modules,
+            target_modules=(
+                ["linear_qkv", "linear_proj", "linearx_fc1", "linear_fc2"]
+                if lora_config.target_modules == "all-linear"
+                else lora_config.target_modules
+            ),
             dim=lora_config.rank,
             alpha=lora_config.alpha,
             dropout=lora_config.dropout,
@@ -114,13 +125,15 @@ class MegatronWorker:
 
         if lora_config is not None:
             self.configure_lora(lora_config)
+
             def lora_pre_wrap_hook(model):
                 lora_model = self.lora_cls(model, training=True)
                 self.lora_cls.set_params_to_save(lora_model)
 
                 return lora_model
+
             self.provider.register_pre_wrap_hook(lora_pre_wrap_hook)
-        
+
         default_ddp_config = DistributedDataParallelConfig()
         if wrap_with_ddp:
             default_ddp_config.use_distributed_optimizer = True
@@ -305,7 +318,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             actor_optimizer=self.optimizer,
             policy_loss_fn=self.policy_loss_fn,
         )
-        
 
         self.use_cuda_ipc = False
         if self.cfg.generator.weight_sync_backend == "nccl" and self.cfg.trainer.placement.colocate_all:

@@ -114,7 +114,9 @@ def get_test_training_batch(batch_size=4) -> TrainingInputBatch:
     [(True, 4, 2, 2, 1, None, False), (False, 2, 2, 1, 1, None, False), (True, 4, 2, 2, 1, None, True)],
     ids=["colocate_all", "non_colocated", "colocate_all_lora"],
 )
-def test_megatron_policy_weight_sync(colocate_all, inference_tp, megatron_tp, megatron_pp, megatron_ep, megatron_etp, lora):
+def test_megatron_policy_weight_sync(
+    colocate_all, inference_tp, megatron_tp, megatron_pp, megatron_ep, megatron_etp, lora
+):
     """
     Test that we can sync weights between policy and inference for megatron then run inference
     """
@@ -199,10 +201,12 @@ def test_megatron_policy_weight_sync(colocate_all, inference_tp, megatron_tp, me
         "tp2_pp2_lora",
         "cp_2_policy_seq_packing",
         "tp_2_pp_2_cp_2_policy_seq_packing",
-        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing", # TEST THIS ONE AGAIN
+        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing",  # TEST THIS ONE AGAIN
     ],
 )
-async def test_megatron_forward(ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, lora):
+async def test_megatron_forward(
+    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, lora
+):
     """
     Test that the Megatron forward pass is numerically equivalent to just running a huggingface model forward.
     """
@@ -302,24 +306,26 @@ async def test_megatron_forward(ray_init_fixture, worker_type, tp, pp, cp, ep, e
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss"),
+    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss", "lora"),
     [
-        ("policy", 2, 2, 1, 1, 1, 4, True, False),
-        ("policy", 2, 2, 1, 1, 1, 4, True, True),
-        ("policy", 2, 2, 1, 1, 1, 4, False, False),
-        ("policy", 2, 2, 2, 1, 1, 8, True, False),
-        ("policy", 2, 1, 1, 8, 1, 8, True, False),
+        ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
+        ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
+        ("policy", 2, 2, 1, 1, 1, 4, True, False, True),
+        ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
+        ("policy", 2, 2, 2, 1, 1, 8, True, False, False),
+        ("policy", 2, 1, 1, 8, 1, 8, True, False, False),
     ],
     ids=[
         "tp2_pp2_policy_seq_packing",
         "tp2_pp2_policy_seq_packing_with_entropy_loss",
+        "tp2_pp2_lora",
         "tp2_pp2_policy_unpacked",
         "tp2_pp2_cp2_policy_seq_packing",
         "tp4_pp2_cp1_ep8_etp1_policy_seq_packing",
     ],
 )
 async def test_megatron_train(
-    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, use_entropy_loss
+    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, use_entropy_loss, lora
 ):
     """
     Full test: initialize actor group, send dummy experience to training_step, validate output.
@@ -338,6 +344,9 @@ async def test_megatron_train(
     if use_entropy_loss:
         cfg.trainer.algorithm.use_entropy_loss = True
         cfg.trainer.algorithm.entropy_loss_coef = 0.01
+    if lora:
+        cfg.trainer.policy.model.lora.rank = 16
+        cfg.trainer.policy.model.lora.alpha = 16
 
     # set batch sizes correctly
     cfg.trainer.train_batch_size = gpus_per_node

@@ -1,10 +1,10 @@
 set -x
 
-# Colocated GRPO training+generation for Qwen3-0.6B on GSM8K with Megatron.
+# Colocated GRPO training+generation for Qwen3-0.6B on GSM8K with Megatron and LoRA.
 
 # uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # export WANDB_API_KEY=<your_key_here>
-# bash examples/megatron/run_megatron.sh
+# bash examples/megatron/run_megatron_lora_qwen3-0.6b.sh
 
 DATA_DIR="$HOME/data/gsm8k"
 NUM_GPUS=4
@@ -17,10 +17,9 @@ MEGATRON_TP=2
 MEGATRON_PP=2
 MEGATRON_CP=1
 
-# torch profiler config
-ENABLE_TORCH_PROFILER=false
-RANKS_TO_PROFILE="[0]"
-SAVE_PATH="$HOME/megatron_prof/tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}"
+# LoRA configuration
+LORA_RANK=16
+LORA_ALPHA=16
 
 uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -42,6 +41,8 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.ref.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.ref.megatron_config.context_parallel_size=$MEGATRON_CP \
   trainer.ref.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
+  trainer.policy.model.lora.rank=$LORA_RANK \
+  trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.use_sample_packing=true \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
@@ -55,7 +56,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
-  trainer.policy.optimizer_config.lr=1.0e-6 \
+  trainer.policy.optimizer_config.lr=1.0e-5 \
   trainer.algorithm.use_kl_loss=true \
   generator.backend=$INFERENCE_BACKEND \
   generator.run_engines_locally=true \
@@ -67,7 +68,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   generator.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_lora_r${LORA_RANK}_a${LORA_ALPHA}_lr1e-5" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@
