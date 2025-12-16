@@ -7,19 +7,20 @@ set -x
 # bash examples/megatron/run_megatron_lora_qwen3-0.6b.sh
 
 DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=4
+NUM_GPUS=2
 LOGGER="wandb"  # change to "console" to print to stdout
-MODEL_NAME="Qwen/Qwen3-4B"
+MODEL_NAME="Qwen/Qwen3-0.6B"
 
 INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 
-MEGATRON_TP=2
+MEGATRON_TP=1
 MEGATRON_PP=2
 MEGATRON_CP=1
 
 # LoRA configuration
-LORA_RANK=16
-LORA_ALPHA=16
+LORA_RANK=128
+LORA_ALPHA=128
+LORA_A_INIT_METHOD="kaiming"
 
 uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -43,6 +44,8 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.ref.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
   trainer.policy.model.lora.rank=$LORA_RANK \
   trainer.policy.model.lora.alpha=$LORA_ALPHA \
+  trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \
+  trainer.policy.model.lora.target_modules="['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2']" \
   trainer.use_sample_packing=true \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
@@ -68,7 +71,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   generator.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_lora_r${LORA_RANK}_a${LORA_ALPHA}_lr1e-5" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_lora_r${LORA_RANK}_a${LORA_ALPHA}_lr1e-5_kaiming" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@

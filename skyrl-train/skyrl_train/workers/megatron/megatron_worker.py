@@ -100,13 +100,15 @@ class MegatronWorker:
     def configure_lora(self, lora_config):
         self.lora_cls = LoRA(
             target_modules=(
-                ["linear_qkv", "linear_proj", "linearx_fc1", "linear_fc2"]
+                ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
                 if lora_config.target_modules == "all-linear"
                 else lora_config.target_modules
             ),
             dim=lora_config.rank,
             alpha=lora_config.alpha,
             dropout=lora_config.dropout,
+            lora_A_init_method=lora_config.init_method,
+            lora_B_init_method="zero",
             exclude_modules=[] if lora_config.exclude_modules is None else lora_config.exclude_modules,
             lora_dtype=torch.bfloat16 if self.cfg.trainer.bf16 else torch.float32,
         )
@@ -392,6 +394,8 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         if self.profiler is not None:
             self.profiler.start()
+        lora_params = {n: p for n, p in self.actor_module[0].named_parameters() if "adapter" in n}
+        before_lora_params = {n: p.clone().detach() for n, p in lora_params.items()}
 
         for epoch in range(self.cfg.trainer.update_epochs_per_batch):
             self.optimizer.zero_grad()
@@ -486,6 +490,11 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             micro_buffer = []
 
         torch.distributed.barrier()
+        lora_params = {n: p for n, p in self.actor_module[0].named_parameters() if "adapter" in n}
+        after = {n: p.clone().detach() for n, p in lora_params.items()}
+        for n, p in lora_params.items():
+            diff = (after[n] - before_lora_params[n]).abs().max().item()
+            print(n, diff)
         if self.profiler is not None:
             self.profiler.stop_and_save()
             self.profiler.stop_trace()
