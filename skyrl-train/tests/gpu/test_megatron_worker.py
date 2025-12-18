@@ -312,7 +312,7 @@ async def test_megatron_forward(
     [
         ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
-        ("policy", 1, 2, 1, 1, 1, 2, True, False, True),
+        ("policy", 1, 4, 1, 1, 1, 4, True, False, True),
         ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
         ("policy", 2, 2, 2, 1, 1, 8, True, False, False),
         ("policy", 2, 1, 1, 8, 1, 8, True, False, False),
@@ -342,6 +342,7 @@ async def test_megatron_train(
     cfg.trainer.policy.megatron_config.context_parallel_size = cp
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
+    cfg.trainer.gradient_checkpointing = True
     cfg.trainer.use_sample_packing = use_sample_packing
     if use_entropy_loss:
         cfg.trainer.algorithm.use_entropy_loss = True
