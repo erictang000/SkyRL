@@ -385,7 +385,7 @@ async def test_megatron_train(
         num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
         cfg=cfg,
     )
-    
+
     with Timer(f"megatron training step tp{tp} pp{pp} cp{cp} ep{ep} etp{etp}"):
         batch.metadata["global_step"] = 0
         results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
