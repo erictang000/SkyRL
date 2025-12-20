@@ -5,7 +5,7 @@ set -x
 
 # uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # export WANDB_API_KEY=<your_key_here>
-# bash examples/megatron/run_megatron_qwen3-30b-a3b.sh
+# bash examples/megatron/run_megatron_lora_qwen3-30b-a3b.sh
 
 DATA_DIR="$HOME/data/gsm8k"
 LOGGER="wandb"  # change to "console" to print to stdout
@@ -16,10 +16,10 @@ INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 NUM_NODES=1
 NUM_GPUS=8
 
-MEGATRON_TP=4
-MEGATRON_PP=1
-MEGATRON_CP=1
-MEGATRON_EP=8
+MEGATRON_TP=2
+MEGATRON_PP=2
+MEGATRON_CP=2
+MEGATRON_EP=4
 MEGATRON_ETP=1
 
 NUM_INFERENCE_ENGINES=1
@@ -79,7 +79,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
-  trainer.policy.optimizer_config.lr=1.0e-6 \
+  trainer.policy.optimizer_config.lr=1.0e-5 \
   trainer.algorithm.use_kl_loss=true \
   generator.backend=$INFERENCE_BACKEND \
   generator.run_engines_locally=true \

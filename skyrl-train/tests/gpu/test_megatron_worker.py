@@ -9,7 +9,7 @@ import hydra
 from omegaconf import DictConfig
 import torch
 import asyncio
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoConfig, AutoModel
 from omegaconf import OmegaConf
 from tests.gpu.utils import (
     init_worker_with_type,
@@ -223,6 +223,12 @@ async def test_megatron_forward(
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
     cfg.trainer.use_sample_packing = use_sample_packing
     batch = get_test_training_batch(max(4, gpus_per_node))
+
+    if ep > 1:
+        transformer_config_kwargs = OmegaConf.to_container(cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True)
+        transformer_config_kwargs["num_layers"] = 4
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
+
     if lora:
         cfg.trainer.policy.model.lora.rank = 16
         cfg.trainer.policy.model.lora.alpha = 16
@@ -248,7 +254,10 @@ async def test_megatron_forward(
     # now run the huggingface model forward
     @ray.remote(num_gpus=1)
     def run_hf_forward(batch, model_name):
-        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, dtype=torch.bfloat16)
+        if ep > 1:
+            config.num_hidden_layers = 4
+        model = AutoModelForCausalLM.from_pretrained(model_name, config=config, dtype=torch.bfloat16)
         model.eval()
         model.to("cuda")
         sequences_fwd = batch["sequences"]
@@ -312,18 +321,22 @@ async def test_megatron_forward(
     [
         ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
-        ("policy", 1, 4, 1, 1, 1, 4, True, False, True),
+        ("policy", 1, 1, 1, 1, 1, 1, True, False, False),
+        ("policy", 1, 1, 1, 1, 1, 1, True, False, True),
         ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
         ("policy", 2, 2, 2, 1, 1, 8, True, False, False),
-        ("policy", 2, 1, 1, 8, 1, 8, True, False, False),
+        ("policy", 4, 1, 1, 8, 1, 8, True, False, False),
+        ("policy", 4, 1, 1, 8, 1, 8, True, False, True),
     ],
     ids=[
         "tp2_pp2_policy_seq_packing",
         "tp2_pp2_policy_seq_packing_with_entropy_loss",
-        "tp2_pp2_lora",
+        "tp1_pp1_policy",
+        "tp1_pp1_policy_lora",
         "tp2_pp2_policy_unpacked",
         "tp2_pp2_cp2_policy_seq_packing",
-        "tp4_pp2_cp1_ep8_etp1_policy_seq_packing",
+        "tp4_pp1_cp1_ep8_etp1_policy_seq_packing",
+        "tp4_pp1_cp1_ep8_etp1_policy_seq_packing_lora",
     ],
 )
 async def test_megatron_train(
@@ -342,7 +355,6 @@ async def test_megatron_train(
     cfg.trainer.policy.megatron_config.context_parallel_size = cp
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
-    cfg.trainer.gradient_checkpointing = True
     cfg.trainer.use_sample_packing = use_sample_packing
     if use_entropy_loss:
         cfg.trainer.algorithm.use_entropy_loss = True
@@ -373,6 +385,29 @@ async def test_megatron_train(
         cfg=cfg,
     )
 
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after init", memory)
+
+    actor_group.offload_to_cpu(offload_optimizer=True, offload_model=False)
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after offload optimizer to cpu", memory)
+
+    actor_group.offload_to_cpu(offload_optimizer=False, offload_model=True)
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after offload model to cpu", memory)
+
+    leftover = ray.get(actor_group.async_run_ray_method("pass_through", "debug_gpu_params"))
+    for item in leftover:
+        print("LEFTOVER:", item)
+
+    actor_group.backload_to_gpu()
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after backload to gpu", memory)
+
     with Timer(f"megatron training step tp{tp} pp{pp} cp{cp} ep{ep} etp{etp}"):
         batch.metadata["global_step"] = 0
         results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
@@ -381,6 +416,12 @@ async def test_megatron_train(
     memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
     memory = memory[0]
     print_mem("memory after training step", memory)
+
+    actor_group.offload_to_cpu()
+
+    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    memory = memory[0]
+    print_mem("memory after offload to cpu", memory)
 
     for result in results_megatron:
         assert isinstance(result, dict), "Result should be a dictionary of training stats"
@@ -391,11 +432,6 @@ async def test_megatron_train(
         for k, v in result.items():
             assert isinstance(v, (int, float)), f"{k} should be an int or float"
 
-    print("megatron results: ", results_megatron[-1])
-    import numpy as np
-
-    print("avg_loss: ", np.mean([result["final_loss"] for result in results_megatron]))
-    print("avg_clip_ratio: ", np.mean([result["ppo_clip_ratio"] for result in results_megatron]))
     ray.shutdown()
     # ray_init_for_tests()
 

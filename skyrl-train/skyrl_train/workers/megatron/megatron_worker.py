@@ -496,8 +496,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         for n, p in lora_params.items():
             diff = (after[n] - before_lora_params[n]).abs().max().item()
             avg_diff += diff
-        avg_diff /= len(lora_params)
-        print(f"Average difference in lora parameters: {avg_diff}")
+        if len(lora_params) > 0:
+            avg_diff /= len(lora_params)
+            print(f"Average difference in lora parameters: {avg_diff}")
         if self.profiler is not None:
             self.profiler.stop_and_save()
             self.profiler.stop_trace()
@@ -511,6 +512,27 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         output = TrainingOutputBatch()
         output.metadata = {"train_status": status_mean}
         return output
+
+    def debug_gpu_params(self):
+        report = []
+        for chunk in self.actor_module:
+            # unwrap DDP / Float16Module if needed
+            module = chunk
+            if hasattr(module, "module"):
+                module = module.module
+
+            for name, p in module.named_parameters():
+                if p.is_cuda and p.data.storage().size() > 0:
+                    report.append(
+                        (f"param:{name}", p.shape, p.dtype, p.requires_grad, p.data.storage().size())
+                    )
+
+            for name, b in module.named_buffers():
+                if b.is_cuda and b.data.storage().size() > 0:
+                    report.append(
+                        (f"buffer:{name}", b.shape, b.dtype, b.data.storage().size())
+                    )
+        return report
 
     async def broadcast_to_inference_engines(self, inference_engine_client):
         from torch.multiprocessing.reductions import reduce_tensor
