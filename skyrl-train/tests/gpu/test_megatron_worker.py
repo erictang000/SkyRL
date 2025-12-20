@@ -9,7 +9,7 @@ import hydra
 from omegaconf import DictConfig
 import torch
 import asyncio
-from transformers import AutoModelForCausalLM, AutoConfig, AutoModel
+from transformers import AutoModelForCausalLM, AutoConfig
 from omegaconf import OmegaConf
 from tests.gpu.utils import (
     init_worker_with_type,
@@ -225,7 +225,9 @@ async def test_megatron_forward(
     batch = get_test_training_batch(max(4, gpus_per_node))
 
     if ep > 1:
-        transformer_config_kwargs = OmegaConf.to_container(cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True)
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
         transformer_config_kwargs["num_layers"] = 4
         cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
 
@@ -385,28 +387,28 @@ async def test_megatron_train(
         cfg=cfg,
     )
 
-    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    memory = memory[0]
-    print_mem("memory after init", memory)
+    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    # memory = memory[0]
+    # print_mem("memory after init", memory)
 
-    actor_group.offload_to_cpu(offload_optimizer=True, offload_model=False)
-    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    memory = memory[0]
-    print_mem("memory after offload optimizer to cpu", memory)
+    # actor_group.offload_to_cpu(offload_optimizer=True, offload_model=False)
+    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    # memory = memory[0]
+    # print_mem("memory after offload optimizer to cpu", memory)
 
-    actor_group.offload_to_cpu(offload_optimizer=False, offload_model=True)
-    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    memory = memory[0]
-    print_mem("memory after offload model to cpu", memory)
+    # actor_group.offload_to_cpu(offload_optimizer=False, offload_model=True)
+    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    # memory = memory[0]
+    # print_mem("memory after offload model to cpu", memory)
 
-    leftover = ray.get(actor_group.async_run_ray_method("pass_through", "debug_gpu_params"))
-    for item in leftover:
-        print("LEFTOVER:", item)
+    # leftover = ray.get(actor_group.async_run_ray_method("pass_through", "debug_gpu_params"))
+    # for item in leftover:
+    #     print("LEFTOVER:", item)
 
-    actor_group.backload_to_gpu()
-    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    memory = memory[0]
-    print_mem("memory after backload to gpu", memory)
+    # actor_group.backload_to_gpu()
+    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
+    # memory = memory[0]
+    # print_mem("memory after backload to gpu", memory)
 
     with Timer(f"megatron training step tp{tp} pp{pp} cp{cp} ep{ep} etp{etp}"):
         batch.metadata["global_step"] = 0

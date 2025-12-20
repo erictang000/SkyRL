@@ -618,27 +618,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         output.metadata = {"train_status": status_mean}
         return output
 
-    def debug_gpu_params(self):
-        report = []
-        for chunk in self.actor_module:
-            # unwrap DDP / Float16Module if needed
-            module = chunk
-            if hasattr(module, "module"):
-                module = module.module
-
-            for name, p in module.named_parameters():
-                if p.is_cuda and p.data.storage().size() > 0:
-                    report.append(
-                        (f"param:{name}", p.shape, p.dtype, p.requires_grad, p.data.storage().size())
-                    )
-
-            for name, b in module.named_buffers():
-                if b.is_cuda and b.data.storage().size() > 0:
-                    report.append(
-                        (f"buffer:{name}", b.shape, b.dtype, b.data.storage().size())
-                    )
-        return report
-
     async def broadcast_to_inference_engines(self, inference_engine_client):
         from torch.multiprocessing.reductions import reduce_tensor
 
