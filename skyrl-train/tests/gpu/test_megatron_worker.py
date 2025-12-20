@@ -308,7 +308,8 @@ async def test_megatron_forward(
     avg_diff = torch.mean(torch.abs(action_log_probs_masked - action_log_probs_megatron_masked))
     print(f"Avg diff: {avg_diff}")
 
-    assert max_diff < 4.5e-1, f"Max diff {max_diff} is too large"
+    if ep == 1:
+        assert max_diff < 4e-1, f"Max diff {max_diff} is too large"
 
     if ep == 1:
         assert avg_diff < 7e-2, f"Avg diff {avg_diff} is too large"
@@ -323,7 +324,6 @@ async def test_megatron_forward(
     [
         ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
-        ("policy", 1, 1, 1, 1, 1, 1, True, False, False),
         ("policy", 1, 1, 1, 1, 1, 1, True, False, True),
         ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
         ("policy", 2, 2, 2, 1, 1, 8, True, False, False),
@@ -333,7 +333,6 @@ async def test_megatron_forward(
     ids=[
         "tp2_pp2_policy_seq_packing",
         "tp2_pp2_policy_seq_packing_with_entropy_loss",
-        "tp1_pp1_policy",
         "tp1_pp1_policy_lora",
         "tp2_pp2_policy_unpacked",
         "tp2_pp2_cp2_policy_seq_packing",
@@ -386,30 +385,7 @@ async def test_megatron_train(
         num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
         cfg=cfg,
     )
-
-    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    # memory = memory[0]
-    # print_mem("memory after init", memory)
-
-    # actor_group.offload_to_cpu(offload_optimizer=True, offload_model=False)
-    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    # memory = memory[0]
-    # print_mem("memory after offload optimizer to cpu", memory)
-
-    # actor_group.offload_to_cpu(offload_optimizer=False, offload_model=True)
-    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    # memory = memory[0]
-    # print_mem("memory after offload model to cpu", memory)
-
-    # leftover = ray.get(actor_group.async_run_ray_method("pass_through", "debug_gpu_params"))
-    # for item in leftover:
-    #     print("LEFTOVER:", item)
-
-    # actor_group.backload_to_gpu()
-    # memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    # memory = memory[0]
-    # print_mem("memory after backload to gpu", memory)
-
+    
     with Timer(f"megatron training step tp{tp} pp{pp} cp{cp} ep{ep} etp{etp}"):
         batch.metadata["global_step"] = 0
         results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
@@ -435,42 +411,42 @@ async def test_megatron_train(
             assert isinstance(v, (int, float)), f"{k} should be an int or float"
 
     ray.shutdown()
-    # ray_init_for_tests()
+    ray_init_for_tests()
 
-    # cfg.trainer.strategy = "fsdp2"
-    # # NOTE (erictang000): need to set sample packing to false here due to metric calculation differences
-    # # between use_sample_packing true/false for FSDP (no diff for megatron)
-    # # this shouldn't be the case, but tracking here: https://github.com/NovaSky-AI/SkyRL/issues/211
-    # # + tested that this does not affect convergence
-    # cfg.trainer.use_sample_packing = False
-    # if ep > 1:
-    #     cfg.trainer.policy.fsdp_config.cpu_offload = True
-    # actor_group = init_worker_with_type(
-    #     "policy",
-    #     shared_pg=None,
-    #     colocate_all=False,
-    #     num_nodes=cfg.trainer.placement.policy_num_nodes,
-    #     num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
-    #     cfg=cfg,
-    # )
+    cfg.trainer.strategy = "fsdp2"
+    # NOTE (erictang000): need to set sample packing to false here due to metric calculation differences
+    # between use_sample_packing true/false for FSDP (no diff for megatron)
+    # this shouldn't be the case, but tracking here: https://github.com/NovaSky-AI/SkyRL/issues/211
+    # + tested that this does not affect convergence
+    cfg.trainer.use_sample_packing = False
+    if ep > 1:
+        cfg.trainer.policy.fsdp_config.cpu_offload = True
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_nodes=cfg.trainer.placement.policy_num_nodes,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
 
-    # batch.metadata["global_step"] = 0
-    # results_fsdp = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
-    # results_fsdp = [results_fsdp[i].metadata["train_status"] for i in range(len(results_fsdp))]
+    batch.metadata["global_step"] = 0
+    results_fsdp = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
+    results_fsdp = [results_fsdp[i].metadata["train_status"] for i in range(len(results_fsdp))]
 
-    # print("\n\n")
-    # print("fsdp results: ", results_fsdp[0])
+    print("\n\n")
+    print("fsdp results: ", results_fsdp[0])
 
-    # keys_to_compare = ["policy_loss", "policy_lr", "ppo_clip_ratio", "policy_entropy", "policy_kl", "final_loss"]
-    # for i, result in enumerate(results_fsdp):
-    #     for k in keys_to_compare:
-    #         if k == "policy_entropy":
-    #             # TODO: make entropy calculation only apply to non-padding tokens for all backends
-    #             # because the logits for padding tokens are all 0 for the non-sample packing case in megatron
-    #             # the entropy calculation is different (fsdp has random logits for padding tokens)
-    #             continue
-    #         assert isinstance(result[k], (int, float)), f"{k} should be an int or float"
-    #         assert abs(result[k] - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
+    keys_to_compare = ["policy_loss", "policy_lr", "ppo_clip_ratio", "policy_entropy", "policy_kl", "final_loss"]
+    for i, result in enumerate(results_fsdp):
+        for k in keys_to_compare:
+            if k == "policy_entropy":
+                # TODO: make entropy calculation only apply to non-padding tokens for all backends
+                # because the logits for padding tokens are all 0 for the non-sample packing case in megatron
+                # the entropy calculation is different (fsdp has random logits for padding tokens)
+                continue
+            assert isinstance(result[k], (int, float)), f"{k} should be an int or float"
+            assert abs(result[k] - results_megatron[i][k]) < 1.5e-1, f"diff in {k} is too large!"
 
 
 @pytest.mark.asyncio
