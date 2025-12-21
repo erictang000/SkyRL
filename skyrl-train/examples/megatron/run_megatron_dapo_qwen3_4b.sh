@@ -82,7 +82,7 @@ uv run --isolated --extra mcore -m examples.algorithms.dapo.main_dapo \
   trainer.algorithm.eps_clip_low=$CLIP_RATIO_LOW \
   trainer.algorithm.eps_clip_high=$CLIP_RATIO_HIGH \
   trainer.eval_batch_size=1024 \
-  trainer.eval_before_train=true \
+  trainer.eval_before_train=false \
   trainer.eval_interval=5 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \

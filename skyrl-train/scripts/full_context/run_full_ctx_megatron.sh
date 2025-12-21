@@ -18,6 +18,11 @@ MEGATRON_TP=4
 MEGATRON_PP=2
 MEGATRON_CP=1
 
+# Lora
+LORA_RANK=128
+LORA_ALPHA=128
+LORA_A_INIT_METHOD="kaiming"
+
 MAX_PROMPT_LENGTH=2048  
 MAX_RESPONSE_LENGTH=8192
 
@@ -40,6 +45,9 @@ uv run --isolated --extra mcore -m scripts.full_context.main_full_ctx \
   trainer.ref.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.ref.megatron_config.context_parallel_size=$MEGATRON_CP \
   trainer.ref.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
+  trainer.policy.model.lora.rank=$LORA_RANK \
+  trainer.policy.model.lora.alpha=$LORA_ALPHA \
+  trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \
   trainer.epochs=20 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=64 \
@@ -61,7 +69,7 @@ uv run --isolated --extra mcore -m scripts.full_context.main_full_ctx \
   generator.gpu_memory_utilization=0.8 \
   trainer.logger="wandb" \
   trainer.project_name="gsm8k_full_ctx" \
-  trainer.run_name="gsm8k_full_ctx_test_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
+  trainer.run_name="gsm8k_full_ctx_test_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}" \
   trainer.eval_batch_size=1024 \
   trainer.eval_before_train=true \
   trainer.eval_interval=5 \
