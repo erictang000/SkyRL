@@ -52,8 +52,8 @@ uv run --isolated --extra mcore -m scripts.full_context.main_full_ctx \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=64 \
   trainer.policy_mini_batch_size=32 \
-  trainer.micro_forward_batch_size_per_gpu=16 \
-  trainer.micro_train_batch_size_per_gpu=16 \
+  trainer.micro_forward_batch_size_per_gpu=8 \
+  trainer.micro_train_batch_size_per_gpu=8 \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
