@@ -9,7 +9,7 @@ import hydra
 from omegaconf import DictConfig
 import torch
 import asyncio
-from transformers import AutoModelForCausalLM, AutoConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from omegaconf import OmegaConf
 from tests.gpu.utils import (
     init_worker_with_type,
@@ -63,52 +63,50 @@ def get_test_training_batch(batch_size=4) -> TrainingInputBatch:
     Attention masks are 1 for non-padding tokens, 0 for padding tokens
     The rest of the fields are filled with dummy data
     """
-    data = TrainingInputBatch().load("/mnt/cluster_storage/gsm8k_qwen3_0.6b.pkl")[:64]
+    assert batch_size % 4 == 0, "batch size must be divisible by 4"
+    num_repeats = batch_size // 4
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+
+    sentences = [
+        "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+        "<|im_start|>user\nThe selling price of a bicycle that had sold $220 last year was increased by 15",
+        "What is the new price? Let's think step by step and output the final answer after `####`.<|im_end|>\n",
+        "<|im_start|>assistant\nTo find the new price of the bicycle after the increase,",
+    ] * num_repeats
+
+    sequences = [tokenizer.encode(sentence) for sentence in sentences]
+    attention_masks = [[1] * len(seq) for seq in sequences]
+    num_actions = 10
+    # max seq len 1 longer than the longest sequence so we always have some padding
+    max_seq_length = max([len(seq) for seq in sequences]) + 7
+
+    pad_token_id = tokenizer.pad_token_id
+    pad_before = [4, 0, 1, 6] * num_repeats
+    pad_after = [max_seq_length - len(seq) - pad_before[i] for i, seq in enumerate(sequences)]
+
+    for i, (pad_before, pad_after) in enumerate(zip(pad_before, pad_after)):
+        sequences[i] = [pad_token_id] * pad_before + sequences[i] + [pad_token_id] * pad_after
+        attention_masks[i] = [0] * pad_before + attention_masks[i] + [0] * pad_after
+
+    attention_masks = torch.tensor(attention_masks)
+    sequences = torch.tensor(sequences)
+
+    data = TrainingInputBatch(
+        {
+            "sequences": sequences,
+            "attention_mask": attention_masks,
+            "action_log_probs": torch.tensor([[0.1] * num_actions] * batch_size),
+            "base_action_log_probs": torch.tensor([[0.2] * num_actions] * batch_size),
+            "rollout_logprobs": torch.tensor([[0.11] * num_actions] * batch_size),
+            "values": torch.tensor([[0.1] * num_actions] * batch_size),
+            "returns": torch.tensor([[0.1] * num_actions] * batch_size),
+            "advantages": torch.tensor([[0.5] * num_actions] * batch_size),
+            "loss_mask": torch.tensor([[1] * num_actions] * batch_size),
+            "response_mask": torch.tensor([[1] * num_actions] * batch_size),
+        }
+    )
+    data.metadata = {"response_length": num_actions}
     return data
-    # assert batch_size % 4 == 0, "batch size must be divisible by 4"
-    # num_repeats = batch_size // 4
-    # tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-
-    # sentences = [
-    #     "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
-    #     "<|im_start|>user\nThe selling price of a bicycle that had sold $220 last year was increased by 15",
-    #     "What is the new price? Let's think step by step and output the final answer after `####`.<|im_end|>\n",
-    #     "<|im_start|>assistant\nTo find the new price of the bicycle after the increase,",
-    # ] * num_repeats
-
-    # sequences = [tokenizer.encode(sentence) for sentence in sentences]
-    # attention_masks = [[1] * len(seq) for seq in sequences]
-    # num_actions = 10
-    # # max seq len 1 longer than the longest sequence so we always have some padding
-    # max_seq_length = max([len(seq) for seq in sequences]) + 7
-
-    # pad_token_id = tokenizer.pad_token_id
-    # pad_before = [4, 0, 1, 6] * num_repeats
-    # pad_after = [max_seq_length - len(seq) - pad_before[i] for i, seq in enumerate(sequences)]
-
-    # for i, (pad_before, pad_after) in enumerate(zip(pad_before, pad_after)):
-    #     sequences[i] = [pad_token_id] * pad_before + sequences[i] + [pad_token_id] * pad_after
-    #     attention_masks[i] = [0] * pad_before + attention_masks[i] + [0] * pad_after
-
-    # attention_masks = torch.tensor(attention_masks)
-    # sequences = torch.tensor(sequences)
-
-    # data = TrainingInputBatch(
-    #     {
-    #         "sequences": sequences,
-    #         "attention_mask": attention_masks,
-    #         "action_log_probs": torch.tensor([[0.1] * num_actions] * batch_size),
-    #         "base_action_log_probs": torch.tensor([[0.2] * num_actions] * batch_size),
-    #         "rollout_logprobs": torch.tensor([[0.11] * num_actions] * batch_size),
-    #         "values": torch.tensor([[0.1] * num_actions] * batch_size),
-    #         "returns": torch.tensor([[0.1] * num_actions] * batch_size),
-    #         "advantages": torch.tensor([[0.5] * num_actions] * batch_size),
-    #         "loss_mask": torch.tensor([[1] * num_actions] * batch_size),
-    #         "response_mask": torch.tensor([[1] * num_actions] * batch_size),
-    #     }
-    # )
-    # data.metadata = {"response_length": num_actions}
-    # return data
 
 
 @pytest.mark.parametrize(
@@ -203,7 +201,7 @@ def test_megatron_policy_weight_sync(
         "tp2_pp2_lora",
         "cp_2_policy_seq_packing",
         "tp_2_pp_2_cp_2_policy_seq_packing",
-        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing",  # TEST THIS ONE AGAIN
+        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing",
     ],
 )
 async def test_megatron_forward(
@@ -365,17 +363,10 @@ async def test_megatron_train(
         cfg.trainer.policy.model.lora.alpha = 16
 
     # set batch sizes correctly
-    cfg.trainer.train_batch_size = 64
-    cfg.trainer.policy_mini_batch_size = 16
+    cfg.trainer.train_batch_size = gpus_per_node
+    cfg.trainer.policy_mini_batch_size = gpus_per_node
     cfg.generator.n_samples_per_prompt = 1
-    cfg.trainer.micro_train_batch_size_per_gpu = 4
-
-    # set torch profiler config
-    cfg.trainer.policy.megatron_config.torch_profiler_config.enable = False
-    cfg.trainer.policy.megatron_config.torch_profiler_config.ranks = [0]
-    cfg.trainer.policy.megatron_config.torch_profiler_config.save_path = (
-        f"/home/ray/megatron_prof/lora_tp{tp}_pp{pp}_dp{gpus_per_node // tp // pp}/"
-    )
+    cfg.trainer.micro_train_batch_size_per_gpu = 1
 
     actor_group = init_worker_with_type(
         "policy",
@@ -388,18 +379,12 @@ async def test_megatron_train(
 
     with Timer(f"megatron training step tp{tp} pp{pp} cp{cp} ep{ep} etp{etp}"):
         batch.metadata["global_step"] = 0
-        results_megatron = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
+        results_megatron = ray.get(actor_group.async_run_ray_method("pass_through", "ppo_train", batch))
     results_megatron = [results_megatron[i].metadata["train_status"] for i in range(len(results_megatron))]
 
     memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
     memory = memory[0]
     print_mem("memory after training step", memory)
-
-    actor_group.offload_to_cpu()
-
-    memory = ray.get(actor_group.async_run_ray_method("pass_through", "get_cuda_memory"))
-    memory = memory[0]
-    print_mem("memory after offload to cpu", memory)
 
     for result in results_megatron:
         assert isinstance(result, dict), "Result should be a dictionary of training stats"
@@ -431,9 +416,10 @@ async def test_megatron_train(
     )
 
     batch.metadata["global_step"] = 0
-    results_fsdp = ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", batch))
+    results_fsdp = ray.get(actor_group.async_run_ray_method("pass_through", "ppo_train", batch))
     results_fsdp = [results_fsdp[i].metadata["train_status"] for i in range(len(results_fsdp))]
 
+    print("megatron results: ", results_megatron[0])
     print("\n\n")
     print("fsdp results: ", results_fsdp[0])
 

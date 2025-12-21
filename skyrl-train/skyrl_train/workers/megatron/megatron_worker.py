@@ -499,8 +499,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         if self.profiler is not None:
             self.profiler.start()
-        lora_params = {n: p for n, p in self.actor_module[0].named_parameters() if "adapter" in n}
-        before_lora_params = {n: p.clone().detach() for n, p in lora_params.items()}
 
         for epoch in range(self.cfg.trainer.update_epochs_per_batch):
             self.optimizer.zero_grad()
@@ -595,15 +593,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             micro_buffer = []
 
         torch.distributed.barrier()
-        lora_params = {n: p for n, p in self.actor_module[0].named_parameters() if "adapter" in n}
-        after = {n: p.clone().detach() for n, p in lora_params.items()}
-        avg_diff = 0
-        for n, p in lora_params.items():
-            diff = (after[n] - before_lora_params[n]).abs().max().item()
-            avg_diff += diff
-        if len(lora_params) > 0:
-            avg_diff /= len(lora_params)
-            print(f"Average difference in lora parameters: {avg_diff}")
         if self.profiler is not None:
             self.profiler.stop_and_save()
             self.profiler.stop_trace()
