@@ -351,6 +351,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         self.scheduler: OptimizerParamScheduler = None
         self.optimizer: DistributedOptimizer = None
         self.profiler: Profiler = None
+        self._is_lora = self.cfg.trainer.policy.model.lora.rank > 0
 
     def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
         self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
@@ -391,6 +392,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             megatron_config=self.cfg.trainer.policy.megatron_config,
             optimizer_config=self.cfg.trainer.policy.optimizer_config,
             seed=self.cfg.trainer.seed,
+            is_lora=self._is_lora,
         )
         self.strategy.setup_distributed()
 
@@ -408,8 +410,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         Initialize the model, optimizer, and scheduler for the policy worker.
         """
-        self._is_lora = self.cfg.trainer.policy.model.lora.rank > 0
-
         # initialize the bridge and provider objects
         self.init_configs(
             model_path,
