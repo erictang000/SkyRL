@@ -14,8 +14,8 @@ NUM_GPUS_PER_NODE=8
 NUM_INFERENCE_ENGINES=4
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=2
 
-MEGATRON_TP=8
-MEGATRON_PP=1
+MEGATRON_TP=4
+MEGATRON_PP=2
 MEGATRON_CP=1
 
 MAX_PROMPT_LENGTH=2048  
@@ -44,8 +44,8 @@ uv run --isolated --extra mcore -m scripts.full_context.main_full_ctx \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=64 \
   trainer.policy_mini_batch_size=32 \
-  trainer.micro_forward_batch_size_per_gpu=4 \
-  trainer.micro_train_batch_size_per_gpu=4 \
+  trainer.micro_forward_batch_size_per_gpu=8 \
+  trainer.micro_train_batch_size_per_gpu=8 \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \

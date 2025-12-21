@@ -8,7 +8,7 @@ while [ $state == 'error' ]; do
     echo "(Re)Running the script $SCRIPT_PATH"
     bash $SCRIPT_PATH >> $LOG_FILE 2>&1
     # script returned, let's check if there was an error
-    last_lines=$(tail -n 100 $LOG_FILE)
+    last_lines=$(tail -n 150 $LOG_FILE)
     if [[ ! "$last_lines" =~ "$error_string" ]];then
         state=noterror
     fi

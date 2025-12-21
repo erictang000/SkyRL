@@ -42,8 +42,8 @@ ENFORCE_EAGER=true # cuda graphs can cause some instability
 LR=1e-6
 
 # megatron config
-MEGATRON_TP=2
-MEGATRON_PP=1
+MEGATRON_TP=4
+MEGATRON_PP=2
 MEGATRON_CP=1
 MEGATRON_EP=1
 MEGATRON_ETP=null
@@ -88,7 +88,7 @@ uv run --isolated --extra mcore -m examples.algorithms.dapo.main_dapo \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_forward_batch_size_per_gpu=8 \
-  trainer.micro_train_batch_size_per_gpu=4 \
+  trainer.micro_train_batch_size_per_gpu=8 \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
