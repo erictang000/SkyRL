@@ -67,6 +67,7 @@ class HFModelWrapper(nn.Module):
         use_torch_compile: bool = False,
         rope_scaling: Dict[str, Any] = {},
         rope_theta: float | None = None,
+        model_config_kwargs: dict = {},
         **kwargs,
     ) -> None:
         super().__init__()
@@ -113,6 +114,8 @@ class HFModelWrapper(nn.Module):
             else:
                 model_class = AutoModelForCausalLM
 
+            model_config = AutoConfig.from_pretrained(pretrain_or_model, trust_remote_code=True, **model_config_kwargs)
+
             rope_scaling_kwargs = {}
             if rope_scaling:
                 rope_scaling_kwargs["rope_scaling"] = rope_scaling
@@ -121,6 +124,7 @@ class HFModelWrapper(nn.Module):
 
             self.model = model_class.from_pretrained(
                 pretrain_or_model,
+                config=model_config,
                 trust_remote_code=True,
                 attn_implementation=self.attn_implementation,
                 quantization_config=nf4_config,

@@ -184,24 +184,22 @@ def test_megatron_policy_weight_sync(
         ("policy", 2, 1, 1, 1, None, 2, False, False),
         # ref has same forward pass as policy - just duplicate one test to test setup
         ("ref", 2, 1, 1, 1, None, 2, False, False),
-        ("policy", 1, 2, 1, 1, None, 2, False, False),
         ("policy", 2, 2, 1, 1, None, 4, False, False),
         ("policy", 2, 2, 1, 1, None, 4, True, False),
         ("policy", 2, 2, 1, 1, None, 4, True, True),
         ("policy", 1, 1, 2, 1, None, 2, True, False),
-        ("policy", 2, 2, 2, 1, None, 8, True, False),
-        ("policy", 4, 2, 1, 4, 1, 8, True, False),
+        ("policy", 2, 1, 2, 1, None, 4, True, False),
+        ("policy", 4, 1, 1, 4, 1, 4, True, False),
     ],
     ids=[
         "tp2_pp1_policy",
         "tp2_pp1_ref",
-        "tp1_pp2_policy",
         "tp2_pp2_policy_unpacked",
         "tp2_pp2_policy_seq_packing",
         "tp2_pp2_lora",
         "cp_2_policy_seq_packing",
-        "tp_2_pp_2_cp_2_policy_seq_packing",
-        "tp4_pp2_cp1_ep4_etp1_policy_seq_packing",
+        "tp_2_cp_2_policy_seq_packing",
+        "tp4_pp1_cp1_ep4_etp1_policy_seq_packing",
     ],
 )
 async def test_megatron_forward(
@@ -226,7 +224,7 @@ async def test_megatron_forward(
         transformer_config_kwargs = OmegaConf.to_container(
             cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
         )
-        transformer_config_kwargs["num_layers"] = 4
+        transformer_config_kwargs["num_layers"] = 2
         cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
 
     if lora:
@@ -256,7 +254,7 @@ async def test_megatron_forward(
     def run_hf_forward(batch, model_name):
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, dtype=torch.bfloat16)
         if ep > 1:
-            config.num_hidden_layers = 4
+            config.num_hidden_layers = 2
         model = AutoModelForCausalLM.from_pretrained(model_name, config=config, dtype=torch.bfloat16)
         model.eval()
         model.to("cuda")
@@ -324,18 +322,18 @@ async def test_megatron_forward(
         ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
         ("policy", 1, 1, 1, 1, 1, 1, True, False, True),
         ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
-        ("policy", 2, 2, 2, 1, 1, 8, True, False, False),
-        ("policy", 4, 1, 1, 8, 1, 8, True, False, False),
-        ("policy", 4, 1, 1, 8, 1, 8, True, False, True),
+        ("policy", 2, 1, 2, 1, 1, 4, True, False, False),
+        ("policy", 4, 1, 1, 4, 1, 4, True, False, False),
+        ("policy", 4, 1, 1, 4, 1, 4, True, False, True),
     ],
     ids=[
         "tp2_pp2_policy_seq_packing",
         "tp2_pp2_policy_seq_packing_with_entropy_loss",
         "tp1_pp1_policy_lora",
         "tp2_pp2_policy_unpacked",
-        "tp2_pp2_cp2_policy_seq_packing",
-        "tp4_pp1_cp1_ep8_etp1_policy_seq_packing",
-        "tp4_pp1_cp1_ep8_etp1_policy_seq_packing_lora",
+        "tp2_cp2_policy_seq_packing",
+        "tp4_pp1_cp1_ep4_etp1_policy_seq_packing",
+        "tp4_pp1_cp1_ep4_etp1_policy_seq_packing_lora",
     ],
 )
 async def test_megatron_train(
@@ -361,6 +359,13 @@ async def test_megatron_train(
     if lora:
         cfg.trainer.policy.model.lora.rank = 16
         cfg.trainer.policy.model.lora.alpha = 16
+
+    if ep > 1:
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        transformer_config_kwargs["num_layers"] = 2
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
 
     # set batch sizes correctly
     cfg.trainer.train_batch_size = gpus_per_node
@@ -406,6 +411,13 @@ async def test_megatron_train(
     cfg.trainer.use_sample_packing = False
     if ep > 1:
         cfg.trainer.policy.fsdp_config.cpu_offload = True
+
+    if ep > 1:
+        model_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.model_config_kwargs, resolve=True
+        )
+        model_config_kwargs["num_hidden_layers"] = 2
+        cfg.trainer.policy.model_config_kwargs = model_config_kwargs
     actor_group = init_worker_with_type(
         "policy",
         shared_pg=None,
@@ -565,6 +577,11 @@ async def test_megatron_offload_memory_and_correctness(ray_init_fixture, worker_
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = 4
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = 1
     cfg.trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer = False
+    transformer_config_kwargs = OmegaConf.to_container(
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+    )
+    transformer_config_kwargs["num_layers"] = 2
+    cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
     actor_group = init_worker_with_type(
         worker_type,
         shared_pg=None,

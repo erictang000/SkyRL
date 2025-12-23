@@ -817,13 +817,6 @@ class PolicyWorkerBase(Worker):
         if grad_norm is not None:
             status["raw_grad_norm"] = grad_norm
 
-        for k, v in experience.info.items():
-            if k == "kl":
-                # just use the same value as loss if available
-                status[k] = kl_loss.item() if isinstance(kl_loss, torch.Tensor) else status["policy_kl"]
-            else:
-                status[k] = v.mean().item() if isinstance(v, torch.Tensor) else v
-
         status["response_length"] = num_actions
         return status
 
