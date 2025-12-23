@@ -1,14 +1,14 @@
 set -x
 
 # Script to simulate full context training for DAPO with Qwen3-4B on 8 GPUs with Megatron.
-# bash examples/algorithms/dapo/prepare_dapo_data.sh
+# uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # bash scripts/full_context/run_full_ctx_megatron.sh
 
 # NOTE: Make sure to tune the configurations for the setup you wish to test.
 
-DATA_DIR="$HOME/data/dapo"
-TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
-TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
+DATA_DIR="$HOME/data/gsm8k"
+TRAIN_FILE="$DATA_DIR/train.parquet"
+TEST_FILE="$DATA_DIR/validation.parquet"
 
 NUM_NODES=1
 NUM_GPUS_PER_NODE=8
