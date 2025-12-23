@@ -318,6 +318,52 @@ async def test_megatron_forward(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("tp", "pp", "cp", "ep", "etp", "gpus_per_node"),
+    [
+        (2, 2, 1, 1, None, 4),
+        (4, 1, 1, 4, 1, 4),
+    ],
+    ids=[
+        "tp2_pp2_policy",
+        "tp4_pp1_cp1_ep4_etp1_policy",
+    ],
+)
+async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus_per_node):
+    """
+    Test that the Megatron + lora forward pass is numerically equivalent to just running a megatron model forward.
+    """
+    cfg = get_test_actor_config(model_name=MOE_MODEL_NAME if ep > 1 else MODEL_NAME)
+    #### Megatron forward pass ####
+    cfg.trainer.strategy = "megatron"
+    cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
+    cfg.trainer.policy.megatron_config.context_parallel_size = cp
+    cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
+    cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
+    cfg.trainer.use_sample_packing = True
+    batch = get_test_training_batch(max(4, gpus_per_node))
+
+    if ep > 1:
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        transformer_config_kwargs["num_layers"] = 4
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
+
+
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss", "lora"),
     [
         ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
