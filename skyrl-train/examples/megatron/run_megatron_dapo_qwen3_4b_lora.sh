@@ -17,7 +17,7 @@ LOGGER="wandb"  # change to "console" to print to stdout
 CLIP_RATIO_LOW=0.2
 CLIP_RATIO_HIGH=0.28
 # use token mean loss reduction
-LOSS_REDUCTION="token_mean"
+LOSS_REDUCTION="seq_mean_token_sum_norm"
 # applies overlong filtering (but not soft overlong punishment)
 APPLY_OVERLONG_FILTERING=true
 # apply soft overlong punishment with custom trainer impl in main_dapo.py
@@ -39,7 +39,7 @@ MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=16
 EVAL_N_SAMPLES_PER_PROMPT=32
 ENFORCE_EAGER=true # cuda graphs can cause some instability
-LR=1e-5
+LR=3e-5
 
 # megatron config
 MEGATRON_TP=4
@@ -101,7 +101,7 @@ uv run --isolated --extra mcore -m examples.algorithms.dapo.main_dapo \
   trainer.policy.optimizer_config.lr=$LR \
   trainer.policy.optimizer_config.num_warmup_steps=160 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
-  trainer.policy.optimizer_config.max_grad_norm=1.0 \
+  trainer.policy.optimizer_config.max_grad_norm=0.5 \
   generator.backend=vllm \
   generator.run_engines_locally=true \
   generator.weight_sync_backend=nccl \
@@ -113,10 +113,10 @@ uv run --isolated --extra mcore -m examples.algorithms.dapo.main_dapo \
   generator.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_aime" \
-  trainer.run_name="dapo_qwen3_4b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}" \
-  trainer.export_path="$HOME/exports/dapo_qwen3_4b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}" \
+  trainer.run_name="dapo_qwen3_4b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}_dr_grpo_grad_norm_0.5" \
+  trainer.export_path="$HOME/exports/dapo_qwen3_4b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}_dr_grpo_grad_norm_0" \
   trainer.hf_save_interval=300 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_4b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}" \
+  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_4b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_lora_rank${LORA_RANK}_alpha${LORA_ALPHA}_dr_grpo_grad_norm_0" \
   $@
