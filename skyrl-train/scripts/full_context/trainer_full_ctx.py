@@ -78,7 +78,6 @@ class FullCtxTrainer(RayPPOTrainer):
                     training_input.metadata.pop("uids")
 
                 # 4. train policy/critic model
-                self.policy_model.backload_to_gpu(backload_optimizer=True, backload_model=False)
                 with Timer("train_critic_and_policy", self.all_timings):
                     status = self.train_critic_and_policy(training_input)
                 self.policy_model.offload_to_cpu(offload_optimizer=True, offload_model=False)
