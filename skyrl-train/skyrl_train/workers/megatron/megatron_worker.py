@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.peft.canonical_lora import CanonicalLoRA
 import megatron.core.parallel_state as mpu
 from megatron.core.optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -240,27 +241,51 @@ class MegatronWorker:
         self.strategy.hf_config = hf_config
         self.tokenizer = tokenizer
 
-    def configure_lora(self, lora_config):
-        self.lora_cls = LoRA(
-            target_modules=(
-                ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
-                if lora_config.target_modules == "all-linear"
-                else lora_config.target_modules
-            ),
-            dim=lora_config.rank,
-            alpha=lora_config.alpha,
-            dropout=lora_config.dropout,
-            lora_A_init_method=lora_config.init_method,
-            lora_B_init_method="zero",
-            exclude_modules=[] if lora_config.exclude_modules is None else lora_config.exclude_modules,
-            lora_dtype=torch.bfloat16 if self.cfg.trainer.bf16 else torch.float32,
-        )
+    def configure_lora(self, lora_config, lora_type: Optional[str] = "lora"):
+        if lora_type == "lora":
+            self.lora_cls = LoRA(
+                target_modules=(
+                    ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+                    if lora_config.target_modules == "all-linear"
+                    else lora_config.target_modules
+                ),
+                dim=lora_config.rank,
+                alpha=lora_config.alpha,
+                dropout=lora_config.dropout,
+                lora_A_init_method=lora_config.init_method,
+                lora_B_init_method="zero",
+                exclude_modules=[] if lora_config.exclude_modules is None else lora_config.exclude_modules,
+                lora_dtype=torch.bfloat16 if self.cfg.trainer.bf16 else torch.float32,
+            )
+        elif lora_type == "canonical_lora":
+            self.lora_cls = CanonicalLoRA(
+                target_modules=(
+                    [
+                        "linear_q",
+                        "linear_k",
+                        "linear_v",
+                        "linear_proj",
+                        "linear_fc1_up",
+                        "linear_fc1_gate",
+                        "linear_fc2",
+                    ]
+                    if lora_config.target_modules == "all-linear"
+                    else lora_config.target_modules
+                ),
+                dim=lora_config.rank,
+                alpha=lora_config.alpha,
+                dropout=lora_config.dropout,
+                lora_A_init_method=lora_config.init_method,
+                lora_B_init_method="zero",
+                exclude_modules=[] if lora_config.exclude_modules is None else lora_config.exclude_modules,
+            )
 
     def make_megatron_module(
         self,
         wrap_with_ddp: bool = True,
         ddp_config: Optional[Dict[str, Any]] = None,
         lora_config: Optional[Dict[str, Any]] = None,
+        lora_type: Optional[str] = "lora",
         bf16: bool = True,
     ) -> List[nn.Module]:
         """
@@ -269,7 +294,7 @@ class MegatronWorker:
         from megatron.core.distributed.distributed_data_parallel_config import DistributedDataParallelConfig
 
         if lora_config is not None:
-            self.configure_lora(lora_config)
+            self.configure_lora(lora_config, lora_type)
 
             def lora_pre_wrap_hook(model):
                 lora_model = self.lora_cls(model, training=True)
@@ -425,6 +450,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             wrap_with_ddp=True,
             ddp_config=self.cfg.trainer.policy.megatron_config.ddp_config,
             lora_config=self.cfg.trainer.policy.model.lora if self._is_lora else None,
+            lora_type=self.cfg.trainer.policy.megatron_config.lora_config.lora_type,
             bf16=self.cfg.trainer.bf16,
         )
 

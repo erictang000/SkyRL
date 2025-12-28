@@ -13,7 +13,7 @@ MODEL_NAME="Qwen/Qwen3-0.6B"
 
 INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 
-MEGATRON_TP=2
+MEGATRON_TP=1
 MEGATRON_PP=1
 MEGATRON_CP=1
 
@@ -21,6 +21,7 @@ MEGATRON_CP=1
 LORA_RANK=32
 LORA_ALPHA=64
 LORA_A_INIT_METHOD="kaiming"
+LORA_METHOD="canonical_lora"
 
 
 uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
@@ -43,8 +44,9 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.policy.model.lora.rank=$LORA_RANK \
   trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \
+  trainer.policy.megatron_config.lora_config.lora_type=$LORA_METHOD \
   trainer.gradient_checkpointing=true \
-  trainer.policy.model.lora.target_modules="['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2']" \
+  trainer.policy.model.lora.target_modules="all-linear" \
   trainer.use_sample_packing=true \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
