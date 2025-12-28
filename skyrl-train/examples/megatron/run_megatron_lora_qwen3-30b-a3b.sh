@@ -36,6 +36,10 @@ LORA_RANK=128
 LORA_ALPHA=128
 LORA_A_INIT_METHOD="kaiming"
 
+# TIS parameters
+TIS_IMP_RATIO_CAP=2.0
+USE_TIS=true
+
 uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/validation.parquet']" \
@@ -59,6 +63,8 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.policy.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
   trainer.ref.megatron_config.expert_model_parallel_size=$MEGATRON_EP \
   trainer.ref.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
+  trainer.algorithm.use_tis=$USE_TIS \
+  trainer.algorithm.tis_imp_ratio_cap=$TIS_IMP_RATIO_CAP \
   trainer.policy.model.lora.rank=$LORA_RANK \
   trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \

@@ -301,6 +301,7 @@ class MegatronStrategy(DistributedStrategy):
 
     def _load_lora_adapters(self, model, ckpt_dir):
         """Load LoRA adapters from checkpoint."""
+        # TODO (erictang000): Update this logic once LoRA checkpointing is upstreamed to Megatron-Bridge
         if not self.is_lora:
             return
 
