@@ -21,7 +21,6 @@ MEGATRON_CP=1
 LORA_RANK=32
 LORA_ALPHA=64
 LORA_A_INIT_METHOD="kaiming"
-LORA_METHOD="canonical_lora"
 
 
 uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
@@ -44,7 +43,6 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.policy.model.lora.rank=$LORA_RANK \
   trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \
-  trainer.policy.megatron_config.lora_config.lora_type=$LORA_METHOD \
   trainer.gradient_checkpointing=true \
   trainer.policy.model.lora.target_modules="all-linear" \
   trainer.use_sample_packing=true \

@@ -52,7 +52,6 @@ MEGATRON_ETP=null
 LORA_RANK=32
 LORA_ALPHA=64
 LORA_A_INIT_METHOD="kaiming"
-LORA_METHOD="canonical_lora"
 
 # TIS parameters
 TIS_IMP_RATIO_CAP=2.0
@@ -86,7 +85,6 @@ uv run --isolated --extra mcore -m examples.algorithms.dapo.main_dapo \
   trainer.policy.megatron_config.context_parallel_size=$MEGATRON_CP \
   trainer.policy.megatron_config.expert_model_parallel_size=$MEGATRON_EP \
   trainer.policy.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
-  trainer.policy.megatron_config.lora_config.lora_type=$LORA_METHOD \
   trainer.algorithm.use_tis=$USE_TIS \
   trainer.algorithm.tis_imp_ratio_cap=$TIS_IMP_RATIO_CAP \
   trainer.policy.model.lora.rank=$LORA_RANK \
