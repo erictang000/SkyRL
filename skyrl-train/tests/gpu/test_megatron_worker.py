@@ -184,6 +184,7 @@ def test_megatron_policy_weight_sync(
         ("policy", 2, 1, 1, 1, None, 2, False, False),
         # ref has same forward pass as policy - just duplicate one test to test setup
         ("ref", 2, 1, 1, 1, None, 2, False, False),
+        ("policy", 1, 2, 1, 1, None, 2, False, False),
         ("policy", 2, 2, 1, 1, None, 4, False, False),
         ("policy", 2, 2, 1, 1, None, 4, True, False),
         ("policy", 2, 2, 1, 1, None, 4, True, True),
@@ -312,6 +313,105 @@ async def test_megatron_forward(
     else:
         # allow larger tolerance in diff for the 30B-MoE model due to larger model size
         assert avg_diff < 1.6e-1, f"Avg diff {avg_diff} is too large"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tp", "pp", "cp", "ep", "etp", "gpus_per_node"),
+    [
+        (2, 2, 1, 1, None, 4),
+        (4, 1, 1, 4, 1, 4),
+    ],
+    ids=[
+        "tp2_pp2_policy",
+        "tp4_pp1_cp1_ep4_etp1_policy",
+    ],
+)
+async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus_per_node):
+    """
+    Test that the Megatron + lora forward pass is numerically equivalent to just running a megatron model forward.
+    """
+    cfg = get_test_actor_config(model_name=MOE_MODEL_NAME if ep > 1 else MODEL_NAME)
+    #### Megatron forward pass ####
+    cfg.trainer.strategy = "megatron"
+    cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
+    cfg.trainer.policy.megatron_config.context_parallel_size = cp
+    cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
+    cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
+    cfg.trainer.use_sample_packing = True
+    batch = get_test_training_batch(max(4, gpus_per_node))
+
+    if ep > 1:
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        transformer_config_kwargs["num_layers"] = 4
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
+
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+    action_log_probs_refs = actor_group.async_run_ray_method("mesh", "forward", data=batch)
+    all_rank_action_log_probs = ray.get(action_log_probs_refs)
+    action_log_probs_full = concatenate_outputs_after_mesh_dispatch(actor_group.actor_infos, all_rank_action_log_probs)[
+        "output"
+    ]
+
+    ray.shutdown()
+    ray_init_for_tests()
+
+    #### Megatron forward pass ####
+    cfg.trainer.strategy = "megatron"
+    cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = tp
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = pp
+    cfg.trainer.policy.megatron_config.context_parallel_size = cp
+    cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
+    cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
+    cfg.trainer.use_sample_packing = True
+    batch = get_test_training_batch(max(4, gpus_per_node))
+
+    # set lora this time
+    cfg.trainer.policy.model.lora.rank = 16
+    cfg.trainer.policy.model.lora.alpha = 16
+
+    if ep > 1:
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        transformer_config_kwargs["num_layers"] = 4
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
+
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+    action_log_probs_refs = actor_group.async_run_ray_method("mesh", "forward", data=batch)
+    all_rank_action_log_probs = ray.get(action_log_probs_refs)
+    action_log_probs_lora = concatenate_outputs_after_mesh_dispatch(actor_group.actor_infos, all_rank_action_log_probs)[
+        "output"
+    ]
+
+    #### Compare results ####
+    # compare just non-padding tokens
+    print(f"Comparing {action_log_probs_full.numel()} valid response tokens")
+    print(f"Full sample: {action_log_probs_full[:5]}")
+    print(f"Lora sample: {action_log_probs_lora[:5]}")
+
+    # max diff
+    max_diff = torch.max(torch.abs(action_log_probs_full - action_log_probs_lora))
+    print(f"Max diff: {max_diff}")
 
 
 @pytest.mark.asyncio

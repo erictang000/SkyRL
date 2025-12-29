@@ -1,13 +1,14 @@
 set -x
 
 # Script to simulate full context training for DAPO with Qwen3-4B on 8 GPUs with Megatron.
+# uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # bash scripts/full_context/run_full_ctx_megatron.sh
 
 # NOTE: Make sure to tune the configurations for the setup you wish to test.
 
-DATA_DIR="$HOME/data/dapo"
-TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
-TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
+DATA_DIR="$HOME/data/gsm8k"
+TRAIN_FILE="$DATA_DIR/train.parquet"
+TEST_FILE="$DATA_DIR/validation.parquet"
 
 NUM_NODES=1
 NUM_GPUS_PER_NODE=8
@@ -17,11 +18,6 @@ INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=2
 MEGATRON_TP=4
 MEGATRON_PP=2
 MEGATRON_CP=1
-
-# Lora
-LORA_RANK=128
-LORA_ALPHA=128
-LORA_A_INIT_METHOD="kaiming"
 
 MAX_PROMPT_LENGTH=2048  
 MAX_RESPONSE_LENGTH=8192
@@ -45,9 +41,6 @@ uv run --isolated --extra mcore -m scripts.full_context.main_full_ctx \
   trainer.ref.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.ref.megatron_config.context_parallel_size=$MEGATRON_CP \
   trainer.ref.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
-  trainer.policy.model.lora.rank=$LORA_RANK \
-  trainer.policy.model.lora.alpha=$LORA_ALPHA \
-  trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \
   trainer.epochs=20 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=64 \

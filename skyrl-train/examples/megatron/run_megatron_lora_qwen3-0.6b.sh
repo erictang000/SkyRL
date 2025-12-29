@@ -7,7 +7,7 @@ set -x
 # bash examples/megatron/run_megatron_lora_qwen3-0.6b.sh
 
 DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=4
+NUM_GPUS=8
 LOGGER="wandb"  # change to "console" to print to stdout
 MODEL_NAME="Qwen/Qwen3-0.6B"
 
@@ -18,8 +18,8 @@ MEGATRON_PP=1
 MEGATRON_CP=1
 
 # LoRA configuration
-LORA_RANK=128
-LORA_ALPHA=128
+LORA_RANK=32
+LORA_ALPHA=64
 LORA_A_INIT_METHOD="kaiming"
 
 
@@ -44,7 +44,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.policy.model.lora.init_method=$LORA_A_INIT_METHOD \
   trainer.gradient_checkpointing=true \
-  trainer.policy.model.lora.target_modules="['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2']" \
+  trainer.policy.model.lora.target_modules="all-linear" \
   trainer.use_sample_packing=true \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
@@ -70,7 +70,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   generator.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_lora_r${LORA_RANK}_a${LORA_ALPHA}_lr1e-5_kaiming_with_megatron_bridge_peft_fix" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_lora_r${LORA_RANK}_a${LORA_ALPHA}" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@
