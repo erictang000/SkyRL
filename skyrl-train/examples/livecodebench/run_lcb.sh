@@ -1,6 +1,6 @@
 set -x
 
-# Colocated GRPO training+generation for Qwen2.5-Coder-3B-Instruct on SearchR1 data.
+# Colocated GRPO training+generation for Qwen2.5-Coder-3B-Instruct on LiveCodeBench data.
 # export WANDB_API_KEY=<your_key_here>
 # bash examples/livecodebench/run_lcb.sh
 
