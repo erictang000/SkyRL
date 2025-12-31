@@ -66,6 +66,7 @@ trainer:
       reshard_after_forward: true
       fsdp_size: -1
     # pass through kwargs to the HuggingFace model config (i.e. for overriding vocab size, etc)
+    # pass through kwargs to the HuggingFace model config for FSDP/Deepspeed training backends (i.e. for overriding vocab size, etc) - for megatron, use ref.megatron_config.transformer_config_kwargs instead
     model_config_kwargs: {}
   critic:
     model:

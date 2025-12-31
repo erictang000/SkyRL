@@ -354,7 +354,7 @@ Reference Model Configuration
         reshard_after_forward: true
         fsdp_size: -1
       sequence_parallel_size: 1
-      model_config_kwargs: {} # pass through kwargs to the HuggingFace model config (i.e. for overriding vocab size, etc)
+      model_config_kwargs: {}     # pass through kwargs to the HuggingFace model config for FSDP/Deepspeed training backends (i.e. for overriding vocab size, etc) - for megatron, use ref.megatron_config.transformer_config_kwargs instead
 
 - ``ref.model.path``: Path to the reference model. Defaults to the policy model path, but can be separately set (i.e. for distillation based approaches, the reference model can be a different model than the policy model).
 - ``ref.deepspeed_config``: To be customized if using ``trainer.strategy='deepspeed'``.
