@@ -266,7 +266,7 @@ class DeepSpeedCriticWorkerBase(CriticWorkerBase):
             sequence_parallel_size=self.sequence_parallel_size,
             use_sample_packing=self.cfg.trainer.use_sample_packing,
             model_config_kwargs=self.cfg.trainer.critic.model_config_kwargs,
-            )
+        )
         # configure optimizer
         critic_optim = strategy.create_optimizer(
             critic,
