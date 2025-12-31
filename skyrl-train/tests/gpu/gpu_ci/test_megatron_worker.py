@@ -43,6 +43,7 @@ def get_test_actor_config(model_name=MODEL_NAME) -> DictConfig:
     cfg.trainer.micro_forward_batch_size_per_gpu = 2
     cfg.trainer.micro_train_batch_size_per_gpu = 2
     cfg.trainer.use_sample_packing = False
+    cfg.trainer.logger = "console"
     if "moonlight" in model_name:
         cfg.trainer.policy.megatron_config.transformer_config_kwargs = OmegaConf.create(
             {"num_layers_in_last_pipeline_stage": 13}
