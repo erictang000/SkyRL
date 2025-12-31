@@ -65,6 +65,8 @@ trainer:
       cpu_offload: false
       reshard_after_forward: true
       fsdp_size: -1
+    # pass through kwargs to the HuggingFace model config (i.e. for overriding vocab size, etc)
+    model_config_kwargs: {}
   critic:
     model:
       path: null
@@ -89,6 +91,8 @@ trainer:
       reshard_after_forward: true
       fsdp_size: -1
     sequence_parallel_size: 1
+    # pass through kwargs to the HuggingFace model config (i.e. for overriding vocab size, etc)
+    model_config_kwargs: {}
   algorithm:
     advantage_estimator: "grpo"  # "grpo", "gae", "rloo", "reinforce++", or customizable with AdvantageEstimatorRegistry
     kl_ctrl: # only used if use_kl_in_reward is true (not applied in the case of use_kl_loss=true) - uses kl_loss_coef as the initial KL coefficient

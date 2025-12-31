@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '5 8 * * *'   # Every day at 08:05 UTC (~00:05 PST / ~01:05 PDT)
   workflow_dispatch:
-  push:
-    branches:
-      - megatron_ci
 
 permissions:
   checks: write   # for status checks to appear

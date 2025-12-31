@@ -541,6 +541,7 @@ def get_llm_for_sequence_regression(
     device_map=None,
     sequence_parallel_size=1,
     use_sample_packing: bool = False,
+    model_config_kwargs: dict = {},
     **kwargs,
 ) -> nn.Module:
     """Get transformer with a sequence classification head on top (linear layer).
@@ -558,7 +559,7 @@ def get_llm_for_sequence_regression(
     """
     assert model_type == "critic", f"Only model_type critic is supported, got: {model_type}."
 
-    config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
+    config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True, **model_config_kwargs)
     config._attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager"
 
     base_class = AutoModel._model_mapping[type(config)]
@@ -569,6 +570,7 @@ def get_llm_for_sequence_regression(
         value_head_prefix,
         sequence_parallel_size=sequence_parallel_size,
         use_sample_packing=use_sample_packing,
+        model_config_kwargs=model_config_kwargs,
     )
 
     # Note: dschf is defined in function scope to avoid global effects
