@@ -4,6 +4,7 @@ on:
   push: 
     branches: 
       - main
+      - megatron_ci
     paths:
       - 'skyrl-train/workers/**'
       - 'skyrl-train/distributed/megatron/**'
