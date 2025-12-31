@@ -9,6 +9,8 @@ on:
       - 'skyrl-train/workers/**'
       - 'skyrl-train/distributed/megatron/**'
       - 'skyrl-train/config/**'
+      - 'skyrl-train/tests/gpu/gpu_ci/**'
+      - 'skyrl-train/pyproject.toml'
       - '!skyrl-train/docs/**'
       - '!skyrl-train/examples/**'
       - '.github/workflows/**'
