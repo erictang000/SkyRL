@@ -60,9 +60,12 @@ def get_dtype(dtype: str | torch.dtype) -> jnp.dtype:
 
 def get_model_class(config: PretrainedConfig) -> Callable[..., nnx.Module]:
     "Get the correct model class based on the config."
+    import tx.models.llama3
     import tx.models.qwen3
 
     for architecture in config.architectures or []:
+        if hasattr(tx.models.llama3, architecture):
+            return getattr(tx.models.llama3, architecture)
         if hasattr(tx.models.qwen3, architecture):
             return getattr(tx.models.qwen3, architecture)
 
@@ -142,7 +145,15 @@ def save_safetensors(
         elif "o_proj" in path:
             param = param.reshape(-1, param.shape[-1])
         tensors[key] = param if "embed_tokens" in path else param.T
-    safetensors.numpy.save_file(tensors, filename)
+
+    # In multi-host mode, gather all shards and only save from rank 0
+    if jax.process_count() > 1:
+        from jax.experimental import multihost_utils
+
+        tensors = {k: multihost_utils.process_allgather(v, tiled=True) for k, v in tensors.items()}
+
+    if jax.process_index() == 0:
+        safetensors.numpy.save_file({k: np.asarray(v) for k, v in tensors.items()}, filename)
 
 
 def filter_lora(adapter_config: LoraConfig, path: tuple[str, ...]) -> bool:

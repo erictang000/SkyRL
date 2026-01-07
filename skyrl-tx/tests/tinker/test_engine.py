@@ -1,14 +1,18 @@
 from cloudpathlib import AnyPath
+from datetime import datetime, timedelta, timezone
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 import optax
+from sqlmodel import Session, SQLModel
+
 from tx.tinker.engine import TinkerEngine
 from tx.tinker.config import EngineConfig
 from tx.tinker import api
 from tx.tinker import types
+from tx.tinker.db_models import SessionDB, ModelDB
 
 
 BASE_MODEL = "trl-internal-testing/tiny-Qwen3ForCausalLM"
@@ -62,8 +66,7 @@ def test_adapter_gradient_calculation():
     config = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=8,
-        max_lora_rank=32,
+        backend_config={"max_lora_adapters": 8, "max_lora_rank": 32},
     )
     engine = TinkerEngine(config)
 
@@ -93,17 +96,17 @@ def test_adapter_gradient_calculation():
     }
 
     # Process round 1 batch
-    engine.process_forward_backward_batch(reqs_round1)
+    engine.process_forward_backward(reqs_round1)
 
-    adapter1_idx = engine.models[adapter1_id].adapter_index
-    adapter2_idx = engine.models[adapter2_id].adapter_index
+    adapter1_idx = engine.backend.models[adapter1_id].adapter_index
+    adapter2_idx = engine.backend.models[adapter2_id].adapter_index
 
     # Extract gradients for adapter 1
-    grads_A1_round1 = jax.tree.map(lambda x: x[adapter1_idx], engine.accumulated_grads.grad_sum)
+    grads_A1_round1 = jax.tree.map(lambda x: x[adapter1_idx], engine.backend.accumulated_grads.grad_sum)
 
     # Clear stored grads so we can run another fwd/bwd without optimizer update.
-    engine.accumulated_grads = engine.accumulated_grads.reset_adapter(adapter1_idx)
-    engine.accumulated_grads = engine.accumulated_grads.reset_adapter(adapter2_idx)
+    engine.backend.accumulated_grads = engine.backend.accumulated_grads.reset_adapter(adapter1_idx)
+    engine.backend.accumulated_grads = engine.backend.accumulated_grads.reset_adapter(adapter2_idx)
 
     a1_input = make_fwd_bwd_input([[1, 2, 3, 4], [5, 6, 7, 8]])
     a2_input2 = make_fwd_bwd_input([[9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20], [21, 22, 23, 24]])
@@ -113,9 +116,9 @@ def test_adapter_gradient_calculation():
     }
 
     # Process round 2 batch
-    engine.process_forward_backward_batch(reqs_round2)
+    engine.process_forward_backward(reqs_round2)
 
-    grads_A1_round2 = jax.tree.map(lambda x: x[adapter1_idx], engine.accumulated_grads.grad_sum)
+    grads_A1_round2 = jax.tree.map(lambda x: x[adapter1_idx], engine.backend.accumulated_grads.grad_sum)
 
     # Compare gradients using 99% match threshold
     _assert_tree_allclose(grads_A1_round1, grads_A1_round2, rtol=1e-3, atol=1e-2, min_match_pct=99.0)
@@ -130,9 +133,7 @@ def test_micro_batch_grad_accumulation():
     config = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=8,
-        max_lora_rank=32,
-        train_micro_batch_size=4,
+        backend_config={"max_lora_adapters": 8, "max_lora_rank": 32, "train_micro_batch_size": 4},
     )
     engine = TinkerEngine(config)
 
@@ -163,25 +164,23 @@ def test_micro_batch_grad_accumulation():
     }
 
     # Run 1: micro-batching enabled
-    engine.process_forward_backward_batch(reqs)
+    engine.process_forward_backward(reqs)
 
-    adapter1_idx = engine.models[adapter1_id].adapter_index
-    adapter2_idx = engine.models[adapter2_id].adapter_index
+    adapter1_idx = engine.backend.models[adapter1_id].adapter_index
+    adapter2_idx = engine.backend.models[adapter2_id].adapter_index
 
-    mean_micro_a1 = engine.accumulated_grads.get_mean(adapter1_idx)
-    mean_micro_a2 = engine.accumulated_grads.get_mean(adapter2_idx)
+    mean_micro_a1 = engine.backend.accumulated_grads.get_mean(adapter1_idx)
+    mean_micro_a2 = engine.backend.accumulated_grads.get_mean(adapter2_idx)
 
     # Sanity check gradient sum denominators with micro-batching
-    assert engine.accumulated_grads.counts[adapter1_idx] == 2
-    assert engine.accumulated_grads.counts[adapter2_idx] == 4
+    assert engine.backend.accumulated_grads.counts[adapter1_idx] == 2
+    assert engine.backend.accumulated_grads.counts[adapter2_idx] == 4
 
     # Build a second engine without micro-batching
     config = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=8,
-        max_lora_rank=32,
-        train_micro_batch_size=0,
+        backend_config={"max_lora_adapters": 8, "max_lora_rank": 32, "train_micro_batch_size": 0},
     )
     engine = TinkerEngine(config)
 
@@ -193,20 +192,20 @@ def test_micro_batch_grad_accumulation():
     )
 
     # Run 2: micro-batching disabled
-    engine.process_forward_backward_batch(reqs)
+    engine.process_forward_backward(reqs)
 
     # Note: adapter indices might be different in new engine instance if logic changed,
     # but here we create them in same order so it should be fine.
     # Better to fetch them again to be safe.
-    adapter1_idx_full = engine.models[adapter1_id].adapter_index
-    adapter2_idx_full = engine.models[adapter2_id].adapter_index
+    adapter1_idx_full = engine.backend.models[adapter1_id].adapter_index
+    adapter2_idx_full = engine.backend.models[adapter2_id].adapter_index
 
-    mean_full_a1 = engine.accumulated_grads.get_mean(adapter1_idx_full)
-    mean_full_a2 = engine.accumulated_grads.get_mean(adapter2_idx_full)
+    mean_full_a1 = engine.backend.accumulated_grads.get_mean(adapter1_idx_full)
+    mean_full_a2 = engine.backend.accumulated_grads.get_mean(adapter2_idx_full)
 
     # Sanity check gradient sum denominators without micro-batching
-    assert engine.accumulated_grads.counts[adapter1_idx_full] == 2
-    assert engine.accumulated_grads.counts[adapter2_idx_full] == 4
+    assert engine.backend.accumulated_grads.counts[adapter1_idx_full] == 2
+    assert engine.backend.accumulated_grads.counts[adapter2_idx_full] == 4
 
     # Compare MEAN gradients with and without micro-batching
     _assert_tree_allclose(mean_micro_a1, mean_full_a1, rtol=1e-3, atol=5e-3)
@@ -218,8 +217,7 @@ def test_process_optim_step_hyperparams_behavior():
     config = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=8,
-        max_lora_rank=32,
+        backend_config={"max_lora_adapters": 8, "max_lora_rank": 32},
     )
 
     engine = TinkerEngine(config)
@@ -237,14 +235,16 @@ def test_process_optim_step_hyperparams_behavior():
     tokens = [[1, 2, 3, 4], [5, 6, 7, 8]]
 
     def apply_step(request_id: int, model_id: str, request: types.OptimStepInput) -> float:
-        engine.process_forward_backward_batch({str(request_id): (model_id, make_fwd_bwd_input(tokens))})
-        params_before = jax.tree.map(jnp.copy, engine.lora_params)
+        engine.process_forward_backward({str(request_id): (model_id, make_fwd_bwd_input(tokens))})
+        params_before = jax.tree.map(jnp.copy, engine.backend.lora_params)
         engine.process_optim_step(model_id, request)
-        delta = jax.tree.map(lambda old, new: (new - old).astype(jnp.float32), params_before, engine.lora_params)
+        delta = jax.tree.map(
+            lambda old, new: (new - old).astype(jnp.float32), params_before, engine.backend.lora_params
+        )
         return float(optax.global_norm(delta))
 
     tiny_request = types.OptimStepInput(
-        adam_params=types.AdamParams(learning_rate=1e-8, beta1=1e-8, beta2=1e-8, eps=1e-9)
+        adam_params=types.AdamParams(learning_rate=1e-8, beta1=1e-8, beta2=1e-8, eps=1e-9, weight_decay=0.0)
     )
     default_request = types.OptimStepInput(adam_params=api.AdamParams().to_types())
 
@@ -267,18 +267,19 @@ def test_gradient_checkpointing():
     for use_gradient_checkpointing in (False, True):
         cfg = EngineConfig(
             base_model=BASE_MODEL,
-            enforce_eager=False,
-            train_batch_size=2,
-            train_micro_batch_size=1,
-            max_lora_adapters=1,
-            max_lora_rank=4,
-            gradient_checkpointing=use_gradient_checkpointing,
+            backend_config={
+                "enforce_eager": False,
+                "train_micro_batch_size": 1,
+                "max_lora_adapters": 1,
+                "max_lora_rank": 4,
+                "gradient_checkpointing": use_gradient_checkpointing,
+            },
         )
         engine = TinkerEngine(cfg)
 
         # Create batch
         B, T = 2, 8
-        vocab = engine.model.config.vocab_size
+        vocab = engine.backend.model.config.vocab_size
         input_ids = jnp.arange(B * T, dtype=jnp.int32).reshape(B, T) % vocab
         attention_mask = jnp.ones((B, T), dtype=jnp.int32)
         adapter_indices = jnp.zeros((B,), dtype=jnp.int32)
@@ -289,10 +290,10 @@ def test_gradient_checkpointing():
         advantages = jnp.zeros((B, T), dtype=jnp.float32)
 
         # Compute loss, using gradient checkpointing if enabled
-        _, _, _, loss_full = engine._forward_backward_and_accumulate(
-            engine.accumulated_grads,
-            engine.lora_params,
-            engine.non_lora_params,
+        _, per_token_losses, _ = engine.backend._forward_backward_and_accumulate(
+            engine.backend.accumulated_grads,
+            engine.backend.lora_params,
+            engine.backend.non_lora_params,
             input_ids,
             attention_mask,
             adapter_indices,
@@ -302,7 +303,7 @@ def test_gradient_checkpointing():
             sampling_logprobs,
             advantages,
         )
-        losses.append(float(loss_full))
+        losses.append(float(per_token_losses.mean()))
 
     # Check relative difference between losses is small
     assert abs(losses[0] - losses[1]) / abs(losses[0]) < 5e-3
@@ -315,9 +316,11 @@ def test_sample_max_num_sequences():
     cfg = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=2,
-        max_lora_rank=32,
-        sample_max_num_sequences=2,  # Set max sample batch size to 2
+        backend_config={
+            "max_lora_adapters": 2,
+            "max_lora_rank": 32,
+            "sample_max_num_sequences": 2,  # Set max sample batch size to 2
+        },
     )
     engine = TinkerEngine(cfg)
 
@@ -346,7 +349,7 @@ def test_sample_max_num_sequences():
     reqs = {str(request_id): ("", make_sample_input(tokens)) for request_id, tokens in enumerate(prompts)}
 
     # Process sample requests.
-    results = engine.process_sample_batch(reqs)
+    results = engine.process_sample(reqs)
 
     # Verify results
     assert len(results) == len(prompts), f"Expected {len(prompts)} results, got {len(results)}"
@@ -376,8 +379,7 @@ def test_sample_with_prompt_logprobs():
     cfg = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=2,
-        max_lora_rank=32,
+        backend_config={"max_lora_adapters": 2, "max_lora_rank": 32},
     )
     engine = TinkerEngine(cfg)
 
@@ -405,7 +407,7 @@ def test_sample_with_prompt_logprobs():
         for i, tokens in enumerate(prompts)
     }
 
-    results_with = engine.process_sample_batch(reqs_with_logprobs)
+    results_with = engine.process_sample(reqs_with_logprobs)
 
     for i, tokens in enumerate(prompts):
         request_id = f"req_{i}"
@@ -445,7 +447,7 @@ def test_sample_with_prompt_logprobs():
         ),
     }
 
-    results_mixed = engine.process_sample_batch(reqs_mixed)
+    results_mixed = engine.process_sample(reqs_mixed)
 
     # Verify request with prompt_logprobs=True has logprobs
     assert results_mixed["req_with_0"].prompt_logprobs is not None
@@ -460,9 +462,11 @@ def test_sample_prompt_logprobs_with_microbatching():
     cfg = EngineConfig(
         base_model=BASE_MODEL,
         checkpoints_base=AnyPath(""),
-        max_lora_adapters=2,
-        max_lora_rank=32,
-        sample_max_num_sequences=2,  # Force micro-batching with batch size of 2
+        backend_config={
+            "max_lora_adapters": 2,
+            "max_lora_rank": 32,
+            "sample_max_num_sequences": 2,  # Force micro-batching with batch size of 2
+        },
     )
     engine = TinkerEngine(cfg)
 
@@ -493,7 +497,7 @@ def test_sample_prompt_logprobs_with_microbatching():
         for i, tokens in enumerate(prompts)
     }
 
-    results = engine.process_sample_batch(reqs)
+    results = engine.process_sample(reqs)
 
     # Verify that each request got its correct prompt_logprobs
     for i, tokens in enumerate(prompts):
@@ -508,3 +512,73 @@ def test_sample_prompt_logprobs_with_microbatching():
         assert (
             len(result.prompt_logprobs) == expected_length
         ), f"Request {request_id}: expected {expected_length} prompt_logprobs, got {len(result.prompt_logprobs)}"
+
+
+def test_process_unload_model():
+    """Test that process_unload_model removes model from backend."""
+    config = EngineConfig(
+        base_model=BASE_MODEL,
+        checkpoints_base=AnyPath(""),
+        backend_config={"max_lora_adapters": 4, "max_lora_rank": 32},
+    )
+    engine = TinkerEngine(config)
+    SQLModel.metadata.create_all(engine.db_engine)
+
+    model_id = "test_model"
+    _ = engine.process_single_request(
+        types.RequestType.CREATE_MODEL, model_id, {"lora_config": {"rank": 8, "alpha": 16}}
+    )
+    assert engine.backend.has_model(model_id)
+
+    result = engine.process_unload_model(model_id, types.UnloadModelInput())
+    assert result.status == "unloaded"
+    assert not engine.backend.has_model(model_id)
+
+
+def test_cleanup_stale_sessions():
+    """Test that cleanup_stale_sessions unloads models from expired sessions."""
+    config = EngineConfig(
+        base_model=BASE_MODEL,
+        checkpoints_base=AnyPath(""),
+        backend_config={"max_lora_adapters": 4, "max_lora_rank": 32},
+        session_timeout_sec=60,
+        database_url="sqlite:///:memory:",  # Use in-memory DB for test isolation
+    )
+    engine = TinkerEngine(config)
+    SQLModel.metadata.create_all(engine.db_engine)
+
+    model_id = "stale_model"
+    session_id = "stale_session"
+
+    # Create model in backend
+    _ = engine.process_single_request(
+        types.RequestType.CREATE_MODEL, model_id, {"lora_config": {"rank": 8, "alpha": 16}}
+    )
+    assert engine.backend.has_model(model_id)
+
+    # Insert stale session and model into DB
+    stale_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=120)
+    with Session(engine.db_engine) as session:
+        session.add(
+            SessionDB(
+                session_id=session_id,
+                sdk_version="test",
+                status="active",
+                last_heartbeat_at=stale_heartbeat,
+            )
+        )
+        session.add(
+            ModelDB(
+                model_id=model_id,
+                base_model=BASE_MODEL,
+                lora_config=types.LoraConfig(rank=8, alpha=16).model_dump(),
+                status="ready",
+                request_id=1,
+                session_id=session_id,
+            )
+        )
+        session.commit()
+
+    # Run cleanup and assert one model was unloaded
+    assert engine.cleanup_stale_sessions() == 1
+    assert not engine.backend.has_model(model_id)

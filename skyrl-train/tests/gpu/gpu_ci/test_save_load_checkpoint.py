@@ -1,6 +1,6 @@
 """
-For FSDP and DeepSpeed, run:
-uv run --isolated --extra dev --extra deepspeed -- pytest tests/gpu/gpu_ci/test_save_load_checkpoint.py -m "not megatron"
+For FSDP and FSDP2, run:
+uv run --isolated --extra dev -- pytest tests/gpu/gpu_ci/test_save_load_checkpoint.py -m "not megatron"
 
 For Megatron, run:
 uv run --isolated --extra dev --extra mcore -- pytest tests/gpu/gpu_ci/test_save_load_checkpoint.py -m "megatron"
@@ -29,21 +29,16 @@ def run_one_training_step(
     actor_group,
     strategy,
     experience=None,
-    global_step=None,
-    local_step=None,
-    accumulation_steps=None,
     megatron_batch=None,
 ):
+    """Run forward_backward + optim_step to perform one training step."""
     if strategy == "megatron":
         assert megatron_batch is not None, "Megatron requires a TrainingInputBatch for ppo_train"
         return ray.get(actor_group.async_run_ray_method("mesh", "ppo_train", megatron_batch))
     else:
-        assert experience is not None, f"{strategy} requires an Experience for training_step"
-        return ray.get(
-            actor_group.async_run_ray_method(
-                "pass_through", "training_step", experience, global_step, local_step, accumulation_steps
-            )
-        )
+        assert experience is not None, f"{strategy} requires an Experience for forward_backward"
+        ray.get(actor_group.async_run_ray_method("pass_through", "forward_backward", experience, 1))
+        ray.get(actor_group.async_run_ray_method("pass_through", "optim_step"))
 
 
 def get_test_actor_config(strategy: str) -> DictConfig:
@@ -64,15 +59,15 @@ def get_test_actor_config(strategy: str) -> DictConfig:
 
 
 @pytest.mark.parametrize(
-    "strategy",
+    ("strategy", "lora"),
     [
-        "deepspeed",
-        "fsdp",
-        "fsdp2",
-        pytest.param("megatron", marks=pytest.mark.megatron),
+        ("fsdp", False),
+        ("fsdp2", False),
+        pytest.param("megatron", False, marks=pytest.mark.megatron),
+        pytest.param("megatron", True, marks=[pytest.mark.megatron, pytest.mark.lora]),
     ],
 )
-def test_save_load_checkpoint(ray_init_fixture, strategy):
+def test_save_load_checkpoint(ray_init_fixture, strategy, lora):
     """
     Test checkpointing logic by:
     1. Creating model and doing one training step
@@ -82,6 +77,9 @@ def test_save_load_checkpoint(ray_init_fixture, strategy):
     5. Repeating second training step and comparing logits
     """
     cfg = get_test_actor_config(strategy)
+    if lora:
+        cfg.trainer.policy.model.lora.rank = 32
+        cfg.trainer.policy.model.lora.alpha = 32
 
     try:
         actor_group = init_worker_with_type(
@@ -104,7 +102,7 @@ def test_save_load_checkpoint(ray_init_fixture, strategy):
 
         # For Megatron, build training batches and reuse the second one pre/post checkpoint resume
         if "megatron" in strategy:
-            from tests.gpu.test_megatron_worker import get_test_training_batch
+            from tests.gpu.gpu_ci.test_megatron_worker import get_test_training_batch
 
             dp_size = actor_group.actor_infos[0].rank.dp_size
             train_batch_1 = get_test_training_batch(dp_size if dp_size % NUM_GPUS == 0 else NUM_GPUS)
@@ -113,16 +111,11 @@ def test_save_load_checkpoint(ray_init_fixture, strategy):
             train_batch_1 = None
             train_batch_2 = None
 
-        global_step, local_step, accumulation_steps = 0, 0, 1
-
         # Step 1: Do initial training step
         run_one_training_step(
             actor_group,
             strategy,
             experience=dummy_experience_1,
-            global_step=global_step,
-            local_step=local_step,
-            accumulation_steps=accumulation_steps,
             megatron_batch=train_batch_1,
         )
 
@@ -169,9 +162,6 @@ def test_save_load_checkpoint(ray_init_fixture, strategy):
             actor_group,
             strategy,
             experience=dummy_experience_2,
-            global_step=global_step + 1,
-            local_step=local_step,
-            accumulation_steps=accumulation_steps,
             megatron_batch=train_batch_2,
         )
 
@@ -192,9 +182,6 @@ def test_save_load_checkpoint(ray_init_fixture, strategy):
             actor_group,
             strategy,
             experience=dummy_experience_2,
-            global_step=global_step + 1,
-            local_step=local_step,
-            accumulation_steps=accumulation_steps,
             megatron_batch=train_batch_2,
         )
 

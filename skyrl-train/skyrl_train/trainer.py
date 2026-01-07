@@ -13,9 +13,9 @@ from omegaconf import DictConfig
 from ray.util.placement_group import PlacementGroup, placement_group
 from tqdm import tqdm
 from transformers import AutoTokenizer
+import numpy as np
 from collections import defaultdict
 
-import numpy as np
 from skyrl_train.dataset import PromptDataset
 from skyrl_train.utils.tracking import Tracking
 from skyrl_train.training_batch import TrainingInputBatch, TrainingOutputBatch
@@ -56,6 +56,7 @@ from skyrl_train.utils.trainer_utils import (
     ResumeMode,
     DynamicSamplingState,
     build_dataloader,
+    zero_variance_filter,
 )
 from skyrl_train.utils.utils import configure_ray_worker_logging
 from skyrl_train.evaluate import evaluate, evaluate_step_wise
@@ -130,7 +131,7 @@ class RayPPOTrainer:
         Returns:
             A dictionary of evaluation metrics.
         """
-        if self.cfg.trainer.step_wise_training:
+        if self.cfg.generator.step_wise_trajectories:
             eval_metrics = await evaluate_step_wise(
                 eval_dataloader=self.eval_dataloader,
                 generator=self.generator,
@@ -209,7 +210,7 @@ class RayPPOTrainer:
                     with Timer("generate", self.all_timings):
                         generator_output: GeneratorOutput = asyncio.run(self.generate(generator_input))
 
-                    if self.cfg.trainer.step_wise_training:
+                    if self.cfg.generator.step_wise_trajectories:
                         # NOTE: We use instance_ids from `trajectory_ids` here instead of re-using `uids`
                         # this is because in step-wise training, len(uids) != len(generator_output["response_ids"])
                         uids = [trajectory_id.instance_id for trajectory_id in generator_output["trajectory_ids"]]
@@ -347,13 +348,32 @@ class RayPPOTrainer:
         logger.info("Training done!")
 
     def _remove_tail_data(self, entries: List[Any]) -> List[Any]:
-        """Remove tail data to have even shards"""
-        dp_size = self.policy_model.actor_infos[0].rank.dp_size
+        """Remove tail data to have even shards in terms of *effective* samples.
+
+        Each prompt produces `n_samples_per_prompt` samples. For data-parallel
+        training we care that the total number of samples is nicely splittable
+        across the (combined) data-parallel size of all enabled models.
+        """
+        lcm_dp_size = self.policy_model.actor_infos[0].rank.dp_size
         if self.critic_model is not None:
-            dp_size = math.lcm(dp_size, self.critic_model.actor_infos[0].rank.dp_size)
+            lcm_dp_size = math.lcm(lcm_dp_size, self.critic_model.actor_infos[0].rank.dp_size)
         if self.ref_model is not None:
-            dp_size = math.lcm(dp_size, self.ref_model.actor_infos[0].rank.dp_size)
-        return entries[: (len(entries) // dp_size) * dp_size]
+            lcm_dp_size = math.lcm(lcm_dp_size, self.ref_model.actor_infos[0].rank.dp_size)
+
+        n_samples_per_prompt = self.cfg.generator.n_samples_per_prompt
+
+        # We want the largest m <= len(entries) such that:
+        #   (m * n_samples_per_prompt) % lcm_dp_size == 0
+        #
+        # Let g = gcd(lcm_dp_size, n_samples_per_prompt). Then this is equivalent
+        # to requiring m to be a multiple of (lcm_dp_size / g).
+        stride = lcm_dp_size // math.gcd(lcm_dp_size, n_samples_per_prompt)
+        if stride <= 1:
+            # Every prompt count is valid, keep all entries.
+            return entries
+
+        kept_prompts = (len(entries) // stride) * stride
+        return entries[:kept_prompts]
 
     def build_models(self, PolicyWorker, CriticWorker, RefWorker):
         """
@@ -583,7 +603,7 @@ class RayPPOTrainer:
         training_input.metadata = {"uids": uids}
         # padded response length
         training_input.metadata["response_length"] = response_masks_tensor.shape[1]
-        if self.cfg.trainer.step_wise_training:
+        if self.cfg.generator.step_wise_trajectories:
             assert (
                 "trajectory_ids" in generator_output
             ), "Expected `trajectory_ids` in generator output for step wise training"
@@ -626,7 +646,7 @@ class RayPPOTrainer:
         if generator_output["rollout_metrics"] is not None:
             self.all_metrics.update(generator_output["rollout_metrics"])
 
-        if not self.cfg.trainer.step_wise_training:
+        if not self.cfg.generator.step_wise_trajectories:
             validate_generator_output(len(input_batch["prompts"]), generator_output)
 
         return generator_output
@@ -640,7 +660,7 @@ class RayPPOTrainer:
         """
         generator_output_for_metrics = generator_output
         uids_for_metrics = uids
-        if self.cfg.trainer.step_wise_training:
+        if self.cfg.generator.step_wise_trajectories:
             generator_output_for_metrics = defaultdict(list)
             for key in generator_output:
                 if isinstance(generator_output[key], list):
@@ -655,7 +675,7 @@ class RayPPOTrainer:
 
         # only use `generator_output_for_metrics` for metrics calculation
         # For step-wise training, we only calculate metrics for the last step of each trajectory
-        mean_raw_reward, pass_at_n = get_metrics_from_generator_output(
+        overall_metrics = get_metrics_from_generator_output(
             generator_output_for_metrics,
             uids_for_metrics,
         )
@@ -670,6 +690,12 @@ class RayPPOTrainer:
             # Token-level rewards: rewards is List[List[float]]
             per_token_rewards = rewards
         else:
+            if self.cfg.trainer.algorithm.zero_variance_filter:
+                kept_indices_set = set(zero_variance_filter(rewards, uids))
+                generator_output["loss_masks"] = [
+                    [0] * len(mask) if i not in kept_indices_set else mask
+                    for i, mask in enumerate(generator_output["loss_masks"])
+                ]
             # Response-level rewards: rewards is List[float], convert to per-token rewards
             for reward, response in zip(rewards, responses):
                 per_token_reward = [0.0] * len(response)
@@ -679,12 +705,14 @@ class RayPPOTrainer:
         n_samples_per_prompt = self.cfg.generator.n_samples_per_prompt
 
         reward_metrics = {
-            f"reward/avg_pass_at_{n_samples_per_prompt}": pass_at_n,
-            "reward/avg_raw_reward": mean_raw_reward,
+            f"reward/avg_pass_at_{n_samples_per_prompt}": overall_metrics["pass_at_n"],
+            "reward/avg_raw_reward": overall_metrics["avg_score"],
+            "reward/mean_positive_reward": overall_metrics["mean_positive_reward"],
         }
         self.all_metrics.update(reward_metrics)
-        logger.info(f"reward/avg_pass_at_{n_samples_per_prompt}: {pass_at_n}, reward/avg_raw_reward: {mean_raw_reward}")
-
+        logger.info(
+            f"reward/avg_pass_at_{n_samples_per_prompt}: {overall_metrics['pass_at_n']}, reward/avg_raw_reward: {overall_metrics['avg_score']}, reward/mean_positive_reward: {overall_metrics['mean_positive_reward']}"
+        )
         # re-assign reward but now it's per token rewards
         generator_output["rewards"] = per_token_rewards
         return generator_output
@@ -707,7 +735,7 @@ class RayPPOTrainer:
         """
         token_level_rewards = data["rewards"]
 
-        if self.cfg.trainer.step_wise_training:
+        if self.cfg.generator.step_wise_trajectories:
             is_last_step = data["is_last_step"].bool()
             response_mask = data["response_mask"]
             index = np.array(data.metadata["uids"])
@@ -759,7 +787,7 @@ class RayPPOTrainer:
         num_samples = len(token_level_rewards)
 
         return_sums = token_level_rewards.sum(dim=-1)[: num_samples - pad_size]
-        if self.cfg.trainer.step_wise_training:
+        if self.cfg.generator.step_wise_trajectories:
             avg_rewards: float = return_sums[data["is_last_step"][: num_samples - pad_size]].mean().item()
         else:
             avg_rewards: float = return_sums.mean().item()

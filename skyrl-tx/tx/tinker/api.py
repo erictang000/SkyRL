@@ -2,17 +2,18 @@ import fastapi
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field, model_validator
-from typing import Literal, Any, AsyncGenerator, Sequence
+from typing import Literal, Any, AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from contextlib import asynccontextmanager
-from sqlmodel import SQLModel, select
+from sqlmodel import SQLModel, select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, TimeoutError as SATimeoutError
 import asyncio
 import subprocess
 import random
+import time
 
 from tx.tinker import types
 from tx.tinker.config import EngineConfig, add_model, config_to_argv
@@ -146,6 +147,7 @@ class LoRAConfig(BaseModel):
 
 
 class CreateModelRequest(BaseModel):
+    session_id: str
     base_model: str
     lora_config: LoRAConfig
 
@@ -156,6 +158,16 @@ class CreateModelResponse(BaseModel):
     lora_config: LoRAConfig | None = None
     status: str = "created"
     request_id: str
+
+
+class UnloadModelRequest(BaseModel):
+    model_id: str
+    type: str | None = None
+
+
+class UnloadModelResponse(BaseModel):
+    request_id: str
+    model_id: str
 
 
 class ModelData(BaseModel):
@@ -247,14 +259,26 @@ class ForwardBackwardRequest(BaseModel):
     forward_backward_input: ForwardBackwardInput
 
 
+class ForwardRequest(BaseModel):
+    model_id: str
+    forward_input: ForwardBackwardInput
+
+
 class AdamParams(BaseModel):
     learning_rate: float = Field(default=1e-4, ge=0.0)
     beta1: float = Field(default=0.9, ge=0.0, lt=1.0)
     beta2: float = Field(default=0.95, ge=0.0, lt=1.0)
     eps: float = Field(default=1e-12, gt=0.0)
+    weight_decay: float = Field(default=0.0, ge=0.0)
 
     def to_types(self) -> types.AdamParams:
-        return types.AdamParams(learning_rate=self.learning_rate, beta1=self.beta1, beta2=self.beta2, eps=self.eps)
+        return types.AdamParams(
+            learning_rate=self.learning_rate,
+            beta1=self.beta1,
+            beta2=self.beta2,
+            eps=self.eps,
+            weight_decay=self.weight_decay,
+        )
 
 
 class OptimStepRequest(BaseModel):
@@ -264,13 +288,22 @@ class OptimStepRequest(BaseModel):
 
 class SaveWeightsForSamplerRequest(BaseModel):
     model_id: str
-    path: str = Field(..., pattern=ID_PATTERN, max_length=ID_MAX_LENGTH)
+    path: str | None = Field(default=None, pattern=ID_PATTERN, max_length=ID_MAX_LENGTH)
+    sampling_session_seq_id: int | None = None
+    seq_id: int | None = None
+    type: Literal["save_weights_for_sampler"] = "save_weights_for_sampler"
+
+    @model_validator(mode="after")
+    def check_path_or_ids(self):
+        if not self.path and (self.sampling_session_seq_id is None or self.seq_id is None):
+            raise ValueError("Either 'path' or both 'sampling_session_seq_id' and 'seq_id' must be provided")
+        return self
 
 
 class SamplingParams(BaseModel):
     max_tokens: int | None = None
     seed: int | None = None
-    stop: Sequence[int] | None = None
+    stop: list[int] | list[str] | None = None
     temperature: float = 1
     top_k: int = -1
     top_p: float = 1
@@ -279,19 +312,31 @@ class SamplingParams(BaseModel):
         if self.max_tokens is None:
             raise HTTPException(status_code=400, detail="max_tokens is currently required")
 
-        if self.top_k != -1:
-            raise HTTPException(status_code=501, detail="'top_k' parameter is not yet implemented")
-        if self.top_p != 1.0:
-            raise HTTPException(status_code=501, detail="'top_p' parameter is not yet implemented")
-
         # Generate a random seed if not provided
         seed = self.seed if self.seed is not None else random.randint(0, 2**31 - 1)
+
+        # Determine if stop values are token IDs (int) or strings
+        stop_tokens = None
+        stop_strings = None
+        if self.stop:
+            if all(isinstance(s, int) for s in self.stop):
+                stop_tokens = list(self.stop)
+            elif all(isinstance(s, str) for s in self.stop):
+                stop_strings = list(self.stop)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="stop must be either all integers (token IDs) or all strings, not mixed",
+                )
 
         return types.SamplingParams(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             seed=seed,
-            stop=self.stop,
+            stop_tokens=stop_tokens,
+            stop_strings=stop_strings,
+            top_k=self.top_k,
+            top_p=self.top_p,
         )
 
 
@@ -415,6 +460,17 @@ class ListCheckpointsResponse(BaseModel):
     checkpoints: list[Checkpoint]
 
 
+class Cursor(BaseModel):
+    offset: int
+    limit: int
+    total_count: int
+
+
+class TrainingRunsResponse(BaseModel):
+    training_runs: list[TrainingRun]
+    cursor: Cursor
+
+
 class WeightsInfoRequest(BaseModel):
     tinker_path: str
 
@@ -487,6 +543,11 @@ async def create_sampling_session(request: CreateSamplingSessionRequest, session
 @app.post("/api/v1/create_model", response_model=CreateModelResponse)
 async def create_model(request: CreateModelRequest, session: AsyncSession = Depends(get_session)):
     """Create a new model, optionally with a LoRA adapter."""
+    # Validate session exists
+    session_db = await session.get(SessionDB, request.session_id)
+    if session_db is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     model_id = f"model_{uuid4().hex[:8]}"
 
     # alpha = 32 seems to be the tinker default (see https://thinkingmachines.ai/blog/lora/)
@@ -504,6 +565,7 @@ async def create_model(request: CreateModelRequest, session: AsyncSession = Depe
         lora_config=lora_config.model_dump(),
         status="created",
         request_id=request_id,
+        session_id=request.session_id,
     )
     session.add(model_db)
 
@@ -516,6 +578,30 @@ async def create_model(request: CreateModelRequest, session: AsyncSession = Depe
         status="created",
         request_id=str(request_id),
     )
+
+
+@app.post("/api/v1/unload_model", response_model=UnloadModelResponse)
+async def unload_model(request: UnloadModelRequest, session: AsyncSession = Depends(get_session)):
+    """Unload a model and free all associated resources."""
+    # Validate model exists
+    model_db = await session.get(ModelDB, request.model_id)
+    if model_db is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    # Update model status
+    model_db.status = "unloading"
+
+    # Create future request
+    request_id = await create_future(
+        session=session,
+        request_type=types.RequestType.UNLOAD_MODEL,
+        model_id=request.model_id,
+        request_data=types.UnloadModelInput(),
+    )
+
+    await session.commit()
+
+    return UnloadModelResponse(request_id=str(request_id), model_id=request.model_id)
 
 
 class GetInfoRequest(BaseModel):
@@ -550,7 +636,8 @@ async def get_training_run(model_id: str, session: AsyncSession = Depends(get_se
         is_lora=True,
         corrupted=False,
         lora_rank=lora_config.rank,
-        last_request_time=model.created_at,  # TODO: Once we track modified_at timestamps, update this
+        # TODO: Once we track modified_at timestamps, update this
+        last_request_time=model.created_at,
         last_checkpoint=None,
         last_sampler_checkpoint=None,
         user_metadata=None,
@@ -567,6 +654,23 @@ async def forward_backward(request: ForwardBackwardRequest, session: AsyncSessio
         request_type=types.RequestType.FORWARD_BACKWARD,
         model_id=request.model_id,
         request_data=request.forward_backward_input.to_types(),
+    )
+
+    await session.commit()
+
+    return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
+
+
+@app.post("/api/v1/forward", response_model=FutureResponse)
+async def forward(request: ForwardRequest, session: AsyncSession = Depends(get_session)):
+    """Forward pass to obtain logprobs without accumulating gradients"""
+    await get_model(session, request.model_id)
+
+    request_id = await create_future(
+        session=session,
+        request_type=types.RequestType.FORWARD,
+        model_id=request.model_id,
+        request_data=request.forward_input.to_types(),
     )
 
     await session.commit()
@@ -647,11 +751,28 @@ async def save_weights(request: SaveWeightsRequest, session: AsyncSession = Depe
 @app.post("/api/v1/save_weights_for_sampler", response_model=FutureResponse)
 async def save_weights_for_sampler(request: SaveWeightsForSamplerRequest, session: AsyncSession = Depends(get_session)):
     """Saves weights in a format compatible with sampling/inference servers."""
-    # Create pending checkpoint entry (validates model exists)
+    # Get the model (validates it exists and gives us the session_id)
+    model = await get_model(session, request.model_id)
+
+    checkpoint_id = request.path or f"ss{request.sampling_session_seq_id}_seq{request.seq_id}"
+    sampling_session_id = None
+    if request.sampling_session_seq_id is not None and request.seq_id is not None:
+        # Create the sampling session using the model's session
+        sampling_session_id = f"sampling_{uuid4().hex[:8]}"
+        sampling_db = SamplingSessionDB(
+            sampling_session_id=sampling_session_id,
+            session_id=model.session_id,
+            sampling_session_seq_id=request.sampling_session_seq_id,
+            base_model=None,
+            model_path=f"tinker://{request.model_id}/sampler_weights/{checkpoint_id}",
+        )
+        session.add(sampling_db)
+
+    # Create pending checkpoint entry
     await create_checkpoint(
         session=session,
         model_id=request.model_id,
-        checkpoint_id=request.path,
+        checkpoint_id=checkpoint_id,
         checkpoint_type=types.CheckpointType.SAMPLER,
     )
 
@@ -659,7 +780,12 @@ async def save_weights_for_sampler(request: SaveWeightsForSamplerRequest, sessio
         session=session,
         request_type=types.RequestType.SAVE_WEIGHTS_FOR_SAMPLER,
         model_id=request.model_id,
-        request_data=types.SaveWeightsForSamplerInput(path=request.path),
+        request_data=types.SaveWeightsForSamplerInput(
+            path=checkpoint_id,
+            sampling_session_seq_id=request.sampling_session_seq_id,
+            seq_id=request.seq_id,
+            sampling_session_id=sampling_session_id,
+        ),
     )
 
     await session.commit()
@@ -746,28 +872,44 @@ class RetrieveFutureRequest(BaseModel):
 async def retrieve_future(request: RetrieveFutureRequest, req: Request):
     """Retrieve the result of an async operation, waiting until it's available."""
     timeout = 300  # 5 minutes
-    poll_interval = 0.1  # 100ms
+    deadline = time.perf_counter() + timeout
 
-    for _ in range(int(timeout / poll_interval)):
-        async with AsyncSession(req.app.state.db_engine) as session:
-            statement = select(FutureDB).where(FutureDB.request_id == int(request.request_id))
-            result = await session.exec(statement)
-            future = result.first()
+    # Start with 100ms, grow to 1s
+    poll = 0.1
+    max_poll = 1.0
 
-            if not future:
-                raise HTTPException(status_code=404, detail="Future not found")
+    while time.perf_counter() < deadline:
+        try:
+            async with AsyncSession(req.app.state.db_engine) as session:
+                # First, only query the status to avoid deserializing JSON data
+                statement = select(FutureDB.status).where(FutureDB.request_id == int(request.request_id))
+                result = await session.exec(statement)
+                status = result.first()
 
-            if future.status == RequestStatus.COMPLETED:
-                return future.result_data
+                if not status:
+                    raise HTTPException(status_code=404, detail="Future not found")
 
-            if future.status == RequestStatus.FAILED:
-                # Return 400 for handled errors (validation, etc.), 500 for unexpected failures
-                if future.result_data and "error" in future.result_data:
-                    raise HTTPException(status_code=400, detail=future.result_data["error"])
-                else:
-                    raise HTTPException(status_code=500, detail="Unknown error")
+                # Only fetch full record if status is terminal (completed or failed)
+                if status in (RequestStatus.COMPLETED, RequestStatus.FAILED):
+                    statement = select(FutureDB).where(FutureDB.request_id == int(request.request_id))
+                    result = await session.exec(statement)
+                    future = result.first()
 
-        await asyncio.sleep(poll_interval)
+                    if future.status == RequestStatus.COMPLETED:
+                        return future.result_data
+
+                    if future.status == RequestStatus.FAILED:
+                        # Return 400 for handled errors (validation, etc.), 500 for unexpected failures
+                        if future.result_data and "error" in future.result_data:
+                            raise HTTPException(status_code=400, detail=future.result_data["error"])
+                        else:
+                            raise HTTPException(status_code=500, detail="Unknown error")
+        except SATimeoutError:
+            pass
+
+        # Exponential backoff
+        await asyncio.sleep(poll)
+        poll = min(poll * 1.5, max_poll)
 
     raise HTTPException(status_code=408, detail="Timeout waiting for result")
 
@@ -796,6 +938,44 @@ async def validate_checkpoint(
 
     subdir = "sampler_weights" if checkpoint_type == types.CheckpointType.SAMPLER else ""
     return request.app.state.engine_config.checkpoints_base / unique_id / subdir / f"{checkpoint_id}.tar.gz"
+
+
+@app.get("/api/v1/training_runs")
+async def list_training_runs(
+    limit: int = 20, offset: int = 0, session: AsyncSession = Depends(get_session)
+) -> TrainingRunsResponse:
+    """List all training runs"""
+
+    # Use window function to get total count alongside paginated results in a single query
+    statement = select(ModelDB, func.count().over().label("total_count")).offset(offset).limit(limit)
+    result = await session.exec(statement)
+    rows = result.all()
+
+    total_count = rows[0].total_count if rows else 0
+
+    training_runs = []
+    for row in rows:
+        model = row.ModelDB
+        lora_config = types.LoraConfig.model_validate(model.lora_config)
+
+        training_runs.append(
+            TrainingRun(
+                training_run_id=model.model_id,
+                base_model=model.base_model,
+                model_owner="default",
+                is_lora=True,
+                corrupted=False,
+                lora_rank=lora_config.rank,
+                last_request_time=model.created_at,  # TODO: Once we track modified_at timestamps, update this
+                last_checkpoint=None,
+                last_sampler_checkpoint=None,
+                user_metadata=None,
+            )
+        )
+
+    return TrainingRunsResponse(
+        training_runs=training_runs, cursor=Cursor(offset=offset, limit=limit, total_count=total_count)
+    )
 
 
 @app.get("/api/v1/training_runs/{unique_id}/checkpoints/{checkpoint_id}/archive")

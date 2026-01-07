@@ -5,15 +5,82 @@ We provide a collection of end-to-end recipes for single and multi-turn RL train
 
 We provide reproduction runs for the following recipes:
 
-1. `Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO) <https://dapo-sia.github.io/>`_ 
-2. `SkyRL-SQL <https://novasky-ai.notion.site/skyrl-sql>`_ 
-3. `SearchR1 <https://arxiv.org/abs/2503.09516>`_ 
+1. Simple training on GSM8K 
+2. `Decoupled Clip and Dynamic Sampling Policy Optimization (DAPO) <https://dapo-sia.github.io/>`_ 
+3. `SkyRL-SQL <https://novasky-ai.notion.site/skyrl-sql>`_ 
+4. `SearchR1 <https://arxiv.org/abs/2503.09516>`_ 
 
+
+
+Simple training on GSM8K
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The scripts for training on GSM8K are available at :code_link:`examples/gsm8k/`.
+
+
+.. raw:: html
+
+   <style>
+     table.skytable {
+       border-collapse: collapse;
+       margin-bottom: 20px;
+     }
+     table.skytable th, table.skytable td {
+       border: 1px solid #ccc;
+       padding: 6px 10px;
+     }
+     table.skytable th {
+       background: #f2f2f2;
+     }
+     table.skytable tr:nth-child(even) {
+       background: #fafafa;
+     }
+   </style>
+
+   <table class="skytable">
+     <thead>
+       <tr>
+         <th>Backend</th>
+         <th>Model</th>
+         <th>Eval Accuracy</th>
+         <th>Hardware</th>
+         <th>Training Steps</th>
+         <th>Commit</th>
+         <th>WandB</th>
+       </tr>
+     </thead>
+     <tbody>
+       <tr>
+         <td>FSDP2</td>
+         <td>Qwen/Qwen2.5-1.5B-Instruct</td>
+         <td>0.796</td>
+         <td>4xH100</td>
+         <td>140</td>
+         <td><a href="https://github.com/novasky-ai/SkyRL/commit/a95b699">a95b699</a></td>
+         <td><a href="https://wandb.ai/sky-posttraining-uc-berkeley/gsm8k_recipes?nw=nwusersumanthrh99">Link</a></td>
+       </tr>
+       <tr>
+         <td>DeepSpeed</td>
+         <td>Qwen/Qwen2.5-1.5B-Instruct</td>
+         <td>0.791</td>
+         <td>4xH100</td>
+         <td>140</td>
+         <td><a href="https://github.com/novasky-ai/SkyRL/commit/a95b699">a95b699</a></td>
+         <td><a href="https://wandb.ai/sky-posttraining-uc-berkeley/gsm8k_recipes?nw=nwusersumanthrh99">Link</a></td>
+       </tr>
+     </tbody>
+   </table>
+  
 
 DAPO Recipes
 ~~~~~~~~~~~~
 
-The code for the DAPO recipe is available at :code_link:`examples/algorithms/dapo/`.
+The code for the DAPO recipe is available at :code_link:`examples/algorithms/dapo/`. 
+
+For evals we report Pass@32 and Mean@32. In the WandB metrics we log "avg_score" - since reward is either -1 or 1 for the AIME task, mean@32 can be computed as mean@32 = (avg_score + 1) / 2. 
+In the table below we report the peak mean@32 and pass@32 over the course of the run. All runs are DAPO but without Dynamic Sampling enabled (just clip-higher, overlong buffer, overlong filtering, and token level loss aggregation).
+
+All results can be reproduced with commit `cca7d96741f143ce6aa89a0f2cbb18d528cfcf33 <https://github.com/novasky-ai/SkyRL/commit/cca7d96741f143ce6aa89a0f2cbb18d528cfcf33>`_, and the WandB report for all runs is available `here <https://api.wandb.ai/links/sky-posttraining-uc-berkeley/ijmo1v6q>`_.
 
 
 .. raw:: html
@@ -40,44 +107,76 @@ The code for the DAPO recipe is available at :code_link:`examples/algorithms/dap
        <tr>
          <th>Recipe</th>
          <th>Model</th>
+         <th>Training Backend</th>
          <th>AIME24 Pass@32</th>
-         <th>AIME24 Avg Score</th>
+         <th>AIME24 Mean@32</th>
          <th>Hardware</th>
-         <th>Training Steps</th>
-         <th>Commit</th>
-         <th>WandB</th>
+         <th>Training Steps (at peak mean@32)</th>
        </tr>
      </thead>
      <tbody>
+     <tr>
+         <td>DAPO</td>
+         <td>Qwen/Qwen-2.5-32B</td>
+         <td>FSDP2</td>
+         <td>0.766</td>
+         <td>0.381</td>
+         <td>2x8xH100</td>
+         <td>260</td>
+       </tr>
        <tr>
-         <td>DAPO (w/o Dynamic Sampling)</td>
+         <td>DAPO</td>
          <td>Qwen/Qwen-2.5-7B-Math</td>
+         <td>FSDP2</td>
          <td>0.633</td>
-         <td>-0.304</td>
+         <td>0.348</td>
          <td>8xH100</td>
          <td>320</td>
-         <td><a href="https://github.com/novasky-ai/SkyRL/commit/a95b699">a95b699</a></td>
-         <td><a href="https://api.wandb.ai/links/sky-posttraining-uc-berkeley/ijmo1v6q">Link</a></td>
        </tr>
        <tr>
-         <td>DAPO (w/o Dynamic Sampling)</td>
-         <td>Qwen/Qwen3-1.7B</td>
-         <td>0.4</td>
-         <td>-0.702</td>
+         <td>DAPO</td>
+         <td>Qwen/Qwen3-1.7B-Base</td>
+         <td>FSDP2</td>
+         <td>0.366</td>
+         <td>0.144</td>
          <td>8xH100</td>
-         <td>225</td>
-         <td><a href="https://github.com/novasky-ai/SkyRL/commit/a95b699">a95b699</a></td>
-         <td><a href="https://api.wandb.ai/links/sky-posttraining-uc-berkeley/ijmo1v6q">Link</a></td>
+         <td>285</td>
        </tr>
        <tr>
-         <td>DAPO (w/o Dynamic Sampling)</td>
-         <td>Qwen/Qwen3-4B</td>
+         <td>DAPO + 0-Var Filtering</td>
+         <td>Qwen/Qwen3-1.7B-Base</td>
+         <td>FSDP2</td>
+         <td>0.433</td>
+         <td>0.169</td>
+         <td>8xH100</td>
+         <td>185</td>
+       </tr>
+       <tr>
+         <td>DAPO</td>
+         <td>Qwen/Qwen3-4B-Base</td>
+         <td>FSDP2</td>
          <td>0.6</td>
-         <td>-0.51</td>
+         <td>0.254</td>
          <td>8xH100</td>
-         <td>90</td>
-         <td><a href="https://github.com/novasky-ai/SkyRL/commit/a95b699">a95b699</a></td>
-         <td><a href="https://api.wandb.ai/links/sky-posttraining-uc-berkeley/ijmo1v6q">Link</a></td>
+         <td>110</td>
+       </tr>
+       <tr>
+         <td>DAPO</td>
+         <td>Qwen/Qwen3-4B-Base</td>
+         <td>Megatron (tp=4, pp=2)</td>
+         <td>0.633</td>
+         <td>0.246</td>
+         <td>8xH100</td>
+         <td>210</td>
+       </tr>
+       <tr>
+         <td>DAPO + LoRA (rank 32, alpha 64)</td>
+         <td>Qwen/Qwen3-4B-Base</td>
+         <td>Megatron (tp=4, pp=1)</td>
+         <td>0.566</td>
+         <td>0.209</td>
+         <td>8xH100</td>
+         <td>160</td>
        </tr>
      </tbody>
    </table>
@@ -307,4 +406,3 @@ Evaluation results for `Qwen3-30B-A3B <https://huggingface.co/Qwen/Qwen3-30B-A3B
       </tr>
     </tbody>
   </table>
-

@@ -61,14 +61,15 @@ def create_ray_wrapped_inference_engines_from_config(cfg: DictConfig, colocate_p
     }
 
     # Conditionally add LoRA parameters if LoRA is enabled
-    if cfg.trainer.policy.model.lora.rank > 0:
+    if cfg.trainer.policy.model.lora.rank > 0 and cfg.trainer.strategy != "megatron":
         engine_kwargs["enable_lora"] = True
         engine_kwargs["max_lora_rank"] = cfg.trainer.policy.model.lora.rank
         engine_kwargs["sleep_level"] = 1
         engine_kwargs["max_loras"] = 1
         engine_kwargs["fully_sharded_loras"] = cfg.generator.fully_sharded_loras
 
-        # TODO(devpatel): Bandaid solution, replace this once we have a better solution for LoRA performance degradation on the vLLM side
+        # TODO(devpatel): Bandaid solution, replace this once we have a better
+        # solution for LoRA performance degradation on the vLLM side
         if cfg.generator.enforce_eager and cfg.generator.backend == "vllm":
             logger.warning(
                 "LoRA is enabled but generator.enforce_eager=true. "
@@ -86,7 +87,8 @@ def create_ray_wrapped_inference_engines_from_config(cfg: DictConfig, colocate_p
 
 
 def create_remote_inference_engines_from_config(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase):
-    # TODO(tgriggs): We may want a separate config for the model name in case it's different from the name used in the OpenAI API
+    # TODO(tgriggs): We may want a separate config for the model name in case
+    # it's different from the name used in the OpenAI API
     return create_remote_inference_engines(
         urls=cfg.generator.remote_inference_engine_urls,
         model_name=cfg.trainer.policy.model.path,
@@ -144,7 +146,7 @@ class BasePPOExp:
         # make sure the dataset is large enough to train on
         assert (
             len(prompts_dataset) >= self.cfg.trainer.train_batch_size
-        ), f"dataset should be atleast as large as `train_batch_size` {self.cfg.trainer.train_batch_size}, got size {len(prompts_dataset)}"
+        ), f"dataset should be at least as large as `train_batch_size` {self.cfg.trainer.train_batch_size}, got size {len(prompts_dataset)}"
         return prompts_dataset
 
     def get_eval_dataset(self):
@@ -195,17 +197,6 @@ class BasePPOExp:
             GeneratorInterface: The generator.
         """
         from skyrl_train.generators.skyrl_gym_generator import SkyRLGymGenerator
-
-        if cfg.trainer.step_wise_training:
-            from skyrl_train.generators.step_wise_generator import StepWiseGenerator
-
-            return StepWiseGenerator(
-                generator_cfg=cfg.generator,
-                skyrl_gym_cfg=cfg.environment.skyrl_gym,
-                inference_engine_client=inference_engine_client,
-                tokenizer=tokenizer,
-                model_name=cfg.trainer.policy.model.path,
-            )
 
         return SkyRLGymGenerator(
             generator_cfg=cfg.generator,
@@ -267,13 +258,7 @@ class BasePPOExp:
         os.makedirs(self.cfg.trainer.export_path, exist_ok=True)
         os.makedirs(self.cfg.trainer.ckpt_path, exist_ok=True)
 
-        if self.cfg.trainer.strategy == "deepspeed":
-            from skyrl_train.workers.deepspeed.deepspeed_worker import (
-                PolicyWorker,
-                CriticWorker,
-                RefWorker,
-            )
-        elif self.cfg.trainer.strategy in ("fsdp", "fsdp2"):
+        if self.cfg.trainer.strategy in ("fsdp", "fsdp2"):
             from skyrl_train.workers.fsdp.fsdp_worker import PolicyWorker, CriticWorker, RefWorker
         elif self.cfg.trainer.strategy == "megatron":
             from skyrl_train.workers.megatron.megatron_worker import PolicyWorker, CriticWorker, RefWorker

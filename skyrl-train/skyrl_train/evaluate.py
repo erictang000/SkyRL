@@ -92,11 +92,12 @@ async def evaluate(
     )
 
     # 3. Calculate overall metrics across all datasets
-    overall_avg_score, overall_pass_at_n = get_metrics_from_generator_output(concat_generator_outputs, concat_uids)
+    overall_metrics = get_metrics_from_generator_output(concat_generator_outputs, concat_uids)
     eval_metrics.update(
         {
-            "eval/all/avg_score": overall_avg_score,
-            f"eval/all/pass_at_{cfg.generator.eval_n_samples_per_prompt}": overall_pass_at_n,
+            "eval/all/avg_score": overall_metrics["avg_score"],
+            f"eval/all/pass_at_{cfg.generator.eval_n_samples_per_prompt}": overall_metrics["pass_at_n"],
+            "eval/all/mean_positive_reward": overall_metrics["mean_positive_reward"],
         }
     )
 
@@ -190,7 +191,9 @@ async def evaluate_step_wise(
     is_last_step_mask = concat_generator_outputs["is_last_step"]
     for key in concat_generator_outputs:
         if isinstance(concat_generator_outputs[key], list):
-            assert len(concat_generator_outputs[key]) == len(is_last_step_mask)
+            assert len(concat_generator_outputs[key]) == len(
+                is_last_step_mask
+            ), f"Length mismatch: {len(concat_generator_outputs[key])} != {len(is_last_step_mask)} for key {key}"
             generator_output_last_step[key] = [
                 val for val, is_last_step in zip(concat_generator_outputs[key], is_last_step_mask) if is_last_step
             ]
@@ -204,11 +207,12 @@ async def evaluate_step_wise(
         generator_output_last_step, uids_last_step, data_sources_last_step, cfg.generator.eval_n_samples_per_prompt
     )
     # 3. Calculate overall metrics across all datasets
-    overall_avg_score, overall_pass_at_n = get_metrics_from_generator_output(generator_output_last_step, uids_last_step)
+    overall_metrics = get_metrics_from_generator_output(generator_output_last_step, uids_last_step)
     eval_metrics.update(
         {
-            "eval/all/avg_score": overall_avg_score,
-            f"eval/all/pass_at_{cfg.generator.eval_n_samples_per_prompt}": overall_pass_at_n,
+            "eval/all/avg_score": overall_metrics["avg_score"],
+            f"eval/all/pass_at_{cfg.generator.eval_n_samples_per_prompt}": overall_metrics["pass_at_n"],
+            "eval/all/mean_positive_reward": overall_metrics["mean_positive_reward"],
         }
     )
 
