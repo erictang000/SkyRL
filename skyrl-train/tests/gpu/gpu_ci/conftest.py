@@ -30,7 +30,9 @@ def ray_init_fixture():
 
     # needed for megatron tests
     env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
-    env_vars["NVTE_FUSED_ATTN"] = "0"
+    # env_vars["NVTE_FUSED_ATTN"] = "0"
+    env_vars["NVTE_DEBUG"] = "1"
+    env_vars["NVTE_DEBUG_LEVEL"] = "2"
 
     logger.info(f"Initializing Ray with environment variables: {env_vars}")
     ray.init(runtime_env={"env_vars": env_vars})

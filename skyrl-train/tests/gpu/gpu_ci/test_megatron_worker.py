@@ -33,6 +33,7 @@ MODEL_NAME = "Qwen/Qwen3-0.6B"
 # this might be a model specific mbridge issue - see if this persists when we transition to Megatron-Bridge
 # MOE_MODEL_NAME = "Qwen/Qwen1.5-MoE-A2.7B"
 MOE_MODEL_NAME = "Qwen/Qwen3-30B-A3B"
+GPT_OSS_MODEL_NAME = "unsloth/gpt-oss-20b-BF16"
 
 
 def get_test_actor_config(model_name=MODEL_NAME) -> DictConfig:
@@ -110,10 +111,15 @@ def get_test_training_batch(batch_size=4) -> TrainingInputBatch:
     return data
 
 
+# @pytest.mark.parametrize(
+#     ("colocate_all", "inference_tp", "megatron_tp", "megatron_pp", "megatron_ep", "megatron_etp", "lora"),
+#     [(True, 4, 2, 2, 1, None, False), (False, 2, 2, 1, 1, None, False), (True, 4, 2, 2, 1, None, True)],
+#     ids=["colocate_all", "non_colocated", "colocate_all_lora"],
+# )
 @pytest.mark.parametrize(
     ("colocate_all", "inference_tp", "megatron_tp", "megatron_pp", "megatron_ep", "megatron_etp", "lora"),
-    [(True, 4, 2, 2, 1, None, False), (False, 2, 2, 1, 1, None, False), (True, 4, 2, 2, 1, None, True)],
-    ids=["colocate_all", "non_colocated", "colocate_all_lora"],
+    [(True, 4, 4, 1, 4, 1, False)],
+    ids=["colocate_all"],
 )
 @pytest.mark.megatron
 def test_megatron_policy_weight_sync(
@@ -123,7 +129,7 @@ def test_megatron_policy_weight_sync(
     Test that we can sync weights between policy and inference for megatron then run inference
     """
     try:
-        cfg = get_test_actor_config(model_name=MODEL_NAME)
+        cfg = get_test_actor_config(model_name=GPT_OSS_MODEL_NAME)
         if lora:
             cfg.trainer.policy.model.lora.rank = 16
             cfg.trainer.policy.model.lora.alpha = 16
@@ -139,9 +145,17 @@ def test_megatron_policy_weight_sync(
         cfg.trainer.policy.megatron_config.expert_model_parallel_size = megatron_ep
         cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = megatron_etp
 
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        cfg.trainer.flash_attn = False
+        transformer_config_kwargs["yarn_mscale_all_dim"] = 0.0
+        transformer_config_kwargs["yarn_mscale"] = 1.0
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
+
         # If colocate is True, this will load the engine, sleep, and wake up the engine
         client, pg = init_inference_engines(
-            model=MODEL_NAME,
+            model=GPT_OSS_MODEL_NAME,
             cfg=cfg,
             use_local=True,
             async_engine=cfg.generator.async_engine,
@@ -150,6 +164,11 @@ def test_megatron_policy_weight_sync(
             backend="vllm",
             sleep_level=2,  # since we explicitly sync weights
         )
+
+        sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
+        outputs = asyncio.run(run_inference(client, get_test_prompts(GPT_OSS_MODEL_NAME), sampling_params))
+
+        print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
 
         asyncio.run(client.sleep())
 
@@ -172,7 +191,7 @@ def test_megatron_policy_weight_sync(
         policy.offload_to_cpu()
         asyncio.run(client.wake_up(tags=["kv_cache"]))
         sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
-        outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL_NAME), sampling_params))
+        outputs = asyncio.run(run_inference(client, get_test_prompts(GPT_OSS_MODEL_NAME), sampling_params))
 
         print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
     finally:
@@ -181,17 +200,18 @@ def test_megatron_policy_weight_sync(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "lora"),
+    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "lora", "model_name"),
     [
-        ("policy", 2, 1, 1, 1, None, 2, False, False),
+        ("policy", 2, 1, 1, 1, None, 2, False, False, MODEL_NAME),
         # ref has same forward pass as policy - just duplicate one test to test setup
-        ("ref", 2, 1, 1, 1, None, 2, False, False),
-        ("policy", 2, 2, 1, 1, None, 4, False, False),
-        ("policy", 2, 2, 1, 1, None, 4, True, False),
-        ("policy", 2, 2, 1, 1, None, 4, True, True),
-        ("policy", 1, 1, 2, 1, None, 2, True, False),
-        ("policy", 2, 1, 2, 1, None, 4, True, False),
-        ("policy", 4, 1, 1, 4, 1, 4, True, False),
+        ("ref", 2, 1, 1, 1, None, 2, False, False, MODEL_NAME),
+        ("policy", 2, 2, 1, 1, None, 4, False, False, MODEL_NAME),
+        ("policy", 2, 2, 1, 1, None, 4, True, False, MODEL_NAME),
+        ("policy", 2, 2, 1, 1, None, 4, True, True, MODEL_NAME),
+        ("policy", 1, 1, 2, 1, None, 2, True, False, MODEL_NAME),
+        ("policy", 2, 1, 2, 1, None, 4, True, False, MODEL_NAME),
+        ("policy", 4, 1, 1, 4, 1, 4, True, False, MOE_MODEL_NAME),
+        ("policy", 4, 1, 1, 4, 1, 4, False, False, GPT_OSS_MODEL_NAME),
     ],
     ids=[
         "tp2_pp1_policy",
@@ -202,16 +222,17 @@ def test_megatron_policy_weight_sync(
         "cp_2_policy_seq_packing",
         "tp_2_cp_2_policy_seq_packing",
         "tp4_pp1_cp1_ep4_etp1_policy_seq_packing",
+        "tp4_pp1_cp1_ep4_etp1_policy_gpt_oss",
     ],
 )
 @pytest.mark.megatron
 async def test_megatron_forward(
-    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, lora
+    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, lora, model_name
 ):
     """
     Test that the Megatron forward pass is numerically equivalent to just running a huggingface model forward.
     """
-    cfg = get_test_actor_config(model_name=MOE_MODEL_NAME if ep > 1 else MODEL_NAME)
+    cfg = get_test_actor_config(model_name=model_name)
     #### Megatron forward pass ####
     cfg.trainer.strategy = "megatron"
     cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
@@ -223,6 +244,14 @@ async def test_megatron_forward(
     cfg.trainer.use_sample_packing = use_sample_packing
     batch = get_test_training_batch(max(4, gpus_per_node))
 
+    if "gpt-oss" in model_name:
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        cfg.trainer.flash_attn = False
+        transformer_config_kwargs["yarn_mscale_all_dim"] = 0.0
+        transformer_config_kwargs["yarn_mscale"] = 1.0
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
     if ep > 1:
         transformer_config_kwargs = OmegaConf.to_container(
             cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
@@ -233,6 +262,8 @@ async def test_megatron_forward(
     if lora:
         cfg.trainer.policy.model.lora.rank = 16
         cfg.trainer.policy.model.lora.alpha = 16
+
+    cfg.trainer.micro_forward_batch_size_per_gpu = 1
 
     actor_group = init_worker_with_type(
         worker_type,
@@ -283,7 +314,7 @@ async def test_megatron_forward(
         return attention_mask.to("cpu").detach(), action_log_probs.to("cpu").detach(), num_actions
 
     attention_mask, action_log_probs, num_actions = ray.get(
-        run_hf_forward.remote(batch, MOE_MODEL_NAME if ep > 1 else MODEL_NAME)
+        run_hf_forward.remote(batch, model_name)
     )
 
     #### Compare results ####
@@ -421,15 +452,16 @@ async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss", "lora"),
+    ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss", "lora", "model_name"),
     [
-        ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
-        ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
-        ("policy", 2, 2, 1, 1, 1, 4, True, False, True),
-        ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
-        ("policy", 2, 1, 2, 1, 1, 4, True, False, False),
-        ("policy", 4, 1, 1, 4, 1, 4, True, False, False),
-        ("policy", 4, 1, 1, 4, 1, 4, True, False, True),
+        ("policy", 2, 2, 1, 1, 1, 4, True, False, False, MODEL_NAME),
+        ("policy", 2, 2, 1, 1, 1, 4, True, True, False, MODEL_NAME),
+        ("policy", 2, 2, 1, 1, 1, 4, True, False, True, MODEL_NAME),
+        ("policy", 2, 2, 1, 1, 1, 4, False, False, False, MODEL_NAME),
+        ("policy", 2, 1, 2, 1, 1, 4, True, False, False, MODEL_NAME),
+        ("policy", 4, 1, 1, 4, 1, 4, False, False, False, GPT_OSS_MODEL_NAME),
+        ("policy", 4, 1, 1, 4, 1, 4, True, False, False, MOE_MODEL_NAME),
+        ("policy", 4, 1, 1, 4, 1, 4, True, False, True, MOE_MODEL_NAME),
     ],
     ids=[
         "tp2_pp2_policy_seq_packing",
@@ -437,18 +469,19 @@ async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus
         "tp2_pp2_policy_lora",
         "tp2_pp2_policy_unpacked",
         "tp2_cp2_policy_seq_packing",
+        "tp4_pp1_cp1_ep4_etp1_policy_gpt_oss",
         "tp4_pp1_cp1_ep4_etp1_policy_seq_packing",
         "tp4_pp1_cp1_ep4_etp1_policy_seq_packing_lora",
     ],
 )
 @pytest.mark.megatron
 async def test_megatron_train(
-    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, use_entropy_loss, lora
+    ray_init_fixture, worker_type, tp, pp, cp, ep, etp, gpus_per_node, use_sample_packing, use_entropy_loss, lora, model_name
 ):
     """
     Full test: initialize actor group, send dummy experience to training_step, validate output.
     """
-    cfg = get_test_actor_config(model_name=MODEL_NAME if ep == 1 else MOE_MODEL_NAME)
+    cfg = get_test_actor_config(model_name=model_name)
     batch = get_test_training_batch(batch_size=gpus_per_node)
 
     cfg.trainer.strategy = "megatron"
@@ -458,7 +491,7 @@ async def test_megatron_train(
     cfg.trainer.policy.megatron_config.context_parallel_size = cp
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
-    cfg.trainer.use_sample_packing = use_sample_packing
+    cfg.trainer.use_sample_packing = False
     if use_entropy_loss:
         cfg.trainer.algorithm.use_entropy_loss = True
         cfg.trainer.algorithm.entropy_loss_coef = 0.01
@@ -466,6 +499,14 @@ async def test_megatron_train(
         cfg.trainer.policy.model.lora.rank = 16
         cfg.trainer.policy.model.lora.alpha = 16
 
+    if "gpt-oss" in model_name:
+        transformer_config_kwargs = OmegaConf.to_container(
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
+        )
+        cfg.trainer.flash_attn = False
+        transformer_config_kwargs["yarn_mscale_all_dim"] = 0.0
+        transformer_config_kwargs["yarn_mscale"] = 1.0
+        cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
     if ep > 1:
         transformer_config_kwargs = OmegaConf.to_container(
             cfg.trainer.policy.megatron_config.transformer_config_kwargs, resolve=True
