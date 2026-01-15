@@ -367,12 +367,12 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
 
         # vllm >= 0.11.2 removed model_config from OpenAI serving APIs
         is_new_api = version.parse(vllm.__version__) >= version.parse("0.11.2")
-        legacy_kwargs = {} if is_new_api else {"model_config": model_config}
-
+        legacy_kwargs = {}
         if is_new_api:
             models = OpenAIServingModels(engine, base_model_paths)
         else:
-            models = OpenAIServingModels(engine, model_config=model_config, base_model_paths=base_model_paths)
+            models = OpenAIServingModels(engine, model_config, base_model_paths)
+            legacy_kwargs["model_config"] = model_config
 
         # TODO(Charlie): revisit kwargs `enable_auto_tools` and `tool_parser` when we need to
         # support OAI-style tool calling; and `request_logger` for better debugging.
