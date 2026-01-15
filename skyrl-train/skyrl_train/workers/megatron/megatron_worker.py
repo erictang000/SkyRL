@@ -647,6 +647,12 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         torch.cuda.empty_cache()
 
         # Extract and send weights using the sender created at init time
+        if self._is_lora:
+            # extract weights
+
+
+            # 
+            return
         await self._weight_transfer_sender.send_chunks(self.weight_extractor.extract_weights(generator_dtype))
 
         if cache_reset_task is not None:
