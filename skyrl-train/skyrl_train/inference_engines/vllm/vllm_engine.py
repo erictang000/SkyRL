@@ -363,7 +363,20 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
         model_name = model_path
 
         base_model_paths = [BaseModelPath(name=model_name, model_path=model_path)]
+<<<<<<< HEAD
         models = OpenAIServingModels(engine, base_model_paths)
+=======
+
+        # vllm >= 0.11.2 removed model_config from OpenAI serving APIs
+        is_new_api = version.parse(vllm.__version__) >= version.parse("0.11.2")
+        legacy_kwargs = {}
+        if is_new_api:
+            models = OpenAIServingModels(engine, base_model_paths)
+        else:
+            models = OpenAIServingModels(engine, model_config, base_model_paths)
+            legacy_kwargs["model_config"] = model_config
+
+>>>>>>> aa5b00e628e6284d724455dc83a4b624a0ea6e4d
         # TODO(Charlie): revisit kwargs `enable_auto_tools` and `tool_parser` when we need to
         # support OAI-style tool calling; and `request_logger` for better debugging.
         self.openai_serving_chat = OpenAIServingChat(
@@ -373,6 +386,7 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
             request_logger=None,
             chat_template=None,
             chat_template_content_format="auto",
+            **legacy_kwargs,
             **openai_kwargs,
         )
 
@@ -382,6 +396,7 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
             engine_client=engine,
             models=models,
             request_logger=None,
+            **legacy_kwargs,
         )
         return engine
 
