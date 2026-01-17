@@ -358,14 +358,12 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
         engine = vllm.AsyncLLMEngine.from_engine_args(engine_args)
 
         # Adapted from https://github.com/volcengine/verl/blob/e90f18c40aa639cd25092b78a5ff7e2d2508c088/verl/workers/rollout/vllm_rollout/vllm_async_server.py#L327
+        model_config = engine.model_config
         model_path = kwargs.get("model")
         # TODO(Charlie): add a config similar to vllm's `served_model_name`. See https://github.com/NovaSky-AI/SkyRL/pull/238#discussion_r2326561295
         model_name = model_path
 
         base_model_paths = [BaseModelPath(name=model_name, model_path=model_path)]
-<<<<<<< HEAD
-        models = OpenAIServingModels(engine, base_model_paths)
-=======
 
         # vllm >= 0.11.2 removed model_config from OpenAI serving APIs
         is_new_api = version.parse(vllm.__version__) >= version.parse("0.11.2")
@@ -376,7 +374,6 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
             models = OpenAIServingModels(engine, model_config, base_model_paths)
             legacy_kwargs["model_config"] = model_config
 
->>>>>>> aa5b00e628e6284d724455dc83a4b624a0ea6e4d
         # TODO(Charlie): revisit kwargs `enable_auto_tools` and `tool_parser` when we need to
         # support OAI-style tool calling; and `request_logger` for better debugging.
         self.openai_serving_chat = OpenAIServingChat(

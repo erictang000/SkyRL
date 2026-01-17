@@ -137,6 +137,7 @@ class MegatronWeightExtractor(WeightExtractor):
                 self.actor_module,
                 show_progress=False,
                 conversion_tasks=None,
+                merge_weights=False,
             )
 
             for name, tensor in hf_params_generator:
@@ -156,7 +157,9 @@ class MegatronWeightExtractor(WeightExtractor):
                     self.actor_module,
                     show_progress=False,
                     conversion_tasks=bucket,
+                    merge_weights=False,
                 )
+                breakpoint(0)
 
                 # Collect all parameters in this bucket into one chunk
                 names = []
