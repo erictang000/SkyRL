@@ -1027,7 +1027,11 @@ class RayPPOTrainer:
         )
 
     def _normalize_minibatch_advantages(self, data: TrainingInputBatch) -> TrainingInputBatch:
-        """Normalize the advantages in the mini-batch."""
+        """Normalize the advantages in the mini-batch.
+
+        This normalization results in calculating the correct minibatch loss for the
+        given loss reduction type when reducing the loss with a sum.
+        """
         advantages = data["advantages"]
         loss_mask = data["loss_mask"]
 
@@ -1035,10 +1039,13 @@ class RayPPOTrainer:
         # Otherwise subsequent epochs will keep dividing the same tensor.
 
         # Option 1: token mean
-        data["advantages"] = advantages / loss_mask.sum()
+        if self.cfg.trainer.algorithm.loss_reduction == "token_mean":
+            data["advantages"] = advantages / loss_mask.sum()
 
         # Option 2: sequence mean
-        # data["advantages"] = advantages / (data.batch_size * loss_mask.sum(dim=-1, keepdim=True))
+        elif self.cfg.trainer.algorithm.loss_reduction == "sequence_mean":
+            batch_size = len(data)
+            data["advantages"] = advantages / (batch_size * loss_mask.sum(dim=-1, keepdim=True))
 
         return data
 

@@ -778,17 +778,16 @@ class PolicyWorkerBase(Worker):
 
     def optim_step(self) -> float:
         """
-        Scale gradients by 1/micro_batches_accumulated, perform optimizer step, and reset counter.
+        Perform optimizer step.
 
         Returns:
             The gradient norm (before scaling, after clipping)
         """
-        # Scale accumulated gradients by 1/N to get correct average
-        if self._micro_batches_accumulated > 0:
-            scale = 1.0 / self._micro_batches_accumulated
-            for param in self.model.parameters():
-                if param.grad is not None:
-                    param.grad.mul_(scale)
+        # Scale gradients by data parallelism size to undo the DDP all-reduce mean.
+        scale = 1.0 / self.strategy.world_size
+        for param in self.model.parameters():
+            if param.grad is not None:
+                param.grad.mul_(scale)
 
         # Perform optimizer step (includes gradient clipping)
         grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
