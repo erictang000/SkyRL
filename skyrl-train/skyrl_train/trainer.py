@@ -1026,6 +1026,22 @@ class RayPPOTrainer:
             "pass_through", "broadcast_to_inference_engines", self.inference_engine_client
         )
 
+    def _normalize_minibatch_advantages(self, data: TrainingInputBatch) -> TrainingInputBatch:
+        """Normalize the advantages in the mini-batch."""
+        advantages = data["advantages"]
+        loss_mask = data["loss_mask"]
+
+        # NOTE: Do not modify the tensor in place!
+        # Otherwise subsequent epochs will keep dividing the same tensor.
+
+        # Option 1: token mean
+        data["advantages"] = advantages / loss_mask.sum()
+
+        # Option 2: sequence mean
+        # data["advantages"] = advantages / (data.batch_size * loss_mask.sum(dim=-1, keepdim=True))
+
+        return data
+
     def _execute_training_step(self, model: str, data: TrainingInputBatch) -> Dict[str, float]:
         """
         Execute training step for FSDP strategy using forward_backward + optim_step.
@@ -1056,6 +1072,8 @@ class RayPPOTrainer:
                 start_idx = local_step * mini_batch_size
                 end_idx = (local_step + 1) * mini_batch_size
                 mini_batch = data[start_idx:end_idx]
+
+                mini_batch = self._normalize_minibatch_advantages(mini_batch)
 
                 status = self.dispatch.forward_backward(model, mini_batch)
                 for k, v in status.items():
