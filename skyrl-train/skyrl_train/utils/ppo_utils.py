@@ -565,11 +565,10 @@ def ppo_policy_loss(
     assert config.policy_loss_type in ["regular", "dual_clip"], "loss_type must be either 'regular' or 'dual_clip'"
     loss_reduction = config.loss_reduction
     assert loss_reduction in [
-        "sum",
         "token_mean",
         "sequence_mean",
         "seq_mean_token_sum_norm",
-    ], "loss_reduction must be either 'sum', 'token_mean', 'sequence_mean', or 'seq_mean_token_sum_norm'"
+    ], "loss_reduction must be either 'token_mean', 'sequence_mean', or 'seq_mean_token_sum_norm'"
 
     ratio = _safe_exp_delta(log_probs - old_log_probs, clip=20.0, out_dtype=log_probs.dtype)
     surr1 = ratio * advantages
