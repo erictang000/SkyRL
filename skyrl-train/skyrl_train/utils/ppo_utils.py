@@ -192,6 +192,7 @@ def ppo_critic_loss(
         clipfrac = None
         loss = (values - returns) ** 2
 
+    # TODO: We separately run into the "mean of means" problem here.
     loss = masked_mean(loss, loss_mask, dim=-1).mean()
     return 0.5 * loss, clipfrac
 

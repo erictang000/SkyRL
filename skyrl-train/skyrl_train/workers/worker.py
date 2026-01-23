@@ -988,9 +988,12 @@ class CriticWorkerBase(Worker):
         Returns:
             The gradient norm (before scaling, after clipping)
         """
-        for param in self.model.parameters():
-            if param.grad is not None:
-                param.grad.mul_(self.strategy.world_size)
+        # Scale accumulated gradients by 1/N to get correct average
+        if self._micro_batches_accumulated > 0:
+            scale = 1.0 / self._micro_batches_accumulated
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    param.grad.mul_(scale)
 
         # Perform optimizer step (includes gradient clipping)
         grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="critic")
