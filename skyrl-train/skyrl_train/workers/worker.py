@@ -983,7 +983,7 @@ class CriticWorkerBase(Worker):
 
     def optim_step(self) -> float:
         """
-        Perform optimizer step.
+        Scale gradients by 1/micro_batches_accumulated, perform optimizer step, and reset counter.
 
         Returns:
             The gradient norm (before scaling, after clipping)
