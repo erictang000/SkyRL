@@ -1019,11 +1019,6 @@ class RayPPOTrainer:
 
         return data
 
-    def sync_policy_weights_to_inference_engines(self) -> List[ObjectRef]:
-        return self.policy_model.async_run_ray_method(
-            "pass_through", "broadcast_to_inference_engines", self.inference_engine_client
-        )
-
     def _normalize_minibatch_advantages(self, data: TrainingInputBatch) -> TrainingInputBatch:
         """Normalize the advantages in the mini-batch.
 
