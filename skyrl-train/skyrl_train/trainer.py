@@ -1075,7 +1075,8 @@ class RayPPOTrainer:
             end_idx = (local_step + 1) * mini_batch_size
             mini_batch = data[start_idx:end_idx]
             mini_batch = self._normalize_minibatch_advantages(mini_batch)
-            data[start_idx:end_idx] = mini_batch
+            # Copy normalized advantages back to original batch
+            data["advantages"][start_idx:end_idx] = mini_batch["advantages"]
 
         # Stage full batch in object store ONCE to avoid repeated serialization
         data_ref = self.dispatch.stage_data(data)
