@@ -1019,7 +1019,7 @@ class RayPPOTrainer:
 
         return data
 
-    def _normalize_minibatch_advantages(self, data: TrainingInputBatch) -> TrainingInputBatch:
+    def normalize_minibatch_advantages(self, data: TrainingInputBatch) -> TrainingInputBatch:
         """Normalize the advantages in the mini-batch.
 
         This normalization results in calculating the correct minibatch loss for the
@@ -1039,6 +1039,12 @@ class RayPPOTrainer:
         elif self.cfg.trainer.algorithm.loss_reduction == "sequence_mean":
             batch_size = len(data)
             data["advantages"] = advantages / (batch_size * loss_mask.sum(dim=-1, keepdim=True))
+
+        # option 3: Dr. GRPO style loss reduction to avoid length bias by normalizing by a constant
+        elif self.cfg.trainer.algorithm.loss_reduction == "seq_mean_token_sum_norm":
+            batch_size = len(data)
+            max_seq_len = self.cfg.trainer.algorithm.max_seq_len
+            data["advantages"] = advantages / (batch_size * max_seq_len)
 
         return data
 
@@ -1074,7 +1080,7 @@ class RayPPOTrainer:
             start_idx = local_step * mini_batch_size
             end_idx = (local_step + 1) * mini_batch_size
             mini_batch = data[start_idx:end_idx]
-            mini_batch = self._normalize_minibatch_advantages(mini_batch)
+            mini_batch = self.normalize_minibatch_advantages(mini_batch)
             # Copy normalized advantages back to original batch
             data["advantages"][start_idx:end_idx] = mini_batch["advantages"]
 

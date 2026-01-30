@@ -19,7 +19,7 @@
 from collections import defaultdict
 from enum import StrEnum
 from functools import wraps
-from typing import Callable, List, Literal, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import numpy as np
 import ray
@@ -593,12 +593,7 @@ def ppo_policy_loss(
         tis_imp_ratio = torch.clamp(tis_imp_ratio, max=config.tis_imp_ratio_cap)
         loss = loss * tis_imp_ratio
 
-    # NOTE: We scaled the advantages to handle the loss normalization in the trainer.
-    # So we just need to sum the token-level losses here.
-    if loss_mask is not None:
-        loss = loss * loss_mask
     loss = loss.sum()
-    # loss = reduce_loss(loss, loss_mask, loss_reduction, config.max_seq_len)
 
     return loss, clip_ratio
 
@@ -663,7 +658,7 @@ def sapo_policy_loss(
     loss = -gates * advantages
 
     # for SAPO, we need to aggregate the loss at the sequence level (seq-mean-token-mean)
-    loss = reduce_loss(loss, loss_mask, loss_reduction, config.max_seq_len)
+    loss = reduce_loss(loss, loss_mask)
 
     # SAPO does not use clipping, so we set clip_ratio to 0.0 for compatibility
     clip_ratio = 0.0
@@ -726,7 +721,7 @@ def gspo_policy_loss(
     # Compute clipping ratio for monitoring
     clip_ratio = masked_mean((-surr2 > -surr1).float(), loss_mask).mean().detach().item()
 
-    loss = reduce_loss(loss, loss_mask, loss_reduction, config.max_seq_len)
+    loss = reduce_loss(loss, loss_mask)
 
     return loss, clip_ratio
 
@@ -756,7 +751,7 @@ def compute_policy_loss_cispo(
     is_clipped = (ratio < 1 - config.cispo.cispo_eps_clip_low) | (ratio > 1 + config.cispo.cispo_eps_clip_high)
     clip_ratio = masked_mean(is_clipped.float(), loss_mask).mean().detach().item()
 
-    loss = reduce_loss(loss, loss_mask, config.loss_reduction, config.max_seq_len)
+    loss = reduce_loss(loss, loss_mask)
     return loss, clip_ratio
 
 
@@ -817,12 +812,7 @@ def compute_policy_loss_clip_cov(
 
     # Apply correction mask to losses
     pg_losses = torch.maximum(pg_losses1, pg_losses2) * corr
-    pg_loss = reduce_loss(
-        loss=pg_losses,
-        loss_mask=loss_mask,
-        loss_reduction=config.loss_reduction,
-        max_seq_len=config.max_seq_len,
-    )
+    pg_loss = reduce_loss(loss=pg_losses, loss_mask=loss_mask)
 
     return pg_loss, clip_frac.item()
 
@@ -876,12 +866,7 @@ def compute_policy_loss_kl_cov(
                     large_cov_idxs % advantages.shape[1],
                 ]
 
-    pg_loss = reduce_loss(
-        loss=pg_losses,
-        loss_mask=loss_mask,
-        loss_reduction=config.loss_reduction,
-        max_seq_len=config.max_seq_len,
-    )
+    pg_loss = reduce_loss(loss=pg_losses, loss_mask=loss_mask)
 
     # NOTE (sumanthrh): Since the pg clip ratio is not applicable for KL-COV so we just use 0.0
     return pg_loss, 0.0
@@ -920,10 +905,7 @@ def cross_entropy_loss(
     elementwise_loss = -log_probs
 
     # Apply loss mask and sum (matching Tinker's SUM reduction semantics)
-    if loss_mask is not None:
-        loss = (elementwise_loss * loss_mask).sum()
-    else:
-        loss = elementwise_loss.sum()
+    loss = reduce_loss(elementwise_loss, loss_mask)
 
     # No clipping in cross-entropy loss
     return loss, 0.0
@@ -932,29 +914,8 @@ def cross_entropy_loss(
 def reduce_loss(
     loss: torch.Tensor,
     loss_mask: Optional[torch.Tensor],
-    loss_reduction: Literal["token_mean", "sequence_mean", "seq_mean_token_sum_norm"],
-    max_seq_len: Optional[int] = None,
 ) -> torch.Tensor:
-    if loss_reduction == "token_mean":
-        # sum over *all* valid tokens, divide by total valid-token count
-        loss = masked_mean(loss, loss_mask)
-    elif loss_reduction == "sequence_mean":
-        # per-sequence token-mean (dim=-1), then batch-mean
-        loss = masked_mean(loss, loss_mask, dim=-1).mean()
-    elif loss_reduction == "seq_mean_token_sum_norm":
-        # per-sequence token-sum, normalized by the max sequence length, then batch mean
-        # this is the Dr. GRPO loss reduction to avoid length bias by normalizing by a constant
-        assert max_seq_len is not None, "max_seq_len must be provided for seq_mean_token_sum_norm loss reduction"
-        # NOTE: max_seq_len is computed as cfg.generator.max_input_length + cfg.generator.sampling_params.max_generate_length by default
-        if loss_mask is not None:
-            seq_losses = torch.sum(loss * loss_mask, dim=-1) / max_seq_len
-        else:
-            # If no mask, assume all tokens are valid
-            seq_losses = torch.sum(loss, dim=-1) / max_seq_len
-        loss = torch.mean(seq_losses)
-    else:
-        raise ValueError(f"Invalid loss reduction type: {loss_reduction}")
-    return loss
+    return (loss * loss_mask).sum() if loss_mask is not None else loss.sum()
 
 
 # NOTE (erictang000): below ported from verl
