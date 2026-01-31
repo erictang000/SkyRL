@@ -566,12 +566,6 @@ def ppo_policy_loss(
     rollout_logprobs: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, float]:
     assert config.policy_loss_type in ["regular", "dual_clip"], "loss_type must be either 'regular' or 'dual_clip'"
-    loss_reduction = config.loss_reduction
-    assert loss_reduction in [
-        "token_mean",
-        "sequence_mean",
-        "seq_mean_token_sum_norm",
-    ], "loss_reduction must be either 'token_mean', 'sequence_mean', or 'seq_mean_token_sum_norm'"
 
     ratio = _safe_exp_delta(log_probs - old_log_probs, clip=20.0, out_dtype=log_probs.dtype)
     surr1 = ratio * advantages
@@ -615,16 +609,7 @@ def sapo_policy_loss(
     See https://arxiv.org/pdf/2511.20347 for more details.
 
     """
-    # SAPO must use sequence_mean reduction
-    loss_reduction = config.loss_reduction
-    if loss_reduction != "sequence_mean":
-        # The SAPO paper uses sequence_mean reduction; there's no reason
-        # why a user couldn't use token_mean reduction, but
-        # it's not clear whether it would be stable or not.
-        from loguru import logger as logger_  # have to do lazy import to avoid pickling error
-
-        logger_.warning(f"With SAPO it's recommended to use 'sequence_mean' loss reduction; got {loss_reduction}")
-
+    # SAPO should use sequence_mean reduction to avoid length bias
     # temperature for positive and negative token updates
     tau_pos = torch.as_tensor(config.sapo.tau_pos, dtype=advantages.dtype, device=advantages.device)
     tau_neg = torch.as_tensor(config.sapo.tau_neg, dtype=advantages.dtype, device=advantages.device)
@@ -687,16 +672,7 @@ def gspo_policy_loss(
     The variant of GSPO used here is GSPO-token, a generalization which allows for token-level
     advantages [equations 14 and 15 in the paper].
     """
-    # GSPO must use sequence_mean reduction
-    loss_reduction = config.loss_reduction
-    if loss_reduction != "sequence_mean":
-        # The GSPO paper uses sequence_mean reduction; there's no reason
-        # why a user couldn't use token_mean reduction, but
-        # it's not clear whether it would be stable or not.
-        from loguru import logger as logger_  # have to do lazy import to avoid pickling error
-
-        logger_.warning(f"With GSPO it's recommended to use 'sequence_mean' loss reduction; got {loss_reduction}")
-
+    # GSPO should use sequence_mean reduction to avoid length bias
     # Compute log ratios
     log_ratio = log_probs - old_log_probs
 
