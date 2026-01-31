@@ -272,15 +272,14 @@ class WorkerDispatch:
         self._save_memory_snapshot(model, "optim_step")
         return grad_norms[0]
 
-    # TODO(tgriggs): Remove this when Megatron supports forward_backward and optim_step.
-    def ppo_train(self, model: str, data: TrainingInputBatch) -> Dict[str, float]:
-        """Run full PPO training loop (for Megatron)."""
-        self._ensure_on_gpu(model, need_optimizer=True, need_model=True)
+    def set_lr(self, model: str, learning_rate: float) -> None:
+        """Set learning rate for model's optimizer.
 
-        refs = self._actor_groups[model].async_run_ray_method("mesh", "ppo_train", data)
-        statuses = ray.get(refs)
-
-        return statuses[0].metadata["train_status"]
+        This directly updates the optimizer's param_groups on all workers,
+        bypassing the scheduler. Useful for external learning rate schedules.
+        """
+        self._ensure_on_gpu(model, need_optimizer=True, need_model=False)
+        ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "set_lr", learning_rate=learning_rate))
 
     def _save_memory_snapshot(self, model: str, tag: str) -> None:
         """Save memory snapshot on workers."""
