@@ -216,9 +216,15 @@ class MegatronModelWrapper:
             loss_mask = data["loss_mask"]
             rollout_action_logprobs = data["rollout_action_logprobs"]
             action_mask = data.get("action_mask")
+            num_microbatches = data.get("num_microbatches")
 
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
+
+            # Megatron's pipeline parallel forward_backward_func internally divides loss by num_microbatches
+            # https://github.com/NVIDIA/Megatron-LM/blob/core_v0.15.2/megatron/core/pipeline_parallel/schedules.py#L248
+            # we want to maintain a sum of losses across all micro batches, so we reverse this division.
+            loss_scale = num_microbatches
 
             # temperature normalization
             if temperature != 1.0:
@@ -245,6 +251,8 @@ class MegatronModelWrapper:
                 loss_mask=loss_mask,
                 rollout_logprobs=rollout_action_logprobs,
             )
+
+            policy_loss = policy_loss * loss_scale
 
             # SFT path: cross_entropy loss (negative log likelihood)
             if resolved_loss_name == "cross_entropy":
