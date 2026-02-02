@@ -449,7 +449,8 @@ async def test_megatron_train(
     Full test: initialize actor group, send dummy experience to training_step, validate output.
     """
     cfg = get_test_actor_config(model_name=MODEL_NAME if ep == 1 else MOE_MODEL_NAME)
-    batch = get_test_training_batch(batch_size=gpus_per_node)
+    batch_size = gpus_per_node * 2
+    batch = get_test_training_batch(batch_size=batch_size)
 
     cfg.trainer.strategy = "megatron"
     cfg.trainer.placement.policy_num_gpus_per_node = gpus_per_node
@@ -474,7 +475,7 @@ async def test_megatron_train(
         cfg.trainer.policy.megatron_config.transformer_config_kwargs = transformer_config_kwargs
 
     # set batch sizes correctly
-    cfg.trainer.train_batch_size = gpus_per_node
+    cfg.trainer.train_batch_size = batch_size
     cfg.trainer.policy_mini_batch_size = gpus_per_node
     cfg.generator.n_samples_per_prompt = 1
     cfg.trainer.micro_train_batch_size_per_gpu = 1

@@ -788,6 +788,9 @@ class PolicyWorkerBase(Worker):
                 rollout_logprobs=rollout_action_logprobs,
             )
 
+        loss_scale = self.mesh_rank.dp_size
+        policy_loss = policy_loss * loss_scale
+
         # SFT path: skip KL/entropy terms, return per-token outputs for Tinker API
         if resolved_loss_name == "cross_entropy":
             loss = policy_loss
@@ -798,6 +801,7 @@ class PolicyWorkerBase(Worker):
                 elementwise_loss = -action_log_probs
                 if loss_mask is not None:
                     elementwise_loss = elementwise_loss * loss_mask
+                elementwise_loss = elementwise_loss * loss_scale
 
             # Build per-sequence loss_fn_outputs (matches Tinker's ForwardBackwardOutput structure)
             # Trim to actual response length per sample (Tinker expects variable-length arrays
@@ -887,11 +891,6 @@ class PolicyWorkerBase(Worker):
         Returns:
             The gradient norm (before scaling, after clipping)
         """
-        # Scale gradients by data parallelism size to undo the DDP all-reduce mean.
-        for param in self.model.parameters():
-            if param.grad is not None:
-                param.grad.mul_(self.strategy.world_size)
-
         # Perform optimizer step (includes gradient clipping)
         grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
 
