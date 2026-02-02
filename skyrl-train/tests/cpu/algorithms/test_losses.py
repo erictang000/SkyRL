@@ -6,7 +6,7 @@ uv run --isolated --extra dev -- pytest tests/cpu/algorithms/test_losses.py
 
 import pytest
 import torch
-from omegaconf import DictConfig
+from skyrl_train.config import AlgorithmConfig, SAPOConfig, CISPOConfig, ClipCovConfig, KLCovConfig
 
 from skyrl_train.utils.ppo_utils import PolicyLossRegistry, masked_mean
 
@@ -25,15 +25,13 @@ def test_policy_loss_dual_clip():
     log_probs = torch.tensor([[-1.69315, -1.0, -0.69741]], device=device)  # approx log(0.5)-1, log(1)-1, log(10)-3
 
     # Create config for dual clipping
-    config = DictConfig(
-        {
-            "eps_clip_low": 0.2,
-            "eps_clip_high": 0.2,
-            "clip_ratio_c": 3.0,
-            "policy_loss_type": "dual_clip",
-            "max_seq_len": 4,
-            "use_tis": False,
-        }
+    config = AlgorithmConfig(
+        eps_clip_low=0.2,
+        eps_clip_high=0.2,
+        clip_ratio_c=3.0,
+        policy_loss_type="dual_clip",
+        max_seq_len=4,
+        use_tis=False,
     )
 
     # Create loss function with dual clipping
@@ -79,13 +77,11 @@ def test_policy_loss_cispo():
     log_probs = torch.tensor([[-1.69315, -1.0, -0.69741]], device=device)  # approx log(0.5)-1, log(1)-1, log(10)-3
 
     # Create config for cispo
-    config = DictConfig(
-        {
-            "cispo": {"cispo_eps_clip_low": 0.2, "cispo_eps_clip_high": 0.2},
-            "policy_loss_type": "cispo",
-            "max_seq_len": 4,
-            "use_tis": False,
-        }
+    config = AlgorithmConfig(
+        cispo=CISPOConfig(cispo_eps_clip_low=0.2, cispo_eps_clip_high=0.2),
+        policy_loss_type="cispo",
+        max_seq_len=4,
+        use_tis=False,
     )
 
     # Create loss function with cispo
@@ -177,29 +173,25 @@ def test_gspo_importance_sampling_levels():
     )
 
     # Test standard PPO (token-level importance sampling)
-    ppo_config = DictConfig(
-        {
-            "eps_clip_low": clip_eps_low,
-            "eps_clip_high": clip_eps_high,
-            "clip_ratio_c": 3.0,
-            "policy_loss_type": "regular",
-            "max_seq_len": 4,
-            "use_tis": False,
-        }
+    ppo_config = AlgorithmConfig(
+        eps_clip_low=clip_eps_low,
+        eps_clip_high=clip_eps_high,
+        clip_ratio_c=3.0,
+        policy_loss_type="regular",
+        max_seq_len=4,
+        use_tis=False,
     )
     ppo_loss_fn = PolicyLossRegistry.get("regular")
     loss_token, _ = ppo_loss_fn(log_probs, old_log_probs, advantages, ppo_config, loss_mask)
 
     # Test GSPO (sequence-level importance sampling)
-    gspo_config = DictConfig(
-        {
-            "eps_clip_low": clip_eps_low,
-            "eps_clip_high": clip_eps_high,
-            "clip_ratio_c": 3.0,
-            "policy_loss_type": "gspo",
-            "max_seq_len": 4,
-            "use_tis": False,
-        }
+    gspo_config = AlgorithmConfig(
+        eps_clip_low=clip_eps_low,
+        eps_clip_high=clip_eps_high,
+        clip_ratio_c=3.0,
+        policy_loss_type="gspo",
+        max_seq_len=4,
+        use_tis=False,
     )
     gspo_loss_fn = PolicyLossRegistry.get("gspo")
     loss_sequence, _ = gspo_loss_fn(log_probs, old_log_probs, advantages, gspo_config, loss_mask)
@@ -296,14 +288,12 @@ def test_clip_cov_policy_loss():
     loss_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]], device=device)  # Last token masked
 
     # Create Clip-Cov config
-    config = DictConfig(
-        {
-            "eps_clip_low": 0.2,
-            "eps_clip_high": 0.2,
-            "policy_loss_type": "clip_cov",
-            "max_seq_len": 4,
-            "clip_cov": {"clip_ratio": 0.5, "clip_cov_lb": -5.0, "clip_cov_ub": 5.0},  # Large ratio for testing
-        }
+    config = AlgorithmConfig(
+        eps_clip_low=0.2,
+        eps_clip_high=0.2,
+        policy_loss_type="clip_cov",
+        max_seq_len=4,
+        clip_cov=ClipCovConfig(clip_ratio=0.5, clip_cov_lb=-5.0, clip_cov_ub=5.0),  # Large ratio for testing
     )
 
     # Get loss function
@@ -317,14 +307,12 @@ def test_clip_cov_policy_loss():
     assert 0 <= clip_frac <= 1, f"Clip fraction should be between 0 and 1, got {clip_frac}"
 
     # Compare with regular PPO (should be different due to covariance correction)
-    regular_config = DictConfig(
-        {
-            "eps_clip_low": 0.2,
-            "eps_clip_high": 0.2,
-            "policy_loss_type": "regular",
-            "max_seq_len": 4,
-            "use_tis": False,
-        }
+    regular_config = AlgorithmConfig(
+        eps_clip_low=0.2,
+        eps_clip_high=0.2,
+        policy_loss_type="regular",
+        max_seq_len=4,
+        use_tis=False,
     )
 
     regular_fn = PolicyLossRegistry.get("regular")
@@ -358,12 +346,10 @@ def test_kl_cov_policy_loss():
     loss_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]], device=device)  # Last token masked
 
     # Create KL-Cov config
-    config = DictConfig(
-        {
-            "policy_loss_type": "kl_cov",
-            "max_seq_len": 4,
-            "kl_cov": {"kl_cov_frac": 0.5, "ppo_kl_coef": 1.0},  # Apply KL to 50% of tokens
-        }
+    config = AlgorithmConfig(
+        policy_loss_type="kl_cov",
+        max_seq_len=4,
+        kl_cov=KLCovConfig(kl_cov_frac=0.5, ppo_kl_coef=1.0),  # Apply KL to 50% of tokens
     )
 
     # Get loss function
@@ -377,14 +363,12 @@ def test_kl_cov_policy_loss():
     assert clip_frac == 0.0, "KL-Cov should return 0.0 for clipfrac value"
 
     # Compare with regular PPO (should be different due to KL regularization)
-    regular_config = DictConfig(
-        {
-            "eps_clip_low": 0.2,
-            "eps_clip_high": 0.2,
-            "policy_loss_type": "regular",
-            "max_seq_len": 4,
-            "use_tis": False,
-        }
+    regular_config = AlgorithmConfig(
+        eps_clip_low=0.2,
+        eps_clip_high=0.2,
+        policy_loss_type="regular",
+        max_seq_len=4,
+        use_tis=False,
     )
 
     regular_fn = PolicyLossRegistry.get("regular")
@@ -410,12 +394,10 @@ def test_sapo_policy_loss_basic():
     log_probs = torch.tensor([[-1.5, -0.8, -1.1]], device=device)
 
     # SAPO config: distinct tau_pos / tau_neg
-    config = DictConfig(
-        {
-            "policy_loss_type": "sapo",
-            "max_seq_len": 4,
-            "sapo": {"tau_pos": 1.0, "tau_neg": 2.0},
-        }
+    config = AlgorithmConfig(
+        policy_loss_type="sapo",
+        max_seq_len=4,
+        sapo=SAPOConfig(tau_pos=1.0, tau_neg=2.0),
     )
 
     loss_fn = PolicyLossRegistry.get("sapo")
