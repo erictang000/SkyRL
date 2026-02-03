@@ -422,7 +422,7 @@ async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus
         ("policy", 4, 1, 1, 4, 1, 4, True, False, True),
     ],
     ids=[
-        "tp2_pp2_policy_seq_packing",
+        "x",
         "tp2_pp2_policy_seq_packing_with_entropy_loss",
         "tp2_pp2_policy_lora",
         "tp2_pp2_policy_unpacked",
@@ -523,14 +523,17 @@ async def test_megatron_train(
 
     # Both FSDP and Megatron use forward_backward + optim_step (unified interface)
     batch.metadata["global_step"] = 0
-    results_fsdp = ray.get(actor_group.async_run_ray_method("pass_through", "forward_backward", batch))
+    results_fsdp = ray.get(actor_group.async_run_ray_method("mesh", "forward_backward", batch))
     ray.get(actor_group.async_run_ray_method("pass_through", "optim_step"))
     # Get learning rate from worker
     lr_results = ray.get(actor_group.async_run_ray_method("pass_through", "get_lr"))
     for i, result in enumerate(results_fsdp):
         result["policy_lr"] = lr_results[i]
-
+    print("megatron results: ", results_megatron)
+    print("\n\n")
     print("megatron results: ", results_megatron[0])
+    print("\n\n")
+    print("fsdp results: ", results_fsdp)
     print("\n\n")
     print("fsdp results: ", results_fsdp[0])
 

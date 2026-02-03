@@ -127,28 +127,6 @@ def compute_approx_kl(
         kld = kld * loss_mask
     return kld
 
-
-@torch.no_grad()
-def normalize_advantages_dict(data: TrainingInputBatch) -> TrainingInputBatch:
-    """Normalizes the advantages in the data batch.
-
-    Expects:
-        - `["advantages"]`: Float[torch.Tensor, "batch_size seqlen"]
-        - `["response_mask"]`: Float[torch.Tensor, "batch_size seqlen"]
-    """
-    advantages: Float[torch.Tensor, "batch_size seqlen"] = data["advantages"]
-    response_masks: Float[torch.Tensor, "batch_size seqlen"] = data["response_mask"]
-    num_actions: float = response_masks.sum()
-    # mean
-    mean: float = advantages.mean()
-    # std
-    std: float = ((advantages - mean).pow(2) * response_masks).sum()
-    rstd: float = (std / num_actions).clamp(min=1e-8).rsqrt()
-
-    data["advantages"] = (advantages - mean) * rstd
-    return data
-
-
 def masked_var(values, mask, unbiased=True):
     """Compute variance of tensor with masked values."""
     mean = masked_mean(values, mask)
