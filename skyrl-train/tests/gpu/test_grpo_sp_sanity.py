@@ -12,8 +12,9 @@ from skyrl_train.entrypoints.main_base import BasePPOExp, config_dir
 from skyrl_train.trainer import RayPPOTrainer
 import ray
 from tqdm import tqdm
+
+from skyrl_train.config import SkyRLConfig
 from skyrl_train.utils import Timer
-from skyrl_train.utils.ppo_utils import normalize_advantages_dict
 
 
 import asyncio
@@ -120,9 +121,6 @@ class RayPPOTestTrainer(RayPPOTrainer):
                         # remove some unwanted keys
                         data.pop(batch_keys=["rewards"])
 
-                        if self.cfg.trainer.algorithm.advantage_batch_normalize:
-                            data = normalize_advantages_dict(data)
-
                     # 4. train policy/critic model
                     with Timer("train_critic_and_policy", self.all_timings):
                         status = self.train_critic_and_policy(data)
@@ -140,7 +138,7 @@ class RayPPOTestTrainer(RayPPOTrainer):
                 return self.all_metrics
 
 
-def run_exp_and_get_metrics(exp: BasePPOExp, cfg: DictConfig):
+def run_exp_and_get_metrics(exp: BasePPOExp, cfg: SkyRLConfig):
     metrics = exp.run()
     # ray shutdown will clear all state for the ray session
     ray.shutdown()

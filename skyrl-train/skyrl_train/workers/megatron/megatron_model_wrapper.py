@@ -10,7 +10,8 @@ from megatron.core.distributed import finalize_model_grads
 
 from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs, vocab_parallel_entropy
 from skyrl_train.distributed.megatron.megatron_utils import get_model_config
-from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean, PolicyLossRegistry
+from skyrl_train.utils.ppo_utils import compute_approx_kl, PolicyLossRegistry
+from skyrl_train.utils.torch_utils import masked_mean
 
 from skyrl_train.distributed.megatron.megatron_utils import (
     make_batch_generator,
@@ -218,13 +219,16 @@ class MegatronModelWrapper:
             action_mask = data.get("action_mask")
             num_microbatches = data.get("num_microbatches")
 
+            dp_size = mpu.get_data_parallel_world_size()
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
             # Megatron's pipeline parallel forward_backward_func internally divides loss by num_microbatches
             # https://github.com/NVIDIA/Megatron-LM/blob/core_v0.15.2/megatron/core/pipeline_parallel/schedules.py#L248
             # we want to maintain a sum of losses across all micro batches, so we reverse this division.
-            loss_scale = num_microbatches
+            # we additionally multiply by the data parallelism size to undo the DDP all-reduce mean
+            # https://github.com/NVIDIA/Megatron-LM/blob/core_v0.15.2/megatron/core/distributed/distributed_data_parallel.py#L285
+            loss_scale = num_microbatches * dp_size
 
             # temperature normalization
             if temperature != 1.0:
@@ -243,7 +247,8 @@ class MegatronModelWrapper:
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
-            policy_loss, clip_ratio = current_loss_fn(
+            # policy loss should be calculated based on the selected token logprobs
+            policy_loss, loss_metrics = current_loss_fn(
                 action_log_probs,
                 old_action_log_probs,
                 advantages,
@@ -263,6 +268,7 @@ class MegatronModelWrapper:
                     elementwise_loss = -action_log_probs
                     if loss_mask is not None:
                         elementwise_loss = elementwise_loss * loss_mask
+                elementwise_loss = elementwise_loss * loss_scale
 
                 # Build per-sequence loss_fn_outputs
                 batch_size = action_log_probs.shape[0]
@@ -320,9 +326,10 @@ class MegatronModelWrapper:
                 "final_loss": loss.detach().item(),
                 "policy_loss": policy_loss.detach().item(),
                 "policy_entropy": entropy.detach().item(),
-                "ppo_clip_ratio": clip_ratio,
                 "policy_kl": kl_loss.detach().item(),
             }
+            for k, v in loss_metrics.items():
+                metrics["loss_metrics/" + k] = v
             return loss, metrics
 
         def forward_step(batch_iter, model):

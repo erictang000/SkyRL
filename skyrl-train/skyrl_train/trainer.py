@@ -5,18 +5,19 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from omegaconf import DictConfig
 
 import numpy as np
 import ray
 import torch
 from jaxtyping import Float
 from loguru import logger
-from omegaconf import DictConfig
 from ray import ObjectRef
 from ray.util.placement_group import PlacementGroup, placement_group
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
+from skyrl_train.config import SkyRLConfig
 from skyrl_train.dataset import PromptDataset
 from skyrl_train.dataset.preprocess import (
     convert_prompts_responses_to_batch_tensors,
@@ -53,8 +54,8 @@ from skyrl_train.utils.ppo_utils import (
     compute_approx_kl,
     get_kl_controller,
     masked_mean,
-    normalize_advantages_dict,
 )
+from skyrl_train.utils.torch_utils import masked_mean
 from skyrl_train.utils.tracking import Tracking
 from skyrl_train.utils.trainer_utils import (
     GLOBAL_STEP_PREFIX,
@@ -77,7 +78,7 @@ from skyrl_train.workers.worker_utils import reduce_metrics
 class RayPPOTrainer:
     def __init__(
         self,
-        cfg: DictConfig,
+        cfg: Union[SkyRLConfig, DictConfig],
         tracker: Tracking,
         tokenizer: AutoTokenizer,
         train_dataset: Optional[PromptDataset],
@@ -267,9 +268,6 @@ class RayPPOTrainer:
                         for key in ["rewards"]:
                             training_input.pop(key)
                         training_input.metadata.pop("uids")
-
-                        if self.cfg.trainer.algorithm.advantage_batch_normalize:
-                            training_input = normalize_advantages_dict(training_input)
 
                     if self.cfg.trainer.dump_data_batch:
                         # dump data to file
@@ -603,12 +601,17 @@ class RayPPOTrainer:
             loss_masks,
             logprobs,
         )
-        # sanity check for tis
-        if self.cfg.trainer.algorithm.use_tis:
+
+        # sanity check for off_policy_correction
+        off_policy_correction = self.cfg.trainer.algorithm.off_policy_correction
+        tis_ratio_type = off_policy_correction.tis_ratio_type
+        sequence_mask_metric = off_policy_correction.sequence_mask_metric
+        if tis_ratio_type is not None or sequence_mask_metric is not None:
             assert (
                 rollout_logprobs_tensor is not None
-            ), "expected non-null rollout logprobs tensor with  `trainer.algorithm.use_tis` as `True`"
+            ), "expected non-null rollout logprobs tensor when off_policy_correction is enabled"
             assert rollout_logprobs_tensor.shape == loss_masks_tensor.shape, "Logprobs should look like responses"
+
         training_input = TrainingInputBatch(
             {
                 "sequences": sequences_tensor,  # Full trajectories (padded and concatenated prompts and responses)
@@ -1022,15 +1025,28 @@ class RayPPOTrainer:
     def normalize_minibatch_advantages(self, data: TrainingInputBatch) -> TrainingInputBatch:
         """Normalize the advantages in the mini-batch.
 
-        This normalization results in calculating the correct minibatch loss for the
-        given loss reduction type when reducing the loss with a sum.
+        This function handles two types of normalization:
+        1. Batch normalization (z-score): if advantage_batch_normalize is True,
+           normalizes advantages to have zero mean and unit variance.
+        2. Loss reduction normalization: scales advantages based on the loss_reduction
+           type to calculate the correct minibatch loss when reducing with a sum.
         """
         advantages = data["advantages"]
         loss_mask = data["loss_mask"]
+        response_mask = data["response_mask"]
 
         # NOTE: Do not modify the tensor in place!
         # Otherwise subsequent epochs will keep dividing the same tensor.
 
+        # Step 1: Z-score normalization (if enabled)
+        if self.cfg.trainer.algorithm.advantage_batch_normalize:
+            num_actions = response_mask.sum()
+            mean = advantages.mean()
+            std = ((advantages - mean).pow(2) * response_mask).sum()
+            rstd = (std / num_actions).clamp(min=1e-8).rsqrt()
+            advantages = (advantages - mean) * rstd
+
+        # Step 2: Loss reduction normalization
         # Option 1: token mean
         if self.cfg.trainer.algorithm.loss_reduction == "token_mean":
             data["advantages"] = advantages / loss_mask.sum()
@@ -1040,11 +1056,16 @@ class RayPPOTrainer:
             batch_size = len(data)
             data["advantages"] = advantages / (batch_size * loss_mask.sum(dim=-1, keepdim=True))
 
-        # option 3: Dr. GRPO style loss reduction to avoid length bias by normalizing by a constant
+        # Option 3: Dr. GRPO style loss reduction to avoid length bias by normalizing by a constant
         elif self.cfg.trainer.algorithm.loss_reduction == "seq_mean_token_sum_norm":
             batch_size = len(data)
             max_seq_len = self.cfg.trainer.algorithm.max_seq_len
             data["advantages"] = advantages / (batch_size * max_seq_len)
+
+        else:
+            # No loss reduction normalization, but still apply batch normalization if it was done
+            if self.cfg.trainer.algorithm.advantage_batch_normalize:
+                data["advantages"] = advantages
 
         return data
 
