@@ -30,6 +30,8 @@ from omegaconf import DictConfig
 
 from skyrl_train.config import AlgorithmConfig
 from skyrl_train.training_batch import TrainingInputBatch
+from skyrl_train.utils.off_policy_correction_utils import apply_off_policy_correction
+from skyrl_train.utils.torch_utils import masked_mean, safe_exp_delta
 
 # Import cloudpickle for function serialization
 try:
@@ -81,12 +83,6 @@ def get_kl_controller(algorithm_cfg: Union[AlgorithmConfig, DictConfig]):
         )
     else:
         raise ValueError(f"Invalid KL controller type: {algorithm_cfg.kl_ctrl.type}")
-
-
-def masked_mean(tensor: torch.Tensor, mask: Optional[torch.Tensor], dim: Optional[int] = None) -> torch.Tensor:
-    if mask is None:
-        return tensor.mean(axis=dim)
-    return (tensor * mask).sum(axis=dim) / mask.sum(axis=dim).clamp(min=1.0)
 
 
 @torch.no_grad()
@@ -526,14 +522,6 @@ def sync_registries():
     logger.info("Synced registries to ray actor")
 
 
-def _safe_exp_delta(delta: torch.Tensor, clip: float = 20.0, out_dtype=None) -> torch.Tensor:
-    """
-    Clamp the delta before exponentiating to avoid potential overflow.
-    """
-    y = torch.clamp(delta.to(torch.float32), -clip, clip).exp()
-    return y.to(out_dtype or delta.dtype)
-
-
 @register_policy_loss(PolicyLossType.REGULAR)
 @register_policy_loss(PolicyLossType.DUAL_CLIP)
 def ppo_policy_loss(
@@ -543,10 +531,10 @@ def ppo_policy_loss(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     assert config.policy_loss_type in ["regular", "dual_clip"], "loss_type must be either 'regular' or 'dual_clip'"
 
-    ratio = _safe_exp_delta(log_probs - old_log_probs, clip=20.0, out_dtype=log_probs.dtype)
+    ratio = safe_exp_delta(log_probs - old_log_probs, clip=20.0, out_dtype=log_probs.dtype)
     surr1 = ratio * advantages
     surr2 = ratio.clamp(1 - config.eps_clip_low, 1 + config.eps_clip_high) * advantages
     loss = -torch.min(surr1, surr2)
@@ -557,18 +545,17 @@ def ppo_policy_loss(
         clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
         loss = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
 
-    if config.use_tis:
-        from loguru import logger as logger_
+    loss_metrics = {"clip_ratio": clip_ratio}
 
-        logger_.debug(f"Using TIS with dtype: {rollout_logprobs.dtype}")
-        # Apply truncated importance sampling -> https://fengyao.notion.site/off-policy-rl
-        tis_imp_ratio = _safe_exp_delta(old_log_probs - rollout_logprobs, clip=20.0, out_dtype=log_probs.dtype)
-        tis_imp_ratio = torch.clamp(tis_imp_ratio, max=config.tis_imp_ratio_cap)
-        loss = loss * tis_imp_ratio
+    # apply off policy correction
+    loss, loss_mask, off_policy_metrics = apply_off_policy_correction(
+        loss, old_log_probs, rollout_logprobs, loss_mask, config.off_policy_correction
+    )
+    loss_metrics.update(off_policy_metrics)
 
     loss = loss.sum()
 
-    return loss, clip_ratio
+    return loss, loss_metrics
 
 
 @register_policy_loss(PolicyLossType.SAPO)
@@ -579,7 +566,7 @@ def sapo_policy_loss(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     """
     SAPO (Soft Adaptive Policy Optimization) policy loss function.
 
@@ -621,13 +608,17 @@ def sapo_policy_loss(
     # compute policy gradient loss
     loss = -gates * advantages
 
+    # apply off policy correction
+    loss_metrics = {"clip_ratio": 0.0}
+    loss, loss_mask, off_policy_metrics = apply_off_policy_correction(
+        loss, old_log_probs, rollout_logprobs, loss_mask, config.off_policy_correction
+    )
+    loss_metrics.update(off_policy_metrics)
+
     # for SAPO, we need to aggregate the loss at the sequence level (seq-mean-token-mean)
     loss = reduce_loss(loss, loss_mask)
 
-    # SAPO does not use clipping, so we set clip_ratio to 0.0 for compatibility
-    clip_ratio = 0.0
-
-    return loss, clip_ratio
+    return loss, loss_metrics
 
 
 @register_policy_loss(PolicyLossType.GSPO)
@@ -638,7 +629,7 @@ def gspo_policy_loss(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     """
     GSPO (Group Sequence Policy Optimization) policy loss function,
     as proposed in https://arxiv.org/abs/2507.18071.
@@ -676,9 +667,16 @@ def gspo_policy_loss(
     # Compute clipping ratio for monitoring
     clip_ratio = masked_mean((-surr2 > -surr1).float(), loss_mask).mean().detach().item()
 
+    # apply off policy correction
+    loss_metrics = {"clip_ratio": clip_ratio}
+    loss, loss_mask, off_policy_metrics = apply_off_policy_correction(
+        loss, old_log_probs, rollout_logprobs, loss_mask, config.off_policy_correction
+    )
+    loss_metrics.update(off_policy_metrics)
+
     loss = reduce_loss(loss, loss_mask)
 
-    return loss, clip_ratio
+    return loss, loss_metrics
 
 
 @register_policy_loss(PolicyLossType.CISPO)
@@ -689,7 +687,7 @@ def compute_policy_loss_cispo(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     """Implementation of CISPO (Clipped IS-weight Policy Optimization) loss function,
     as proposed in https://arxiv.org/abs/2506.13585.
 
@@ -699,15 +697,22 @@ def compute_policy_loss_cispo(
     ratio is clipped in CISPO, as opposed to PPO where these samples have zero
     gradient and are essentially ignored.
     """
-    ratio = _safe_exp_delta(log_probs - old_log_probs, clip=20.0, out_dtype=log_probs.dtype)
+    ratio = safe_exp_delta(log_probs - old_log_probs, clip=20.0, out_dtype=log_probs.dtype)
     clamped_ratio = torch.clamp(ratio, 1 - config.cispo.cispo_eps_clip_low, 1 + config.cispo.cispo_eps_clip_high)
     loss = -advantages * clamped_ratio.detach() * log_probs
 
     is_clipped = (ratio < 1 - config.cispo.cispo_eps_clip_low) | (ratio > 1 + config.cispo.cispo_eps_clip_high)
     clip_ratio = masked_mean(is_clipped.float(), loss_mask).mean().detach().item()
 
+    # apply off policy correction
+    loss_metrics = {"clip_ratio": clip_ratio}
+    loss, loss_mask, off_policy_metrics = apply_off_policy_correction(
+        loss, old_log_probs, rollout_logprobs, loss_mask, config.off_policy_correction
+    )
+    loss_metrics.update(off_policy_metrics)
+
     loss = reduce_loss(loss, loss_mask)
-    return loss, clip_ratio
+    return loss, loss_metrics
 
 
 @register_policy_loss(PolicyLossType.CLIP_COV)
@@ -718,7 +723,7 @@ def compute_policy_loss_clip_cov(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     """Clip-Cov policy loss function implementation.
 
     Adapted from https://github.com/PRIME-RL/Entropy-Mechanism-of-RL/blob/main/verl/trainer/ppo/core_algos.py
@@ -767,9 +772,13 @@ def compute_policy_loss_clip_cov(
 
     # Apply correction mask to losses
     pg_losses = torch.maximum(pg_losses1, pg_losses2) * corr
-    pg_loss = reduce_loss(loss=pg_losses, loss_mask=loss_mask)
 
-    return pg_loss, clip_frac.item()
+    pg_loss = reduce_loss(
+        loss=pg_losses,
+        loss_mask=loss_mask,
+    )
+
+    return pg_loss, {"clip_ratio": clip_frac.item()}
 
 
 @register_policy_loss(PolicyLossType.KL_COV)
@@ -780,7 +789,7 @@ def compute_policy_loss_kl_cov(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     """KL-Cov policy loss function implementation.
 
     Adapted from https://github.com/PRIME-RL/Entropy-Mechanism-of-RL/blob/main/verl/trainer/ppo/core_algos.py
@@ -824,7 +833,7 @@ def compute_policy_loss_kl_cov(
     pg_loss = reduce_loss(loss=pg_losses, loss_mask=loss_mask)
 
     # NOTE (sumanthrh): Since the pg clip ratio is not applicable for KL-COV so we just use 0.0
-    return pg_loss, 0.0
+    return pg_loss, {"clip_ratio": 0.0}
 
 
 @register_policy_loss(PolicyLossType.CROSS_ENTROPY)
@@ -835,7 +844,7 @@ def cross_entropy_loss(
     config: Union[AlgorithmConfig, DictConfig],
     loss_mask: Optional[torch.Tensor] = None,
     rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, float]:
+) -> Tuple[torch.Tensor, dict[str, float]]:
     """
     Cross-entropy loss for supervised fine-tuning (SFT).
 
@@ -863,7 +872,7 @@ def cross_entropy_loss(
     loss = reduce_loss(elementwise_loss, loss_mask)
 
     # No clipping in cross-entropy loss
-    return loss, 0.0
+    return loss, {"clip_ratio": 0.0}
 
 
 def reduce_loss(

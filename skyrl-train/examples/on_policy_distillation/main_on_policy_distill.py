@@ -53,7 +53,7 @@ def compute_importance_sampling_policy_loss(
 
     loss = reduce_loss(loss, loss_mask)
     # return loss and a dummy clip ratio value as we aren't clipping here
-    return loss, 0.0
+    return loss, {"clip_ratio": 0.0}
 
 
 class OnPolicyDistillationExp(BasePPOExp):
