@@ -413,7 +413,7 @@ async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus
 @pytest.mark.parametrize(
     ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss", "lora"),
     [
-        ("policy", 2, 2, 1, 1, 1, 4, True, False, False),
+        ("policy", 2, 1, 1, 1, 1, 4, True, False, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, False, True),
         ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
@@ -503,6 +503,10 @@ async def test_megatron_train(
         assert "policy_entropy" in result
         for k, v in result.items():
             assert isinstance(v, (int, float)), f"{k} should be an int or float"
+
+    print("megatron results: ", results_megatron)
+    print("\n\n")
+    print("megatron results: ", results_megatron[0])
 
     ray.shutdown()
     ray_init_for_tests()

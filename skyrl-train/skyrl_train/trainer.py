@@ -55,7 +55,6 @@ from skyrl_train.utils.ppo_utils import (
     get_kl_controller,
     masked_mean,
 )
-from skyrl_train.utils.torch_utils import masked_mean
 from skyrl_train.utils.tracking import Tracking
 from skyrl_train.utils.trainer_utils import (
     GLOBAL_STEP_PREFIX,

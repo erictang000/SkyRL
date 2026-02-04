@@ -685,7 +685,7 @@ class PolicyWorkerBase(Worker):
 
             for k, v in metrics.items():
                 all_metrics[k].append(v)
-        
+
         result = reduce_metrics(dict(all_metrics))
 
         # Add back loss_fn_outputs (concatenated across micro-batches)

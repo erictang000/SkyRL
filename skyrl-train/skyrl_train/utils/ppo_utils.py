@@ -29,7 +29,6 @@ from loguru import logger
 from omegaconf import DictConfig
 
 from skyrl_train.config import AlgorithmConfig
-from skyrl_train.training_batch import TrainingInputBatch
 from skyrl_train.utils.off_policy_correction_utils import apply_off_policy_correction
 from skyrl_train.utils.torch_utils import masked_mean, safe_exp_delta
 
@@ -122,6 +121,7 @@ def compute_approx_kl(
     if loss_mask is not None:
         kld = kld * loss_mask
     return kld
+
 
 def masked_var(values, mask, unbiased=True):
     """Compute variance of tensor with masked values."""

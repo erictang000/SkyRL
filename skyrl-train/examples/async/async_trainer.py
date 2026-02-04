@@ -144,7 +144,6 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
                 training_input.pop(key)
             training_input.metadata.pop("uids")
 
-
         if self.cfg.trainer.dump_data_batch:
             # dump data to file
             with Timer("dump_data_batch"):
