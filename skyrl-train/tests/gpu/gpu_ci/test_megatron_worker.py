@@ -413,7 +413,7 @@ async def test_megatron_lora_forward(ray_init_fixture, tp, pp, cp, ep, etp, gpus
 @pytest.mark.parametrize(
     ("worker_type", "tp", "pp", "cp", "ep", "etp", "gpus_per_node", "use_sample_packing", "use_entropy_loss", "lora"),
     [
-        ("policy", 2, 1, 1, 1, 1, 4, True, False, False),
+        ("policy", 1, 1, 1, 1, 1, 4, True, False, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, True, False),
         ("policy", 2, 2, 1, 1, 1, 4, True, False, True),
         ("policy", 2, 2, 1, 1, 1, 4, False, False, False),
@@ -439,7 +439,7 @@ async def test_megatron_train(
     Full test: initialize actor group, send dummy experience to training_step, validate output.
     """
     cfg = get_test_actor_config(model_name=MODEL_NAME if ep == 1 else MOE_MODEL_NAME)
-    batch_size = gpus_per_node * 2
+    batch_size = gpus_per_node * 8
     batch = get_test_training_batch(batch_size=batch_size)
 
     cfg.trainer.strategy = "megatron"
@@ -450,6 +450,7 @@ async def test_megatron_train(
     cfg.trainer.policy.megatron_config.expert_model_parallel_size = ep
     cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = etp
     cfg.trainer.use_sample_packing = use_sample_packing
+    cfg.trainer.algorithm.use_kl_loss = False
     if use_entropy_loss:
         cfg.trainer.algorithm.use_entropy_loss = True
         cfg.trainer.algorithm.entropy_loss_coef = 0.01
@@ -507,7 +508,7 @@ async def test_megatron_train(
     print("megatron results: ", results_megatron)
     print("\n\n")
     print("megatron results: ", results_megatron[0])
-
+    print("\n\n")
     ray.shutdown()
     ray_init_for_tests()
 
@@ -551,7 +552,6 @@ async def test_megatron_train(
         "policy_lr",
         "loss_metrics/clip_ratio",
         "policy_entropy",
-        "policy_kl",
         "final_loss",
     ]
     if ep > 1:

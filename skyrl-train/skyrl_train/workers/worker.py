@@ -686,7 +686,12 @@ class PolicyWorkerBase(Worker):
             for k, v in metrics.items():
                 all_metrics[k].append(v)
 
+        # reduce metrics across micro batches (sum, mean, min, max)
         result = reduce_metrics(dict(all_metrics))
+
+        # all reduce metrics across DP workers
+        dp_group = self.device_mesh.get_group("dp")
+        result = all_reduce_metrics(result, self.strategy, group=dp_group)
 
         # Add back loss_fn_outputs (concatenated across micro-batches)
         if all_loss_fn_outputs:
@@ -886,23 +891,6 @@ class PolicyWorkerBase(Worker):
                 status["loss_metrics/" + k] = v
             if self.cfg.trainer.algorithm.use_kl_loss:
                 status["policy_kl"] = kl_loss.item()
-
-        loss_fn_outputs = status.pop("loss_fn_outputs", None)
-
-        # All-reduce metrics across DP workers
-        # hacky work aroudn to all reduce sum for loss while keeping mean for other metrics for now
-        loss_status = {
-            "final_loss": status["final_loss"],
-            "policy_loss": status["policy_loss"],
-        }
-        loss_status = self.strategy.all_reduce(loss_status, op="sum")
-        status = all_reduce_metrics(status, self.strategy)
-        status["final_loss"] = loss_status["final_loss"]
-        status["policy_loss"] = loss_status["policy_loss"]
-
-        # Add back loss_fn_outputs after all_reduce
-        if loss_fn_outputs is not None:
-            status["loss_fn_outputs"] = loss_fn_outputs
 
         return status
 

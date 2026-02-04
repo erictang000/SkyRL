@@ -257,11 +257,10 @@ class MegatronModelWrapper:
                 rollout_logprobs=rollout_action_logprobs,
             )
 
-            policy_loss = policy_loss * loss_scale
-
             # SFT path: cross_entropy loss (negative log likelihood)
             if resolved_loss_name == "cross_entropy":
-                loss = policy_loss
+                unscaled_loss = policy_loss
+                loss = unscaled_loss * loss_scale
 
                 # Compute elementwise loss for Tinker API (per-token NLL)
                 with torch.no_grad():
@@ -290,7 +289,7 @@ class MegatronModelWrapper:
                     )
 
                 metrics = {
-                    "loss": loss.detach().item(),
+                    "loss": unscaled_loss.detach().item(),
                     "response_length": num_actions,
                     "loss_fn_outputs": loss_fn_outputs,
                 }
@@ -320,11 +319,12 @@ class MegatronModelWrapper:
                 kl_loss = torch.tensor(0.0)
             kl_loss_term = kl_loss * loss_config.kl_loss_coef
 
-            loss = policy_loss + kl_loss_term - entropy_loss_term
+            unscaled_loss = policy_loss + kl_loss_term - entropy_loss_term
+            loss = unscaled_loss * loss_scale
 
             metrics = {
-                "final_loss": loss.detach().item(),
-                "policy_loss": policy_loss.detach().item(),
+                "final_loss": unscaled_loss.detach().item() * dp_size,
+                "policy_loss": policy_loss.detach().item() * dp_size,
                 "policy_entropy": entropy.detach().item(),
                 "policy_kl": kl_loss.detach().item(),
             }

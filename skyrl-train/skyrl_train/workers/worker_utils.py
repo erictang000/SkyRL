@@ -28,8 +28,10 @@ def all_reduce_metrics(metrics: Dict[str, List[float]], strategy: DistributedStr
     """All reduce metrics across all processes."""
     min_metrics = {k: v for k, v in metrics.items() if k.endswith("_min")}
     max_metrics = {k: v for k, v in metrics.items() if k.endswith("_max")}
-    mean_metrics = {k: v for k, v in metrics.items() if k not in min_metrics and k not in max_metrics}
     sum_metrics = {k: v for k, v in metrics.items() if k.endswith("_loss")}
+    mean_metrics = {
+        k: v for k, v in metrics.items() if k not in min_metrics and k not in max_metrics and k not in sum_metrics
+    }
     status_mean = strategy.all_reduce(mean_metrics, op="mean", group=group)
     status_min = strategy.all_reduce(min_metrics, op="min", group=group)
     status_max = strategy.all_reduce(max_metrics, op="max", group=group)

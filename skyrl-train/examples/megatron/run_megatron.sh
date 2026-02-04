@@ -17,13 +17,15 @@ MEGATRON_TP=1
 MEGATRON_PP=1
 MEGATRON_CP=1
 
-# torch profiler config
-ENABLE_TORCH_PROFILER=false
-RANKS_TO_PROFILE="[0]"
-SAVE_PATH="$HOME/megatron_prof/tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}"
+# # torch profiler config
+# ENABLE_TORCH_PROFILER=false
+# RANKS_TO_PROFILE="[0]"
+# SAVE_PATH="$HOME/megatron_prof/tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}"
 
-TIS_TYPE="token"
-TIS_RATIO_CLIP_HIGH=2.0
+# TIS_TYPE="token"
+# TIS_RATIO_CLIP_HIGH=2.0
+  # trainer.algorithm.off_policy_correction.tis_ratio_type=$TIS_TYPE \
+  # trainer.algorithm.off_policy_correction.token_tis_ratio_clip_high=$TIS_RATIO_CLIP_HIGH \
 
 uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -45,8 +47,6 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   trainer.ref.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.ref.megatron_config.context_parallel_size=$MEGATRON_CP \
   trainer.ref.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
-  trainer.algorithm.off_policy_correction.tis_ratio_type=$TIS_TYPE \
-  trainer.algorithm.off_policy_correction.token_tis_ratio_clip_high=$TIS_RATIO_CLIP_HIGH \
   trainer.use_sample_packing=true \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
@@ -72,7 +72,7 @@ uv run --isolated --extra mcore -m skyrl_train.entrypoints.main_base \
   generator.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_loss_sum_with_tis" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_loss_sum_no_scaling_num_microbatches" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@
