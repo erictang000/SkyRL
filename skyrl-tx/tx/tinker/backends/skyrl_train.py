@@ -184,6 +184,7 @@ class SkyRLTrainBackend(AbstractBackend):
     def delete_model(self, model_id: str) -> None:
         if self._model_id != model_id:
             raise ValueError(f"Model {model_id} not found")
+        # TODO: For now, prefer shutting down the backend and re-launching. Will be improved shortly.
         raise NotImplementedError("Deleting models not yet implemented")
 
     def _to_training_batch(self, prepared_batch: types.PreparedModelPassBatch) -> TrainingInputBatch:
@@ -227,6 +228,29 @@ class SkyRLTrainBackend(AbstractBackend):
         batch.metadata = {"response_length": max_response_len}
         return batch
 
+    def _extract_metrics(self, data: dict) -> dict[str, float]:
+        """Extract training metrics from dispatch return dict.
+
+        Workers return metrics like 'loss', 'policy_loss', 'policy_entropy', etc.
+        We convert to Tinker's colon-suffixed format (e.g. 'total_loss:sum').
+        """
+        metrics: dict[str, float] = {}
+
+        # SFT path returns 'loss'; RL path returns 'final_loss' / 'policy_loss'
+        if "loss" in data:
+            metrics["total_loss:sum"] = float(data["loss"])
+        elif "final_loss" in data:
+            metrics["total_loss:sum"] = float(data["final_loss"])
+
+        if "policy_loss" in data:
+            metrics["pg_loss:sum"] = float(data["policy_loss"])
+        if "policy_entropy" in data:
+            metrics["entropy_loss:sum"] = float(data["policy_entropy"])
+        if "response_length" in data:
+            metrics["num_tokens:sum"] = float(data["response_length"])
+
+        return metrics
+
     def forward_backward(
         self,
         prepared_batch: types.PreparedModelPassBatch,
@@ -237,6 +261,8 @@ class SkyRLTrainBackend(AbstractBackend):
 
         batch = self._to_training_batch(prepared_batch)
         data = self._trainer.dispatch.forward_backward("policy", batch, loss_fn=loss_fn)
+
+        metrics = self._extract_metrics(data)
 
         results = {}
         for request_id, _, start_idx, end_idx in prepared_batch.request_batch_slices:
@@ -262,7 +288,7 @@ class SkyRLTrainBackend(AbstractBackend):
             results[request_id] = types.ForwardBackwardOutput(
                 loss_fn_output_type="scalar",
                 loss_fn_outputs=loss_fn_outputs,
-                metrics={},
+                metrics=metrics,
             )
         return results
 
@@ -270,7 +296,38 @@ class SkyRLTrainBackend(AbstractBackend):
         self,
         prepared_batch: types.PreparedModelPassBatch,
     ) -> dict[str, types.ForwardBackwardOutput | types.ErrorResponse]:
-        raise NotImplementedError("Forward-only pass not supported")
+        if not prepared_batch.all_input_ids:
+            return {}
+
+        batch = self._to_training_batch(prepared_batch)
+        data = self._trainer.dispatch.forward("policy", batch)
+
+        # dispatch.forward() returns TrainingOutputBatch({"output": tensor[batch, max_response_len]})
+        output_logprobs = data["output"]
+
+        results = {}
+        for request_id, _, start_idx, end_idx in prepared_batch.request_batch_slices:
+            loss_fn_outputs = []
+            for i in range(start_idx, end_idx):
+                # Use token weights length to determine each example's actual response length
+                valid_len = len(prepared_batch.all_token_weights[i])
+                start = max(output_logprobs.shape[1] - valid_len, 0)
+                logprobs = output_logprobs[i, start:].tolist()
+                loss_fn_outputs.append(
+                    {
+                        "logprobs": {
+                            "data": logprobs,
+                            "dtype": "float32",
+                            "shape": [len(logprobs)],
+                        },
+                    }
+                )
+            results[request_id] = types.ForwardBackwardOutput(
+                loss_fn_output_type="scalar",
+                loss_fn_outputs=loss_fn_outputs,
+                metrics={},
+            )
+        return results
 
     def optim_step(self, model_id: str, request_data: types.OptimStepInput) -> types.OptimStepOutput:
         if model_id != self._model_id:
@@ -283,7 +340,12 @@ class SkyRLTrainBackend(AbstractBackend):
 
         grad_norm = self._trainer.dispatch.optim_step("policy")
         logger.info(f"optim_step: lr={adam_params.learning_rate}, grad_norm={grad_norm}")
-        return types.OptimStepOutput()
+
+        metrics: dict[str, float] = {}
+        if grad_norm is not None:
+            metrics["grad_norm"] = float(grad_norm)
+        metrics["learning_rate"] = adam_params.learning_rate
+        return types.OptimStepOutput(metrics=metrics)
 
     def sample(
         self,
