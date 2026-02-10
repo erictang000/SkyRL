@@ -254,12 +254,18 @@ class SkyRLTrainBackend(AbstractBackend):
     def forward_backward(
         self,
         prepared_batch: types.PreparedModelPassBatch,
-        loss_fn: str = "cross_entropy",
     ) -> dict[str, types.ForwardBackwardOutput | types.ErrorResponse]:
         if not prepared_batch.all_input_ids:
             return {}
 
         batch = self._to_training_batch(prepared_batch)
+        loss_fn = prepared_batch.all_loss_fns[0]
+        if len(set(prepared_batch.all_loss_fns)) > 1:
+            logger.warning(
+                "SkyRL backend received mixed loss functions %s in one batch; using '%s' for all",
+                set(prepared_batch.all_loss_fns),
+                loss_fn,
+            )
         loss_fn_config = next((c for c in prepared_batch.all_loss_fn_configs if c is not None), None)
         data = self._trainer.dispatch.forward_backward(
             "policy",
