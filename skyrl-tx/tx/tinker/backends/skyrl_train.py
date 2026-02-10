@@ -108,7 +108,7 @@ class SkyRLTrainBackend(AbstractBackend):
             assert (
                 num_policy_gpus == num_rollout_gpus
             ), "num_policy_gpus and num_rollout_gpus must be the same when colocating all models"
-            pg = self.colocate_pg
+            pg = self._colocate_pg
 
             policy_model = PPORayActorGroup(
                 cfg,
@@ -293,7 +293,7 @@ class SkyRLTrainBackend(AbstractBackend):
             initialize_ray(self._cfg)
 
         # Create placement group
-        self.colocate_pg = self._create_colocate_pg()
+        self._colocate_pg = self._create_colocate_pg()
 
         # Create inference engine client
         logger.info(f"Creating {self._cfg.generator.num_inference_engines} inference engines")
