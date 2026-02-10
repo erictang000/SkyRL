@@ -82,6 +82,7 @@ class SkyRLTrainBackend(AbstractBackend):
         self._model_id: str | None = None
         self._model_metadata: types.ModelMetadata | None = None
         self._cfg = None
+        self._dispatch = None
         self._tokenizer = AutoTokenizer.from_pretrained(self.base_model)
         self._inference_engine_client = None  # InferenceEngineClient for sampling
 
@@ -259,7 +260,7 @@ class SkyRLTrainBackend(AbstractBackend):
         self.ref_model: Optional[PPORayActorGroup] = ref_model
 
         # Create unified dispatch that manages all actor groups
-        self.dispatch = WorkerDispatch(
+        self._dispatch = WorkerDispatch(
             cfg=cfg,
             policy_actor_group=policy_model,
             critic_actor_group=critic_model,
@@ -269,7 +270,7 @@ class SkyRLTrainBackend(AbstractBackend):
 
         # Mark all models as offloaded if colocate_all (they were offloaded above)
         if cfg.trainer.placement.colocate_all:
-            self.dispatch.mark_all_offloaded()
+            self._dispatch.mark_all_offloaded()
 
         logger.info("init policy/ref/critic models done")
 
@@ -277,7 +278,7 @@ class SkyRLTrainBackend(AbstractBackend):
         """
         Setup the connection between policy model and inference engine for weight syncing.
         """
-        self.dispatch.init_weight_sync_state(self._inference_engine_client)
+        self._dispatch.init_weight_sync_state(self._inference_engine_client)
         logger.info("Initialized weight sync state for policy model and inference engines.")
 
     def create_model(self, model_id: str, lora_config: types.LoraConfig) -> None:
@@ -417,7 +418,7 @@ class SkyRLTrainBackend(AbstractBackend):
 
         batch = self._to_training_batch(prepared_batch)
         loss_fn_config = next((c for c in prepared_batch.all_loss_fn_configs if c is not None), None)
-        data = self.dispatch.forward_backward(
+        data = self._dispatch.forward_backward(
             "policy",
             batch,
             loss_fn=loss_fn,
@@ -462,7 +463,7 @@ class SkyRLTrainBackend(AbstractBackend):
             return {}
 
         batch = self._to_training_batch(prepared_batch)
-        data = self.dispatch.forward("policy", batch)
+        data = self._dispatch.forward("policy", batch)
 
         # dispatch.forward() returns TrainingOutputBatch({"output": tensor[batch, max_response_len]})
         output_logprobs = data["output"]
@@ -498,9 +499,9 @@ class SkyRLTrainBackend(AbstractBackend):
         # Apply learning rate from AdamParams before optimizer step
         # Note: beta1, beta2, eps are fixed at optimizer creation and cannot be changed dynamically
         adam_params = request_data.adam_params
-        self.dispatch.set_lr("policy", adam_params.learning_rate)
+        self._dispatch.set_lr("policy", adam_params.learning_rate)
 
-        grad_norm = self.dispatch.optim_step("policy")
+        grad_norm = self._dispatch.optim_step("policy")
         logger.info(f"optim_step: lr={adam_params.learning_rate}, grad_norm={grad_norm}")
 
         metrics: dict[str, float] = {}
@@ -645,7 +646,7 @@ class SkyRLTrainBackend(AbstractBackend):
         """Validate that model exists and is initialized."""
         if model_id != self._model_id:
             raise ValueError(f"Model {model_id} not found")
-        if self.dispatch is None:
+        if self._dispatch is None:
             raise RuntimeError("Model not initialized")
 
     def _create_tar_from_directory(self, source_dir: str, output_path: str) -> None:
@@ -666,7 +667,7 @@ class SkyRLTrainBackend(AbstractBackend):
             ckpt_dir = os.path.join(temp_dir, "checkpoint")
 
             # Save checkpoint directory (includes optimizer state automatically)
-            self.dispatch.save_checkpoint(model="policy", ckpt_dir=ckpt_dir, tokenizer=self._tokenizer)
+            self._dispatch.save_checkpoint(model="policy", ckpt_dir=ckpt_dir, tokenizer=self._tokenizer)
 
             # Create tar archive
             self._create_tar_from_directory(ckpt_dir, output_path)
@@ -682,10 +683,10 @@ class SkyRLTrainBackend(AbstractBackend):
             with tarfile.open(checkpoint_path, "r") as tar:
                 tar.extractall(temp_dir, filter="data")
 
-                # Load checkpoint (includes optimizer and scheduler states)
-                self.dispatch.load_checkpoint(
-                    model="policy", ckpt_dir=temp_dir, load_optimizer_states=True, load_lr_scheduler_states=True
-                )
+            # Load checkpoint (includes optimizer and scheduler states)
+            self._dispatch.load_checkpoint(
+                model="policy", ckpt_dir=temp_dir, load_optimizer_states=True, load_lr_scheduler_states=True
+            )
 
         logger.info(f"Loaded checkpoint for {model_id} from {checkpoint_path}")
 
@@ -700,14 +701,14 @@ class SkyRLTrainBackend(AbstractBackend):
 
         # Always sync weights to inference engines (in-memory NCCL broadcast)
         if self._inference_engine_client is not None:
-            asyncio.run(self.dispatch.save_weights_for_sampler())
+            asyncio.run(self._dispatch.save_weights_for_sampler())
             logger.info(f"Synced weights for {model_id} to inference engines via NCCL")
 
         if persist:
             # Full HuggingFace model export to disk
             with tempfile.TemporaryDirectory() as temp_dir:
                 hf_dir = os.path.join(temp_dir, "model")
-                self.dispatch.save_hf_model(model="policy", export_dir=hf_dir, tokenizer=self._tokenizer)
+                self._dispatch.save_hf_model(model="policy", export_dir=hf_dir, tokenizer=self._tokenizer)
                 self._create_tar_from_directory(hf_dir, output_path)
             logger.info(f"Saved sampler checkpoint for {model_id} to {output_path}")
         else:
