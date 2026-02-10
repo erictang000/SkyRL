@@ -8,7 +8,7 @@ import asyncio
 import os
 import tarfile
 import tempfile
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 from pydantic import BaseModel
@@ -228,7 +228,9 @@ class SkyRLTrainBackend(AbstractBackend):
                     )
                 )
             ray.get(refs)
-            ray.get(policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id))
+            ray.get(
+                policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id)
+            )
         else:
             if ref_model is not None:
                 ray.get(ref_model.async_init_model(cfg.trainer.ref.model.path))
@@ -239,7 +241,9 @@ class SkyRLTrainBackend(AbstractBackend):
                     num_training_steps=policy_num_training_steps,
                 )
             )
-            ray.get(policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id))
+            ray.get(
+                policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id)
+            )
             policy_model.offload_to_cpu()
             if cfg.trainer.critic.model.path:
                 ray.get(
@@ -678,10 +682,10 @@ class SkyRLTrainBackend(AbstractBackend):
             with tarfile.open(checkpoint_path, "r") as tar:
                 tar.extractall(temp_dir, filter="data")
 
-            # Load checkpoint (includes optimizer and scheduler states)
+                # Load checkpoint (includes optimizer and scheduler states)
                 self.dispatch.load_checkpoint(
-                model="policy", ckpt_dir=temp_dir, load_optimizer_states=True, load_lr_scheduler_states=True
-            )
+                    model="policy", ckpt_dir=temp_dir, load_optimizer_states=True, load_lr_scheduler_states=True
+                )
 
         logger.info(f"Loaded checkpoint for {model_id} from {checkpoint_path}")
 
