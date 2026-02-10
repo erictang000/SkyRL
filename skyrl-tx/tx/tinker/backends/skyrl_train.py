@@ -8,7 +8,7 @@ import asyncio
 import os
 import tarfile
 import tempfile
-from typing import Any
+from typing import Any, Optional
 
 import torch
 from pydantic import BaseModel
@@ -18,33 +18,17 @@ from tx.tinker import types
 from tx.tinker.backends.backend import AbstractBackend
 from tx.utils.log import logger
 
-try:  # Optional dependency: keep other backends importable without ray/skyrl-train.
-    import ray
-    from ray.util.placement_group import placement_group
-    from skyrl_train.training_batch import TrainingInputBatch
-    from skyrl_train.trainer import RayPPOTrainer
-    from skyrl_train.utils.tracking import Tracking
-    from skyrl_train.utils.utils import initialize_ray
-    from skyrl_train.utils import get_ray_pg_ready_with_timeout
-    from skyrl_train.config.utils import get_default_config
-    from skyrl_train.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
-    from skyrl_train.entrypoints.main_base import create_ray_wrapped_inference_engines_from_config
-    from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
-
-    SKYRL_TRAIN_AVAILABLE = True
-except ImportError:  # pragma: no cover - exercised only in non-ray installs
-    ray = None
-    placement_group = None
-    TrainingInputBatch = Any
-    RayPPOTrainer = Any
-    Tracking = Any
-    initialize_ray = None
-    get_ray_pg_ready_with_timeout = None
-    get_default_config = None
-    SKYRL_RAY_PG_TIMEOUT_IN_S = None
-    create_ray_wrapped_inference_engines_from_config = None
-    InferenceEngineClient = Any
-    SKYRL_TRAIN_AVAILABLE = False
+import ray
+from ray.util.placement_group import placement_group
+from skyrl_train.training_batch import TrainingInputBatch
+from skyrl_train.workers.worker import PPORayActorGroup
+from skyrl_train.workers.worker_dispatch import WorkerDispatch
+from skyrl_train.utils.utils import initialize_ray
+from skyrl_train.utils import get_ray_pg_ready_with_timeout
+from skyrl_train.config.utils import get_default_config
+from skyrl_train.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
+from skyrl_train.entrypoints.main_base import create_ray_wrapped_inference_engines_from_config
+from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 
 
 class SkyRLTrainBackendConfig(BaseModel, extra="forbid"):
@@ -88,7 +72,7 @@ class SkyRLTrainBackend(AbstractBackend):
         logger.warning("SkyRLTrainBackend is currently EXPERIMENTAL!")
         logger.warning("=" * 80)
 
-        if not SKYRL_TRAIN_AVAILABLE or ray is None:
+        if ray is None:
             raise ImportError(
                 "SkyRLTrainBackend requires `ray`. Install the appropriate extras (e.g. `--extra skyrl_train`)."
             )
@@ -97,13 +81,200 @@ class SkyRLTrainBackend(AbstractBackend):
         self.config = config
         self._model_id: str | None = None
         self._model_metadata: types.ModelMetadata | None = None
-        self._trainer: RayPPOTrainer | None = None
         self._cfg = None
         self._tokenizer = AutoTokenizer.from_pretrained(self.base_model)
         self._inference_engine_client = None  # InferenceEngineClient for sampling
 
     def has_model(self, model_id: str) -> bool:
         return self._model_id == model_id
+
+    def build_models(self, PolicyWorker, CriticWorker, RefWorker):
+        cfg = self._cfg
+        pg = None
+
+        use_ref_model = cfg.trainer.algorithm.use_kl_loss or cfg.trainer.algorithm.use_kl_in_reward
+
+        if cfg.trainer.placement.colocate_all:
+            num_policy_gpus = cfg.trainer.placement.policy_num_gpus_per_node * cfg.trainer.placement.policy_num_nodes
+            num_critic_gpus = cfg.trainer.placement.critic_num_gpus_per_node * cfg.trainer.placement.critic_num_nodes
+            num_ref_gpus = cfg.trainer.placement.ref_num_gpus_per_node * cfg.trainer.placement.ref_num_nodes
+            num_rollout_gpus = (
+                cfg.generator.num_inference_engines
+                * cfg.generator.inference_engine_tensor_parallel_size
+                * cfg.generator.inference_engine_pipeline_parallel_size
+                * cfg.generator.inference_engine_data_parallel_size
+            )
+            assert (
+                num_policy_gpus == num_rollout_gpus
+            ), "num_policy_gpus and num_rollout_gpus must be the same when colocating all models"
+            pg = self.colocate_pg
+
+            policy_model = PPORayActorGroup(
+                cfg,
+                cfg.trainer.placement.policy_num_nodes,
+                cfg.trainer.placement.policy_num_gpus_per_node,
+                PolicyWorker,
+                pg=pg,
+                num_gpus_per_actor=0.2 if pg else 1,
+                colocate_all=True,
+                sequence_parallel_size=cfg.trainer.policy.sequence_parallel_size,
+                record_memory=cfg.trainer.policy.record_memory,
+            )
+            if use_ref_model:
+                assert (
+                    num_policy_gpus == num_ref_gpus
+                ), "num_policy_gpus and num_ref_gpus must be the same when colocating policy and ref model"
+                ref_model = PPORayActorGroup(
+                    cfg,
+                    cfg.trainer.placement.ref_num_nodes,
+                    cfg.trainer.placement.ref_num_gpus_per_node,
+                    RefWorker,
+                    pg=pg,
+                    num_gpus_per_actor=0.2 if pg else 1,
+                    colocate_all=True,
+                    sequence_parallel_size=cfg.trainer.ref.sequence_parallel_size,
+                )
+            else:
+                ref_model = None
+
+            if cfg.trainer.critic.model.path:
+                assert (
+                    num_policy_gpus == num_critic_gpus
+                ), "num_policy_gpus and num_critic_gpus must be the same when colocating policy and critic model"
+                critic_model = PPORayActorGroup(
+                    cfg,
+                    cfg.trainer.placement.critic_num_nodes,
+                    cfg.trainer.placement.critic_num_gpus_per_node,
+                    CriticWorker,
+                    pg=pg,
+                    num_gpus_per_actor=0.2,
+                    colocate_all=True,
+                    sequence_parallel_size=cfg.trainer.critic.sequence_parallel_size,
+                )
+            else:
+                critic_model = None
+
+        else:
+            if cfg.trainer.placement.colocate_policy_ref and use_ref_model:
+                assert (
+                    cfg.trainer.placement.policy_num_nodes == cfg.trainer.placement.ref_num_nodes
+                    and cfg.trainer.placement.policy_num_gpus_per_node == cfg.trainer.placement.ref_num_gpus_per_node
+                ), "num_nodes and num_gpus_per_node must be the same when colocate policy and ref model."
+
+                bundles = [
+                    {
+                        "GPU": cfg.trainer.placement.policy_num_gpus_per_node,
+                        "CPU": cfg.trainer.placement.policy_num_gpus_per_node,
+                    }
+                    for _ in range(cfg.trainer.placement.policy_num_nodes)
+                ]
+                pg = placement_group(bundles, strategy="PACK")
+                get_ray_pg_ready_with_timeout(pg, timeout=SKYRL_RAY_PG_TIMEOUT_IN_S)
+
+            policy_model = PPORayActorGroup(
+                cfg,
+                cfg.trainer.placement.policy_num_nodes,
+                cfg.trainer.placement.policy_num_gpus_per_node,
+                PolicyWorker,
+                pg=pg,
+                num_gpus_per_actor=0.75 if pg else 1,
+                colocate_all=False,
+                sequence_parallel_size=cfg.trainer.policy.sequence_parallel_size,
+            )
+            if use_ref_model:
+                ref_model = PPORayActorGroup(
+                    cfg,
+                    cfg.trainer.placement.ref_num_nodes,
+                    cfg.trainer.placement.ref_num_gpus_per_node,
+                    RefWorker,
+                    pg=pg,
+                    num_gpus_per_actor=0.25 if pg else 1,
+                    colocate_all=False,
+                    sequence_parallel_size=cfg.trainer.ref.sequence_parallel_size,
+                )
+            else:
+                ref_model = None
+
+            if cfg.trainer.critic.model.path:
+                critic_model = PPORayActorGroup(
+                    cfg,
+                    cfg.trainer.placement.critic_num_nodes,
+                    cfg.trainer.placement.critic_num_gpus_per_node,
+                    CriticWorker,
+                    num_gpus_per_actor=1,
+                    colocate_all=False,
+                    sequence_parallel_size=cfg.trainer.critic.sequence_parallel_size,
+                )
+            else:
+                critic_model = None
+
+        policy_num_training_steps = None
+        critic_num_training_steps = None
+        if not cfg.trainer.placement.colocate_all:
+            refs = []
+            if ref_model is not None:
+                refs.extend(ref_model.async_init_model(cfg.trainer.ref.model.path))
+            refs.extend(
+                policy_model.async_init_model(
+                    cfg.trainer.policy.model.path,
+                    num_training_steps=policy_num_training_steps,
+                )
+            )
+            if cfg.trainer.critic.model.path:
+                refs.extend(
+                    critic_model.async_init_model(
+                        cfg.trainer.critic.model.path,
+                        num_training_steps=critic_num_training_steps,
+                    )
+                )
+            ray.get(refs)
+            ray.get(policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id))
+        else:
+            if ref_model is not None:
+                ray.get(ref_model.async_init_model(cfg.trainer.ref.model.path))
+                ref_model.offload_to_cpu()
+            ray.get(
+                policy_model.async_init_model(
+                    cfg.trainer.policy.model.path,
+                    num_training_steps=policy_num_training_steps,
+                )
+            )
+            ray.get(policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id))
+            policy_model.offload_to_cpu()
+            if cfg.trainer.critic.model.path:
+                ray.get(
+                    critic_model.async_init_model(
+                        cfg.trainer.critic.model.path,
+                        num_training_steps=critic_num_training_steps,
+                    )
+                )
+                critic_model.offload_to_cpu()
+
+        self.policy_model: PPORayActorGroup = policy_model
+        self.critic_model: Optional[PPORayActorGroup] = critic_model
+        self.ref_model: Optional[PPORayActorGroup] = ref_model
+
+        # Create unified dispatch that manages all actor groups
+        self.dispatch = WorkerDispatch(
+            cfg=cfg,
+            policy_actor_group=policy_model,
+            critic_actor_group=critic_model,
+            ref_actor_group=ref_model,
+            inference_engine_client=self._inference_engine_client,
+        )
+
+        # Mark all models as offloaded if colocate_all (they were offloaded above)
+        if cfg.trainer.placement.colocate_all:
+            self.dispatch.mark_all_offloaded()
+
+        logger.info("init policy/ref/critic models done")
+
+    def init_weight_sync_state(self):
+        """
+        Setup the connection between policy model and inference engine for weight syncing.
+        """
+        self.dispatch.init_weight_sync_state(self._inference_engine_client)
+        logger.info("Initialized weight sync state for policy model and inference engines.")
 
     def create_model(self, model_id: str, lora_config: types.LoraConfig) -> None:
         if self._model_id is not None:
@@ -117,33 +288,14 @@ class SkyRLTrainBackend(AbstractBackend):
             initialize_ray(self._cfg)
 
         # Create placement group
-        colocate_pg = self._create_colocate_pg()
+        self.colocate_pg = self._create_colocate_pg()
 
         # Create inference engine client
         logger.info(f"Creating {self._cfg.generator.num_inference_engines} inference engines")
         self._inference_engine_client = InferenceEngineClient(
-            create_ray_wrapped_inference_engines_from_config(self._cfg, colocate_pg, self._tokenizer),
+            create_ray_wrapped_inference_engines_from_config(self._cfg, self.colocate_pg, self._tokenizer),
             self._tokenizer,
             self._cfg,
-        )
-
-        # Create trainer
-        tracker = Tracking(
-            project_name="tinker",
-            experiment_name=model_id,
-            backends=[],  # No logging backends
-            config=self._cfg,
-        )
-
-        self._trainer = RayPPOTrainer(
-            cfg=self._cfg,
-            tracker=tracker,
-            tokenizer=self._tokenizer,
-            train_dataset=None,  # Not needed for tinker API
-            eval_dataset=None,
-            inference_engine_client=self._inference_engine_client,
-            generator=None,  # TODO(tyler): Update for sampling + RL
-            colocate_pg=colocate_pg,
         )
 
         # Get worker types based on strategy
@@ -155,10 +307,10 @@ class SkyRLTrainBackend(AbstractBackend):
             raise ValueError(f"Unknown strategy type: {self._cfg.trainer.strategy}")
 
         logger.info("Building models.")
-        self._trainer.build_models(PolicyWorker, CriticWorker, RefWorker)
+        self.build_models(PolicyWorker, CriticWorker, RefWorker)
 
         logger.info("Initializing weight sync state.")
-        self._trainer.init_weight_sync_state()
+        self.init_weight_sync_state()
 
         self._model_id = model_id
         self._model_metadata = types.ModelMetadata(adapter_index=0, lora_config=lora_config)
@@ -261,7 +413,7 @@ class SkyRLTrainBackend(AbstractBackend):
 
         batch = self._to_training_batch(prepared_batch)
         loss_fn_config = next((c for c in prepared_batch.all_loss_fn_configs if c is not None), None)
-        data = self._trainer.dispatch.forward_backward(
+        data = self.dispatch.forward_backward(
             "policy",
             batch,
             loss_fn=loss_fn,
@@ -306,7 +458,7 @@ class SkyRLTrainBackend(AbstractBackend):
             return {}
 
         batch = self._to_training_batch(prepared_batch)
-        data = self._trainer.dispatch.forward("policy", batch)
+        data = self.dispatch.forward("policy", batch)
 
         # dispatch.forward() returns TrainingOutputBatch({"output": tensor[batch, max_response_len]})
         output_logprobs = data["output"]
@@ -342,9 +494,9 @@ class SkyRLTrainBackend(AbstractBackend):
         # Apply learning rate from AdamParams before optimizer step
         # Note: beta1, beta2, eps are fixed at optimizer creation and cannot be changed dynamically
         adam_params = request_data.adam_params
-        self._trainer.dispatch.set_lr("policy", adam_params.learning_rate)
+        self.dispatch.set_lr("policy", adam_params.learning_rate)
 
-        grad_norm = self._trainer.dispatch.optim_step("policy")
+        grad_norm = self.dispatch.optim_step("policy")
         logger.info(f"optim_step: lr={adam_params.learning_rate}, grad_norm={grad_norm}")
 
         metrics: dict[str, float] = {}
@@ -489,7 +641,7 @@ class SkyRLTrainBackend(AbstractBackend):
         """Validate that model exists and is initialized."""
         if model_id != self._model_id:
             raise ValueError(f"Model {model_id} not found")
-        if self._trainer is None:
+        if self.dispatch is None:
             raise RuntimeError("Model not initialized")
 
     def _create_tar_from_directory(self, source_dir: str, output_path: str) -> None:
@@ -510,7 +662,7 @@ class SkyRLTrainBackend(AbstractBackend):
             ckpt_dir = os.path.join(temp_dir, "checkpoint")
 
             # Save checkpoint directory (includes optimizer state automatically)
-            self._trainer.dispatch.save_checkpoint(model="policy", ckpt_dir=ckpt_dir, tokenizer=self._tokenizer)
+            self.dispatch.save_checkpoint(model="policy", ckpt_dir=ckpt_dir, tokenizer=self._tokenizer)
 
             # Create tar archive
             self._create_tar_from_directory(ckpt_dir, output_path)
@@ -527,7 +679,7 @@ class SkyRLTrainBackend(AbstractBackend):
                 tar.extractall(temp_dir, filter="data")
 
             # Load checkpoint (includes optimizer and scheduler states)
-            self._trainer.dispatch.load_checkpoint(
+                self.dispatch.load_checkpoint(
                 model="policy", ckpt_dir=temp_dir, load_optimizer_states=True, load_lr_scheduler_states=True
             )
 
@@ -544,14 +696,14 @@ class SkyRLTrainBackend(AbstractBackend):
 
         # Always sync weights to inference engines (in-memory NCCL broadcast)
         if self._inference_engine_client is not None:
-            asyncio.run(self._trainer.dispatch.save_weights_for_sampler())
+            asyncio.run(self.dispatch.save_weights_for_sampler())
             logger.info(f"Synced weights for {model_id} to inference engines via NCCL")
 
         if persist:
             # Full HuggingFace model export to disk
             with tempfile.TemporaryDirectory() as temp_dir:
                 hf_dir = os.path.join(temp_dir, "model")
-                self._trainer.dispatch.save_hf_model(model="policy", export_dir=hf_dir, tokenizer=self._tokenizer)
+                self.dispatch.save_hf_model(model="policy", export_dir=hf_dir, tokenizer=self._tokenizer)
                 self._create_tar_from_directory(hf_dir, output_path)
             logger.info(f"Saved sampler checkpoint for {model_id} to {output_path}")
         else:

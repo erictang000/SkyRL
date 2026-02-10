@@ -6,7 +6,6 @@ import tarfile
 from tempfile import TemporaryDirectory
 from typing import Generator
 
-import jax
 from cloudpathlib import AnyPath
 
 from tx.utils.log import logger
@@ -23,6 +22,8 @@ def pack_and_upload(dest: AnyPath) -> Generator[Path, None, None]:
         If a probe file exists at {dest}.probe, only rank 0 writes to avoid
         redundant uploads on shared filesystems.
     """
+    import jax
+
     with TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
 
