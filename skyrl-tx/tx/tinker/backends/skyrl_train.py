@@ -63,6 +63,7 @@ def _build_config(
 
     return cfg
 
+
 def create_ray_wrapped_inference_engines_from_config(cfg, colocate_pg, tokenizer):
     engine_kwargs = {
         "num_inference_engines": cfg.generator.num_inference_engines,
