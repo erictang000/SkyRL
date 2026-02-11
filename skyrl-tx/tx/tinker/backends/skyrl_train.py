@@ -97,7 +97,7 @@ class SkyRLTrainBackend(AbstractBackend):
     def has_model(self, model_id: str) -> bool:
         return self._model_id == model_id
 
-    def build_models(self, PolicyWorker, CriticWorker, RefWorker):
+    def build_models(self, PolicyWorker):
         cfg = self._cfg
         pg = self._colocate_pg
         assert cfg.trainer.placement.colocate_all, "colocate_all must be true for SkyRL-Train backend"
@@ -178,14 +178,14 @@ class SkyRLTrainBackend(AbstractBackend):
 
         # Get worker types based on strategy
         if self._cfg.trainer.strategy in ("fsdp", "fsdp2"):
-            from skyrl_train.workers.fsdp.fsdp_worker import PolicyWorker, CriticWorker, RefWorker
+            from skyrl_train.workers.fsdp.fsdp_worker import PolicyWorker
         elif self._cfg.trainer.strategy == "megatron":
-            from skyrl_train.workers.megatron.megatron_worker import PolicyWorker, CriticWorker, RefWorker
+            from skyrl_train.workers.megatron.megatron_worker import PolicyWorker
         else:
             raise ValueError(f"Unknown strategy type: {self._cfg.trainer.strategy}")
 
         logger.info("Building models.")
-        self.build_models(PolicyWorker, CriticWorker, RefWorker)
+        self.build_models(PolicyWorker)
 
         logger.info("Initializing weight sync state.")
         self.init_weight_sync_state()
