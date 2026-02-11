@@ -11,14 +11,14 @@ import tempfile
 
 import torch
 from pydantic import BaseModel
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from tx.tinker import types
 from tx.tinker.backends.backend import AbstractBackend
 from tx.utils.log import logger
 
 import ray
-from ray.util.placement_group import placement_group
+from ray.util.placement_group import placement_group, PlacementGroup
 from skyrl_train.training_batch import TrainingInputBatch
 from skyrl_train.workers.worker import PPORayActorGroup
 from skyrl_train.workers.worker_dispatch import WorkerDispatch
@@ -600,7 +600,9 @@ class SkyRLTrainBackend(AbstractBackend):
             logger.info(f"Synced weights for {model_id} (disk save skipped)")
 
 
-def create_ray_wrapped_inference_engines_from_config(cfg, colocate_pg, tokenizer):
+def create_ray_wrapped_inference_engines_from_config(
+    cfg: SkyRLTrainBackendConfig, colocate_pg: PlacementGroup, tokenizer: PreTrainedTokenizerBase
+):
     engine_kwargs = {
         "num_inference_engines": cfg.generator.num_inference_engines,
         "tensor_parallel_size": cfg.generator.inference_engine_tensor_parallel_size,
