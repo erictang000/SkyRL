@@ -72,57 +72,6 @@ def _build_config(
     return cfg
 
 
-def create_ray_wrapped_inference_engines_from_config(cfg, colocate_pg, tokenizer):
-    engine_kwargs = {
-        "num_inference_engines": cfg.generator.num_inference_engines,
-        "tensor_parallel_size": cfg.generator.inference_engine_tensor_parallel_size,
-        "pipeline_parallel_size": cfg.generator.inference_engine_pipeline_parallel_size,
-        "model_dtype": cfg.generator.model_dtype,
-        "pretrain": cfg.trainer.policy.model.path,
-        "seed": cfg.trainer.seed,
-        "vllm_v1_disable_multiproc": cfg.generator.vllm_v1_disable_multiproc,
-        "enable_prefix_caching": cfg.generator.enable_prefix_caching,
-        "enforce_eager": cfg.generator.enforce_eager,
-        "expert_parallel_size": cfg.generator.inference_engine_expert_parallel_size,
-        "data_parallel_size": cfg.generator.inference_engine_data_parallel_size,
-        "shared_pg": colocate_pg,
-        "gpu_memory_utilization": cfg.generator.gpu_memory_utilization,
-        "inference_engine_enable_sleep": cfg.trainer.placement.colocate_all,
-        "async_engine": cfg.generator.async_engine,
-        "max_num_batched_tokens": cfg.generator.max_num_batched_tokens,
-        "max_num_seqs": cfg.generator.max_num_seqs,
-        "tokenizer": tokenizer,
-        "backend": cfg.generator.backend,
-        "engine_init_kwargs": cfg.generator.engine_init_kwargs,
-        "enable_ray_prometheus_stats": cfg.generator.enable_ray_prometheus_stats,
-    }
-
-    # Conditionally add LoRA parameters if LoRA is enabled
-    if cfg.trainer.policy.model.lora.rank > 0 and cfg.trainer.strategy != "megatron":
-        engine_kwargs["enable_lora"] = True
-        engine_kwargs["max_lora_rank"] = cfg.trainer.policy.model.lora.rank
-        engine_kwargs["sleep_level"] = 1
-        engine_kwargs["max_loras"] = 1
-        engine_kwargs["fully_sharded_loras"] = cfg.generator.fully_sharded_loras
-
-        if cfg.generator.enforce_eager and cfg.generator.backend == "vllm":
-            logger.warning(
-                "LoRA is enabled but generator.enforce_eager=true. "
-                "This combination causes significant performance degradation (2-3x slower generation). "
-                "Automatically setting enforce_eager=false for better performance. "
-            )
-            engine_kwargs["enforce_eager"] = False
-
-    if cfg.generator.rope_scaling is not None:
-        engine_kwargs["rope_scaling"] = cfg.generator.rope_scaling
-    if cfg.generator.rope_theta is not None:
-        engine_kwargs["rope_theta"] = cfg.generator.rope_theta
-    if cfg.generator.served_model_name is not None:
-        engine_kwargs["served_model_name"] = cfg.generator.served_model_name
-
-    return create_ray_wrapped_inference_engines(**engine_kwargs)
-
-
 class SkyRLTrainBackend(AbstractBackend):
     """SkyRL-Train backend for supervised training."""
 
