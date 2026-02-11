@@ -19,15 +19,15 @@ from skyrl.utils.log import logger
 
 import ray
 from ray.util.placement_group import placement_group, PlacementGroup
-from skyrl_train.training_batch import TrainingInputBatch
-from skyrl_train.workers.worker import PPORayActorGroup
-from skyrl_train.workers.worker_dispatch import WorkerDispatch
-from skyrl_train.utils.utils import initialize_ray
-from skyrl_train.utils import get_ray_pg_ready_with_timeout
-from skyrl_train.config.utils import get_default_config
-from skyrl_train.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
-from skyrl_train.inference_engines.ray_wrapped_inference_engine import create_ray_wrapped_inference_engines
-from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
+from skyrl.skyrl_train.training_batch import TrainingInputBatch
+from skyrl.skyrl_train.workers.worker import PPORayActorGroup
+from skyrl.skyrl_train.workers.worker_dispatch import WorkerDispatch
+from skyrl.skyrl_train.utils.utils import initialize_ray
+from skyrl.skyrl_train.utils import get_ray_pg_ready_with_timeout
+from skyrl.skyrl_train.config.utils import get_default_config
+from skyrl.skyrl_train.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
+from skyrl.skyrl_train.inference_engines.ray_wrapped_inference_engine import create_ray_wrapped_inference_engines
+from skyrl.skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 
 
 class SkyRLTrainBackendConfig(BaseModel, extra="allow"):
@@ -191,9 +191,9 @@ class SkyRLTrainBackend(AbstractBackend):
 
         # Get worker types based on strategy
         if self._cfg.trainer.strategy in ("fsdp", "fsdp2"):
-            from skyrl_train.workers.fsdp.fsdp_worker import PolicyWorker
+            from skyrl.skyrl_train.workers.fsdp.fsdp_worker import PolicyWorker
         elif self._cfg.trainer.strategy == "megatron":
-            from skyrl_train.workers.megatron.megatron_worker import PolicyWorker
+            from skyrl.skyrl_train.workers.megatron.megatron_worker import PolicyWorker
         else:
             raise ValueError(f"Unknown strategy type: {self._cfg.trainer.strategy}")
 
