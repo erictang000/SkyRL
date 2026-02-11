@@ -20,8 +20,6 @@ def pack_and_upload(dest: AnyPath, rank: Optional[int] = None) -> Generator[Path
         rank: Process rank for multi-rank deduplication. If provided and a probe
               file exists at {dest}.probe, only rank 0 writes.
     """
-    import jax
-
     with TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
 
