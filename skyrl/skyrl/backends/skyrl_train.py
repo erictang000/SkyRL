@@ -13,9 +13,9 @@ import torch
 from pydantic import BaseModel
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
-from tx.tinker import types
-from tx.tinker.backends.backend import AbstractBackend
-from tx.utils.log import logger
+from skyrl.tinker import types
+from skyrl.backends.backend import AbstractBackend
+from skyrl.utils.log import logger
 
 import ray
 from ray.util.placement_group import placement_group, PlacementGroup
