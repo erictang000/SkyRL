@@ -26,7 +26,10 @@ from skyrl.backends.skyrl_train.distributed.megatron.optimizer import (
 )
 from skyrl.backends.skyrl_train.distributed.dispatch import MeshRank
 from skyrl.backends.skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
-from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import print_model_size, broadcast_object_across_pp_ranks
+from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import (
+    print_model_size,
+    broadcast_object_across_pp_ranks,
+)
 from skyrl.train.utils.utils import update_model_config, str_to_torch_dtype
 from skyrl.backends.skyrl_train.env_vars import SKYRL_WORKER_NCCL_TIMEOUT_IN_S
 from skyrl.backends.skyrl_train.training_batch import TrainingInputBatch, TrainingOutputBatch

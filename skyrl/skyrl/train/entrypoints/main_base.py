@@ -42,7 +42,9 @@ __all__ = ["BasePPOExp", "config_dir"]
 def create_ray_wrapped_inference_engines_from_config(
     cfg: Union[SkyRLConfig, DictConfig], colocate_pg, tokenizer: PreTrainedTokenizerBase
 ):
-    from skyrl.backends.skyrl_train.inference_engines.ray_wrapped_inference_engine import create_ray_wrapped_inference_engines
+    from skyrl.backends.skyrl_train.inference_engines.ray_wrapped_inference_engine import (
+        create_ray_wrapped_inference_engines,
+    )
 
     engine_kwargs = {
         "num_inference_engines": cfg.generator.num_inference_engines,
@@ -380,7 +382,11 @@ class BasePPOExp:
         if self.cfg.trainer.strategy in ("fsdp", "fsdp2"):
             from skyrl.backends.skyrl_train.workers.fsdp.fsdp_worker import PolicyWorker, CriticWorker, RefWorker
         elif self.cfg.trainer.strategy == "megatron":
-            from skyrl.backends.skyrl_train.workers.megatron.megatron_worker import PolicyWorker, CriticWorker, RefWorker
+            from skyrl.backends.skyrl_train.workers.megatron.megatron_worker import (
+                PolicyWorker,
+                CriticWorker,
+                RefWorker,
+            )
         else:
             raise ValueError(f"Unknown strategy type: {self.cfg.trainer.strategy}")
 

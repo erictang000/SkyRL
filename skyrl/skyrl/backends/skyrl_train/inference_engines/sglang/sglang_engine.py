@@ -143,7 +143,9 @@ def sglang_custom_weight_loader(model, named_tensors):
     model.load_weights(weights_to_load)
 
 
-CUSTOM_WEIGHT_LOADER_PATH = "skyrl.backends.skyrl_train.inference_engines.sglang.sglang_engine.sglang_custom_weight_loader"
+CUSTOM_WEIGHT_LOADER_PATH = (
+    "skyrl.backends.skyrl_train.inference_engines.sglang.sglang_engine.sglang_custom_weight_loader"
+)
 
 
 class SGLangWeightLoader(WeightLoader):

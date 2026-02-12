@@ -2,6 +2,7 @@ from typing import Dict, Any
 
 from skyrl.train.generators.utils import get_custom_chat_template
 
+
 def pop_openai_kwargs(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize & remove OpenAI-serving-only kwargs from engine_kwargs.

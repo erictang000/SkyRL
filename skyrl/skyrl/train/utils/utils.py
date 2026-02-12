@@ -214,7 +214,11 @@ def validate_megatron_cfg(cfg: Union[SkyRLConfig, DictConfig]):
 def validate_cfg(cfg: Union[SkyRLConfig, DictConfig]):
     # Validate generation config separately
     validate_generator_cfg(cfg)
-    from skyrl.backends.skyrl_train.utils.ppo_utils import AdvantageEstimatorRegistry, PolicyLossRegistry, repopulate_all_registries
+    from skyrl.backends.skyrl_train.utils.ppo_utils import (
+        AdvantageEstimatorRegistry,
+        PolicyLossRegistry,
+        repopulate_all_registries,
+    )
 
     assert (
         cfg.trainer.sequence_parallel_backend == "ulysses"

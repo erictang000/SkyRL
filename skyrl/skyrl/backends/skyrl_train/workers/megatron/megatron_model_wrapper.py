@@ -8,7 +8,10 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 import megatron.core.parallel_state as mpu
 from megatron.core.distributed import finalize_model_grads
 
-from skyrl.backends.skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs, vocab_parallel_entropy
+from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
+    from_parallel_logits_to_logprobs,
+    vocab_parallel_entropy,
+)
 from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import get_model_config
 from skyrl.backends.skyrl_train.utils.ppo_utils import compute_approx_kl, PolicyLossRegistry
 from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
