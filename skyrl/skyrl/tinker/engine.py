@@ -164,11 +164,11 @@ def get_backend_classes(backend_name: str):
 
         return JaxBackend, JaxBackendConfig
     elif backend_name == "fsdp":
-        from skyrl.backends.skyrl_train import SkyRLTrainBackend, FSDPBackendConfig
+        from skyrl.backends.skyrl_train_backend import SkyRLTrainBackend, FSDPBackendConfig
 
         return SkyRLTrainBackend, FSDPBackendConfig
     elif backend_name == "megatron":
-        from skyrl.backends.skyrl_train import SkyRLTrainBackend, MegatronBackendConfig
+        from skyrl.backends.skyrl_train_backend import SkyRLTrainBackend, MegatronBackendConfig
 
         return SkyRLTrainBackend, MegatronBackendConfig
     else:
