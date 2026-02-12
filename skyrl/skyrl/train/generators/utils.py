@@ -3,7 +3,7 @@ import torch
 from typing import List, Tuple, Union, Optional, Dict, Any
 from collections import defaultdict
 import numpy as np
-from skyrl_train.generators.base import (
+from skyrl.train.generators.base import (
     GeneratorOutput,
     GeneratorInput,
     TrajectoryID,
@@ -11,8 +11,8 @@ from skyrl_train.generators.base import (
     TrainingPhase,
     MetricsOutput,
 )
-from skyrl_train.inference_engines.base import ConversationType
-from skyrl_train.config import ChatTemplateConfig
+from skyrl.backends.skyrl_train.inference_engines.base import ConversationType
+from skyrl.train.config import ChatTemplateConfig
 from loguru import logger
 from skyrl_gym.metrics import aggregate_for_environment
 
@@ -263,7 +263,7 @@ def concatenate_generator_outputs(generator_outputs: List[GeneratorOutput]) -> G
 
     # Validate the generator output using the number of prompts
     # Import here to avoid circular dependency.
-    from skyrl_train.utils.trainer_utils import validate_generator_output
+    from skyrl.train.utils.trainer_utils import validate_generator_output
 
     num_prompts = len(result["prompt_token_ids"])
     validate_generator_output(num_prompts, result)

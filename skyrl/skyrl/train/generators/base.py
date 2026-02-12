@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, TypedDict, Optional, Union, Literal
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from skyrl_train.inference_engines.base import ConversationType
+from skyrl.backends.skyrl_train.inference_engines.base import ConversationType
 
 TrainingPhase = Literal["train", "eval"]
 

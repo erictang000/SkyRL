@@ -17,47 +17,47 @@ from ray.util.placement_group import PlacementGroup, placement_group
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from skyrl_train.config import SkyRLConfig
-from skyrl_train.dataset import PromptDataset
-from skyrl_train.dataset.preprocess import (
+from skyrl.train.config import SkyRLConfig
+from skyrl.train.dataset import PromptDataset
+from skyrl.train.dataset.preprocess import (
     convert_prompts_responses_to_batch_tensors,
 )
-from skyrl_train.distributed.dispatch import (
+from skyrl.backends.skyrl_train.distributed.dispatch import (
     ActorInfo,
     MeshRank,
 )
-from skyrl_train.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
-from skyrl_train.evaluate import evaluate, evaluate_step_wise
-from skyrl_train.generators.base import (
+from skyrl.train.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
+from skyrl.train.evaluate import evaluate, evaluate_step_wise
+from skyrl.train.generators.base import (
     GeneratorInput,
     GeneratorInterface,
     GeneratorOutput,
 )
-from skyrl_train.generators.utils import (
+from skyrl.train.generators.utils import (
     get_metrics_from_generator_output,
     prepare_generator_input,
 )
-from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
-from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
-from skyrl_train.training_batch import TrainingInputBatch
-from skyrl_train.utils import (
+from skyrl.backends.skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
+from skyrl.backends.skyrl_train.inference_engines.utils import get_sampling_params_for_backend
+from skyrl.backends.skyrl_train.training_batch import TrainingInputBatch
+from skyrl.train.utils import (
     Timer,
     get_ray_pg_ready_with_timeout,
-    ppo_utils,
-    trainer_utils,
 )
-from skyrl_train.utils.io import io
-from skyrl_train.utils.logging_utils import log_example
-from skyrl_train.utils.ppo_utils import (
+from skyrl.backends.skyrl_train.utils import ppo_utils
+from skyrl.train.utils import trainer_utils
+from skyrl.backends.skyrl_train.utils.io import io
+from skyrl.train.utils.logging_utils import log_example
+from skyrl.backends.skyrl_train.utils.ppo_utils import (
     AdaptiveKLController,
     FixedKLController,
     compute_approx_kl,
     get_kl_controller,
     normalize_advantages_dict,
 )
-from skyrl_train.utils.torch_utils import masked_mean
-from skyrl_train.utils.tracking import Tracking
-from skyrl_train.utils.trainer_utils import (
+from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
+from skyrl.train.utils.tracking import Tracking
+from skyrl.train.utils.trainer_utils import (
     GLOBAL_STEP_PREFIX,
     DynamicSamplingState,
     ResumeMode,
@@ -69,10 +69,10 @@ from skyrl_train.utils.trainer_utils import (
     validate_generator_output,
     zero_variance_filter,
 )
-from skyrl_train.utils.utils import configure_ray_worker_logging
-from skyrl_train.workers.worker import PPORayActorGroup
-from skyrl_train.workers.worker_dispatch import WorkerDispatch
-from skyrl_train.workers.worker_utils import reduce_metrics
+from skyrl.train.utils.utils import configure_ray_worker_logging
+from skyrl.backends.skyrl_train.workers.worker import PPORayActorGroup
+from skyrl.backends.skyrl_train.workers.worker_dispatch import WorkerDispatch
+from skyrl.backends.skyrl_train.workers.worker_utils import reduce_metrics
 
 
 class RayPPOTrainer:

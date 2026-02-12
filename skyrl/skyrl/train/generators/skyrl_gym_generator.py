@@ -17,12 +17,12 @@ from tqdm.asyncio import tqdm
 from dataclasses import dataclass
 from loguru import logger
 
-from skyrl_train.config import GeneratorConfig, SkyRLGymConfig
-from skyrl_train.generators.base import GeneratorInterface, GeneratorInput, GeneratorOutput, TrajectoryID
-from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
-from skyrl_train.inference_engines.base import InferenceEngineInput, ConversationType
+from skyrl.train.config import GeneratorConfig, SkyRLGymConfig
+from skyrl.train.generators.base import GeneratorInterface, GeneratorInput, GeneratorOutput, TrajectoryID
+from skyrl.backends.skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
+from skyrl.backends.skyrl_train.inference_engines.base import InferenceEngineInput, ConversationType
 from skyrl_gym.envs.base_text_env import BaseTextEnvStepOutput
-from skyrl_train.generators.utils import (
+from skyrl.train.generators.utils import (
     get_custom_chat_template,
     get_generation_prompt_ids,
     apply_overlong_filtering,

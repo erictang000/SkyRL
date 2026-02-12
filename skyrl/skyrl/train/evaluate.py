@@ -5,27 +5,27 @@ from pathlib import Path
 from loguru import logger
 from collections import defaultdict
 
-from skyrl_train.utils import Timer
+from skyrl.train.utils import Timer
 
-from skyrl_train.generators.utils import (
+from skyrl.train.generators.utils import (
     concatenate_generator_outputs,
     get_metrics_from_generator_output,
     prepare_generator_input,
 )
-from skyrl_train.generators.base import (
+from skyrl.train.generators.base import (
     GeneratorOutput,
     GeneratorInterface,
 )
-from skyrl_train.utils.trainer_utils import (
+from skyrl.train.utils.trainer_utils import (
     calculate_per_dataset_metrics,
     dump_per_dataset_eval_results,
     validate_generator_output,
 )
-from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
-from skyrl_train.utils.logging_utils import log_example
+from skyrl.backends.skyrl_train.inference_engines.utils import get_sampling_params_for_backend
+from skyrl.train.utils.logging_utils import log_example
 
 from omegaconf import DictConfig
-from skyrl_train.config import SkyRLConfig
+from skyrl.train.config import SkyRLConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoTokenizer
 
