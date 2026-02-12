@@ -1,5 +1,6 @@
 from typing import Dict, Any
 
+from skyrl.train.generators.utils import get_custom_chat_template
 
 def pop_openai_kwargs(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -23,9 +24,6 @@ def pop_openai_kwargs(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     # the chat template, not the path (unlike --chat-template in vllm serve CLI args)
     chat_template = engine_kwargs.pop("chat_template", None)
     if chat_template is not None:
-        # TODO (erictang000): this is broken in the new path since we don't want to import generators.utils here.
-        from skyrl.backends.skyrl_train.generators.utils import get_custom_chat_template
-
         openai_kwargs["chat_template"] = get_custom_chat_template(
             chat_template_config={"source": "file", "name_or_path": chat_template}
         )
