@@ -67,11 +67,7 @@ jax = [
     "optax>=0.2.5",
 ]
 
-fsdp = [
-    # We currently need the extra pin on the python version
-    # here since skyrl-train pins on python version 3.12,
-    # hopefully in the future we can remove that.
-    # skyrl-train[vllm] requires CUDA packages which are Linux-only.
+skyrl-train = [
     "loguru",
     "tqdm",
     "ninja",
@@ -98,6 +94,10 @@ fsdp = [
     "uvicorn",
     "pybind11",
     "setuptools",
+]
+
+fsdp = [
+    "skyrl[skyrl-train]",
     "vllm==0.13.0; sys_platform == 'linux'",
     "flash-attn==2.8.3; sys_platform == 'linux'",
     "torch==2.9.0; sys_platform == 'linux'",
@@ -107,32 +107,7 @@ fsdp = [
 ]
 
 megatron = [
-    "loguru",
-    "tqdm",
-    "ninja",
-    "tensorboard",
-    "func_timeout",
-    "transformers>=4.51.0",
-    "hydra-core==1.3.2",
-    "accelerate",
-    "torchdata",
-    "omegaconf",
-    "ray==2.51.1",
-    "peft",
-    "debugpy==1.8.0",
-    "hf_transfer",
-    "wandb",
-    "datasets>=4.0.0",
-    "tensordict",
-    "jaxtyping",
-    "skyrl-gym",
-    "flash-attn; sys_platform == 'linux'",
-    "polars",
-    "s3fs",
-    "fastapi",
-    "uvicorn",
-    "pybind11",
-    "setuptools",
+    "skyrl[skyrl-train]",
     "transformer-engine[pytorch]==2.10.0; sys_platform == 'linux'",
     "flash-attn==2.8.1; sys_platform == 'linux'",
     "vllm==0.13.0; sys_platform == 'linux'",
