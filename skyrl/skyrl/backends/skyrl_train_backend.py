@@ -117,32 +117,47 @@ class SkyRLTrainBackend(AbstractBackend):
 
     def build_models(self, PolicyWorker):
         cfg = self._cfg
-        pg = self._colocate_pg
-        assert cfg.trainer.placement.colocate_all, "colocate_all must be true for SkyRL-Train backend"
-        assert pg is not None, "placement group must be created for SkyRL-Train backend"
+        if self._cfg.trainer.placement.colocate_all:
+            pg = self._colocate_pg
+            # assert cfg.trainer.placement.colocate_all, "colocate_all must be true for SkyRL-Train backend"
+            assert pg is not None, "placement group must be created for SkyRL-Train backend"
 
-        num_policy_gpus = cfg.trainer.placement.policy_num_gpus_per_node * cfg.trainer.placement.policy_num_nodes
-        num_rollout_gpus = (
-            cfg.generator.num_inference_engines
-            * cfg.generator.inference_engine_tensor_parallel_size
-            * cfg.generator.inference_engine_pipeline_parallel_size
-            * cfg.generator.inference_engine_data_parallel_size
-        )
-        assert (
-            num_policy_gpus == num_rollout_gpus
-        ), "num_policy_gpus and num_rollout_gpus must be the same when colocating all models"
+            num_policy_gpus = cfg.trainer.placement.policy_num_gpus_per_node * cfg.trainer.placement.policy_num_nodes
+            num_rollout_gpus = (
+                cfg.generator.num_inference_engines
+                * cfg.generator.inference_engine_tensor_parallel_size
+                * cfg.generator.inference_engine_pipeline_parallel_size
+                * cfg.generator.inference_engine_data_parallel_size
+            )
+            assert (
+                num_policy_gpus == num_rollout_gpus
+            ), "num_policy_gpus and num_rollout_gpus must be the same when colocating all models"
 
-        policy_model = PPORayActorGroup(
-            cfg,
-            cfg.trainer.placement.policy_num_nodes,
-            cfg.trainer.placement.policy_num_gpus_per_node,
-            PolicyWorker,
-            pg=pg,
-            num_gpus_per_actor=0.2,
-            colocate_all=True,
-            sequence_parallel_size=cfg.trainer.policy.sequence_parallel_size,
-            record_memory=cfg.trainer.policy.record_memory,
-        )
+            policy_model = PPORayActorGroup(
+                cfg,
+                cfg.trainer.placement.policy_num_nodes,
+                cfg.trainer.placement.policy_num_gpus_per_node,
+                PolicyWorker,
+                pg=pg,
+                num_gpus_per_actor=0.2,
+                colocate_all=True,
+                sequence_parallel_size=cfg.trainer.policy.sequence_parallel_size,
+                record_memory=cfg.trainer.policy.record_memory,
+            )
+        else:
+            # defer creation of new policy process group to PPORayActorGroup
+            # self._colocate_pg will be used by the inference engine
+            pg = None
+            policy_model = PPORayActorGroup(
+                cfg,
+                cfg.trainer.placement.policy_num_nodes,
+                cfg.trainer.placement.policy_num_gpus_per_node,
+                PolicyWorker,
+                pg=pg,
+                num_gpus_per_actor=1,
+                colocate_all=False,
+                sequence_parallel_size=cfg.trainer.policy.sequence_parallel_size,
+            )
 
         # set to a large number for megatron scheduler init
         # lr will be managed externally via set_lr()
