@@ -1,4 +1,4 @@
-name: SkyRL
+name: SkyRL-Train-CPU
 
 on: 
   push: 
@@ -6,14 +6,14 @@ on:
       - main 
       - rc/**
     paths:
-      - 'skyrl-train/**'
+      - 'skyrl/**'
       - 'skyrl-gym/**'
-      - '.github/workflows/cpu_ci.yaml'
+      - '.github/workflows/cpu_skyrl_train.yaml'
   pull_request:
     paths:
-      - 'skyrl-train/**'
+      - 'skyrl/**'
       - 'skyrl-gym/**'
-      - '.github/workflows/cpu_ci.yaml'
+      - '.github/workflows/cpu_skyrl_train.yaml'
 
 permissions:
   checks: write   # for status checks to appear
@@ -44,31 +44,27 @@ jobs:
       - name: Run pre-commit hooks
         run: uv pip install pre-commit; pre-commit run --all-files --config .pre-commit-config.yaml
   
-  skyrl_tests:
+  skyrl_train_tests:
     needs: check_code_quality
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
-        working-directory: ./skyrl-train
+        working-directory: ./skyrl
 
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
-        # This is the version of the action for setting up Python, not the Python version.
         uses: actions/setup-python@v5
         with:
-          # Semantic version range syntax or exact version of a Python version
           python-version: '3.12'
           cache: 'pip'
       - name: Install the latest version of uv
         uses: astral-sh/setup-uv@v6
         with:
           activate-environment: true
-      - name: Install skyrl-train
-        run:  uv sync --frozen --extra dev # installs from lock file
       - name: Run cpu tests
-        run:  uv run --frozen pytest tests/cpu/
+        run:  uv run --isolated --extra skyrl-train --extra dev pytest tests/train/ tests/backends/skyrl_train/ --ignore=tests/backends/skyrl_train/gpu
   
   skyrl_gym_tests:
     needs: check_code_quality
@@ -81,10 +77,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
-        # This is the version of the action for setting up Python, not the Python version.
         uses: actions/setup-python@v5
         with:
-          # Semantic version range syntax or exact version of a Python version
           python-version: '3.12'
           cache: 'pip'
       - name: Install the latest version of uv
