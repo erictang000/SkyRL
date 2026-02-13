@@ -306,19 +306,24 @@ class SkyRLTrainBackend(AbstractBackend):
         batch.metadata = {"response_length": max_response_len}
         return batch
 
-    def _pad_batch(self, batch: TrainingInputBatch) -> tuple[TrainingInputBatch, int]:
-        """Pad the batch so its size is divisible by dp_size.
+    def _pad_batch(
+        self, batch: TrainingInputBatch, micro_batch_size: int | None = None
+    ) -> tuple[TrainingInputBatch, int]:
+        """Pad the batch so its size is divisible by the required alignment.
 
         The dispatch layer splits the batch evenly across DP workers, so the
-        batch size must be a multiple of dp_size.  We pad by cloning the first
-        N entries (with loss_mask zeroed) and record the pad count so callers
-        can trim the results.
+        batch size must be a multiple of dp_size.  When *micro_batch_size* is
+        given (needed for the Megatron backend whose ``forward_backward_func``
+        doesn't support ragged micro-batches), we align to
+        ``dp_size * micro_batch_size`` so each per-worker shard is also evenly
+        divisible by *micro_batch_size*.
 
         Returns:
             (padded_batch, pad_size)
         """
         dp_size = self._dispatch.get_lcm_dp_size()
-        pad_size = (dp_size - batch.batch_size % dp_size) % dp_size
+        alignment = dp_size * micro_batch_size if micro_batch_size else dp_size
+        pad_size = (alignment - batch.batch_size % alignment) % alignment
         if pad_size == 0:
             return batch, 0
 
@@ -336,7 +341,7 @@ class SkyRLTrainBackend(AbstractBackend):
 
         padded = TrainingInputBatch(new_tensors)
         padded.metadata = batch.metadata
-        logger.info(f"Padded batch from {batch.batch_size} to {batch.batch_size + pad_size} (dp_size={dp_size})")
+        logger.info(f"Padded batch from {batch.batch_size} to {batch.batch_size + pad_size} (alignment={alignment})")
         return padded, pad_size
 
     def _extract_metrics(self, data: dict) -> dict[str, float]:
@@ -376,7 +381,10 @@ class SkyRLTrainBackend(AbstractBackend):
 
         self._sleep_inference_engines()
         batch = self._to_training_batch(prepared_batch)
-        batch, pad_size = self._pad_batch(batch)
+        micro_bs = (
+            self._cfg.trainer.micro_train_batch_size_per_gpu if self._cfg.trainer.strategy == "megatron" else None
+        )
+        batch, pad_size = self._pad_batch(batch, micro_batch_size=micro_bs)
 
         loss_fn = prepared_batch.all_loss_fns[0]
         if len(set(prepared_batch.all_loss_fns)) > 1:
@@ -436,7 +444,10 @@ class SkyRLTrainBackend(AbstractBackend):
 
         self._sleep_inference_engines()
         batch = self._to_training_batch(prepared_batch)
-        batch, pad_size = self._pad_batch(batch)
+        micro_bs = (
+            self._cfg.trainer.micro_forward_batch_size_per_gpu if self._cfg.trainer.strategy == "megatron" else None
+        )
+        batch, pad_size = self._pad_batch(batch, micro_batch_size=micro_bs)
         data = self._dispatch.forward("policy", batch)
 
         # dispatch.forward() returns TrainingOutputBatch({"output": tensor[batch, max_response_len]})
