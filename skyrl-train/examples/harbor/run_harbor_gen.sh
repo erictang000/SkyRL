@@ -14,12 +14,12 @@ TRIALS_DIR="/home/ray/trials_run"
 
 NUM_GPUS=4
 
-uv run --isolated --extra vllm --extra harbor -m examples.terminal_bench.entrypoints.main_tbench_generate \
+uv run --isolated --extra vllm --extra harbor -m examples.harbor.entrypoints.main_harbor_generate \
   data.train_data=$TRAIN_DATA \
-  hydra.searchpath=['file://examples/terminal_bench'] \
-  +terminal_bench_config=default \
-  ++terminal_bench_config.trials_dir=$TRIALS_DIR \
-  ++terminal_bench_config.trial_name="dummy" \
+  hydra.searchpath=['file://examples/harbor'] \
+  +harbor_trial_config=default \
+  ++harbor_trial_config.trials_dir=$TRIALS_DIR \
+  ++harbor_trial_config.trial_name="dummy" \
   trainer.policy.model.path="Qwen/Qwen2.5-1.5B-Instruct" \
   generator.served_model_name="Qwen2.5-1.5B-Instruct" \
   generator.num_inference_engines=$NUM_GPUS \

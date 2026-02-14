@@ -1,6 +1,6 @@
-# @package terminal_bench_config
+# @package harbor_trial_config
 #
-# Default Harbor Configuration for SkyRL Terminal Bench
+# Default Harbor Configuration for SkyRL training
 #
 # This config is passed directly to Harbor's TrialConfig. You can use any
 # Harbor-supported options here. SkyRL only injects a few runtime values:
