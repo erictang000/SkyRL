@@ -312,6 +312,10 @@ class OffPolicyCorrectionConfig(BaseConfig):
     """Mask sequences with any token IS ratio below this threshold. Suggested: 1e-4. ``None`` to disable."""
     outlier_token_is_threshold_high: Optional[float] = None
     """Mask sequences with any token IS ratio above this threshold. Suggested: 100. ``None`` to disable."""
+    token_mask_eps_low: Optional[float] = None
+    """Per-token hard mask lower epsilon. Tokens with IS ratio < ``1 - eps_low`` are zeroed. ``None`` to disable."""
+    token_mask_eps_high: Optional[float] = None
+    """Per-token hard mask upper epsilon. Tokens with IS ratio > ``1 + eps_high`` are zeroed. ``None`` to disable."""
 
 
 @dataclass

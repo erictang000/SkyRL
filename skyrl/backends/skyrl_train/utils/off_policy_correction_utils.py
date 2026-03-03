@@ -117,6 +117,63 @@ def compute_outlier_token_mask(
     return all_tokens_valid.float(), metrics
 
 
+def compute_token_mask(
+    old_log_probs: torch.Tensor,
+    rollout_logprobs: torch.Tensor,
+    loss_mask: torch.Tensor,
+    off_policy_correction: DictConfig,
+) -> Tuple[torch.Tensor, dict]:
+    """
+    Compute a per-token hard mask that zeros individual divergent tokens.
+
+    Unlike ``compute_outlier_token_mask`` (which rejects *entire sequences*
+    when any single token exceeds a threshold), this function surgically
+    removes only the specific tokens whose importance-sampling ratio
+    ``pi_old / pi_rollout`` falls outside the interval
+    ``[1 - eps_low, 1 + eps_high]``.  Tokens that are already masked
+    (``loss_mask == 0``) are left unchanged.
+
+    For full IS-corrected masking, combine this with token-level TIS
+    (``tis_ratio_type="token"``).
+
+    Args:
+        old_log_probs: Log probabilities from the current training policy.
+        rollout_logprobs: Log probabilities from the rollout (inference) policy.
+        loss_mask: Existing mask indicating valid tokens (1 = valid, 0 = pad).
+        off_policy_correction: Config with ``token_mask_eps_low`` and
+            ``token_mask_eps_high``.
+
+    Returns:
+        Tuple of (token_mask, metrics):
+        - token_mask: Float tensor (same shape as loss_mask) with 0 for
+          out-of-bounds tokens and 1 otherwise.
+        - metrics: Dict containing ``token_mask_ratio`` -- the fraction of
+          originally-valid tokens that were masked out by this filter.
+    """
+    eps_low = off_policy_correction.token_mask_eps_low
+    eps_high = off_policy_correction.token_mask_eps_high
+
+    token_is_log_ratio = old_log_probs - rollout_logprobs
+    token_is_ratio = safe_exp_delta(token_is_log_ratio, clip=20.0, out_dtype=old_log_probs.dtype)
+
+    lower_bound = 1.0 - eps_low
+    upper_bound = 1.0 + eps_high
+
+    in_bounds = (token_is_ratio >= lower_bound) & (token_is_ratio <= upper_bound)
+    # Keep tokens that are already masked out (loss_mask == 0) so we don't
+    # double-count them in the metric.
+    token_mask = (in_bounds | (loss_mask == 0)).float()
+
+    # Metric: fraction of valid tokens that got masked by this filter.
+    valid_tokens = (loss_mask > 0).sum().clamp(min=1)
+    masked_tokens = ((~in_bounds) & (loss_mask > 0)).sum()
+    metrics = {
+        "token_mask_ratio": (masked_tokens / valid_tokens).detach().item(),
+    }
+
+    return token_mask, metrics
+
+
 def compute_sequence_mask(
     old_log_probs: torch.Tensor,
     rollout_logprobs: torch.Tensor,
@@ -237,6 +294,14 @@ def compute_off_policy_correction(
     )
     loss_mask = loss_mask * outlier_mask
     metrics.update(outlier_metrics)
+
+    # Apply per-token hard mask if configured
+    if off_policy_correction.token_mask_eps_low is not None and off_policy_correction.token_mask_eps_high is not None:
+        token_mask, token_mask_metrics = compute_token_mask(
+            old_log_probs, rollout_logprobs, loss_mask, off_policy_correction
+        )
+        loss_mask = loss_mask * token_mask
+        metrics.update(token_mask_metrics)
 
     # Initialize tis_ratio to None (only set if TIS is enabled)
     tis_ratio = None
