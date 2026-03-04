@@ -284,7 +284,7 @@ def compute_off_policy_correction(
     )
 
     # Early return if no correction needed
-    if not apply_tis and not apply_sequence_mask and not apply_token_mask:
+    if not apply_tis and not apply_sequence_mask and not apply_token_mask and not apply_outlier_token_mask:
         return None, {}, loss_mask
 
     is_ratio = safe_exp_delta(old_log_probs - rollout_logprobs, clip=20.0, out_dtype=old_log_probs.dtype)
