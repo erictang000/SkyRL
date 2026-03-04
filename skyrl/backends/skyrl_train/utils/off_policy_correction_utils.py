@@ -140,8 +140,8 @@ def compute_token_mask(
         old_log_probs: Log probabilities from the current training policy.
         rollout_logprobs: Log probabilities from the rollout (inference) policy.
         loss_mask: Existing mask indicating valid tokens (1 = valid, 0 = pad).
-        off_policy_correction: Config with ``token_mask_eps_low`` and
-            ``token_mask_eps_high``.
+        off_policy_correction: Config with ``token_mask_is_threshold_low`` and
+            ``token_mask_is_threshold_high``.
 
     Returns:
         Tuple of (token_mask, metrics):
