@@ -756,8 +756,8 @@ def test_compute_off_policy_correction_with_token_mask():
     loss_mask = torch.tensor([[1.0, 1.0, 1.0]])
 
     config = OffPolicyCorrectionConfig(
-        tis_ratio_type="token",
-        token_tis_ratio_clip_high=10.0,
+        tis_ratio_type=None,
+        token_tis_ratio_clip_high=None,
         sequence_mask_metric=None,
         outlier_token_is_threshold_low=None,
         outlier_token_is_threshold_high=None,

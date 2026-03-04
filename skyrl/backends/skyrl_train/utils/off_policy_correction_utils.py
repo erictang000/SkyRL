@@ -272,9 +272,19 @@ def compute_off_policy_correction(
     apply_tis = tis_ratio_type is not None
     # Check if sequence mask is enabled
     apply_sequence_mask = sequence_mask_metric is not None
+    # check if outlier token mask is enabled
+    apply_outlier_token_mask = (
+        off_policy_correction.outlier_token_is_threshold_low is not None
+        or off_policy_correction.outlier_token_is_threshold_high is not None
+    )
+    # check if token mask is enabled
+    apply_token_mask = (
+        off_policy_correction.token_mask_is_threshold_low is not None
+        and off_policy_correction.token_mask_is_threshold_high is not None
+    )
 
     # Early return if no correction needed
-    if not apply_tis and not apply_sequence_mask:
+    if not apply_tis and not apply_sequence_mask and not apply_token_mask:
         return None, {}, loss_mask
 
     is_ratio = safe_exp_delta(old_log_probs - rollout_logprobs, clip=20.0, out_dtype=old_log_probs.dtype)
@@ -284,19 +294,16 @@ def compute_off_policy_correction(
     metrics["is_ratio_max"] = (is_ratio * loss_mask).max().detach().item()
     metrics["is_ratio_min"] = (is_ratio * loss_mask).min().detach().item()
 
-    # Apply outlier token mask whenever off policy correction is enabled
-    # This rejects sequences with any token having importance ratio outside acceptable bounds
-    outlier_mask, outlier_metrics = compute_outlier_token_mask(
-        old_log_probs, rollout_logprobs, loss_mask, off_policy_correction
-    )
-    loss_mask = loss_mask * outlier_mask
-    metrics.update(outlier_metrics)
+    # Optionally apply outlier token mask if enabled
+    if apply_outlier_token_mask:
+        outlier_mask, outlier_metrics = compute_outlier_token_mask(
+            old_log_probs, rollout_logprobs, loss_mask, off_policy_correction
+        )
+        loss_mask = loss_mask * outlier_mask
+        metrics.update(outlier_metrics)
 
     # Apply per-token hard mask if configured
-    if (
-        off_policy_correction.token_mask_is_threshold_low is not None
-        and off_policy_correction.token_mask_is_threshold_high is not None
-    ):
+    if apply_token_mask:
         token_mask, token_mask_metrics = compute_token_mask(
             old_log_probs, rollout_logprobs, loss_mask, off_policy_correction
         )

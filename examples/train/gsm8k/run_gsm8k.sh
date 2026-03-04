@@ -26,6 +26,8 @@ uv run --isolated --extra fsdp -m skyrl.train.entrypoints.main_base \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
   trainer.placement.critic_num_gpus_per_node=$NUM_GPUS \
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
+  trainer.algorithm.off_policy_correction.token_mask_is_threshold_low=0.5 \
+  trainer.algorithm.off_policy_correction.token_mask_is_threshold_high=2.0 \
   generator.inference_engine.num_engines=$NUM_GPUS \
   generator.inference_engine.tensor_parallel_size=1 \
   trainer.epochs=20 \
