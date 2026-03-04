@@ -167,6 +167,11 @@ trainer:
       outlier_token_is_threshold_low: null
       outlier_token_is_threshold_high: null
 
+      # set to apply a per-token hard mask when IS ratio < `token_mask_is_threshold_low` or > `token_mask_is_threshold_high`
+      # suggested values: 0.5 for low and 2 for high
+      token_mask_is_threshold_low: null
+      token_mask_is_threshold_high: null
+
     # SAPO parameters (only used when policy_loss_type: "sapo") (https://arxiv.org/pdf/2511.20347)
     sapo:
       tau_pos: 1.0
