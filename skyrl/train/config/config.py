@@ -440,6 +440,7 @@ class InferenceEngineConfig(BaseConfig):
     """Sets ``VLLM_ENABLE_V1_MULTIPROCESSING=0`` for reproducibility."""
     enable_prefix_caching: bool = True
     enable_chunked_prefill: bool = True
+    enable_return_routed_experts: bool = False
     max_num_batched_tokens: int = 8192
     enforce_eager: bool = True
     """Disable CUDA graphs for stability. Set to ``False`` for higher performance,

@@ -322,6 +322,7 @@ class MegatronWorker:
 
         self.strategy.hf_config = hf_config
         self.tokenizer = tokenizer
+        self.enable_router_replay = transformer_config_kwargs.get("moe_enable_routing_replay", False)
 
     def configure_lora(self, lora_config, lora_type: Optional[str] = "lora"):
         if lora_type == "lora":
@@ -401,6 +402,10 @@ class MegatronWorker:
         """
         Override `Worker.forward` to support passing the full mini batch to the MegatronModelWrapper.forward method.
         """
+        from skyrl_train.utils.replay_utils import setup_router_replay_forward, clear_router_replay
+        
+        setup_router_replay_forward(data, self.enable_router_replay)
+
         # Run in micro batches grouped into a single mini-batch
         micro_bsz = self.cfg.micro_forward_batch_size_per_gpu
         micro_batches = data.chunk(micro_bsz)
@@ -438,6 +443,7 @@ class MegatronWorker:
         log_probs = log_probs.to("cpu")
         output = TrainingOutputBatch({"output": log_probs})
         output.metadata = data.metadata
+        clear_router_replay()
         return output
 
     def save_hf_model(self, export_dir: str, tokenizer):
@@ -593,6 +599,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         Returns:
             Aggregated metrics dict across all micro batches
         """
+        from skyrl_train.utils.replay_utils import setup_router_replay_forward, clear_router_replay
+        
+        setup_router_replay_forward(data, self.enable_router_replay)
         self.model.train()
         for chunk in self.actor_module:
             # if use distributed optimizer, zero grad buffer will be handled by optimizer
@@ -665,6 +674,8 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # Add loss_fn_outputs back (not reduced, kept as list)
         if all_loss_fn_outputs:
             status["loss_fn_outputs"] = all_loss_fn_outputs
+        
+        clear_router_replay()
 
         return status
 
