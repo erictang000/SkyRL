@@ -604,7 +604,9 @@ class RayPPOTrainer:
         loss_masks: List[List[int]] = generator_output["loss_masks"]
 
         logprobs: Optional[List[List[float]]] = generator_output.get("rollout_logprobs", None)
-        rollout_inference_indices: Optional[List[List[List[List[int]]]]] = generator_output.get("rollout_inference_indices", None)
+        rollout_inference_indices: Optional[List[List[List[List[int]]]]] = generator_output.get(
+            "rollout_inference_indices", None
+        )
 
         (
             sequences_tensor,

@@ -66,7 +66,7 @@ class TurnOutput:
     output_logprobs: Optional[List[float]]
     new_obs: ConversationType
     obs_ids: List[int]
-    rollout_inference_indices: Optional[List[List[List[List[int]]]]] # [seq_len, layer_num, topk]
+    rollout_inference_indices: Optional[List[List[List[List[int]]]]]  # [seq_len, layer_num, topk]
     reward: Optional[float]
     added_eos: bool = False
 

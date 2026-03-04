@@ -135,4 +135,12 @@ def convert_prompts_responses_to_batch_tensors(
     if rollout_inference_indices:
         rollout_inference_indices_tensor = torch.tensor(rollout_inference_indices, dtype=torch.int32)
 
-    return sequences, attention_mask, action_mask, ret_rewards, ret_loss_masks, logprobs_tensor, rollout_inference_indices_tensor
+    return (
+        sequences,
+        attention_mask,
+        action_mask,
+        ret_rewards,
+        ret_loss_masks,
+        logprobs_tensor,
+        rollout_inference_indices_tensor,
+    )

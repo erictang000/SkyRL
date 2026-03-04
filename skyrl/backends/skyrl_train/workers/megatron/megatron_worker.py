@@ -403,7 +403,7 @@ class MegatronWorker:
         Override `Worker.forward` to support passing the full mini batch to the MegatronModelWrapper.forward method.
         """
         from skyrl_train.utils.replay_utils import setup_router_replay_forward, clear_router_replay
-        
+
         setup_router_replay_forward(data, self.enable_router_replay)
 
         # Run in micro batches grouped into a single mini-batch
@@ -600,7 +600,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             Aggregated metrics dict across all micro batches
         """
         from skyrl_train.utils.replay_utils import setup_router_replay_forward, clear_router_replay
-        
+
         setup_router_replay_forward(data, self.enable_router_replay)
         self.model.train()
         for chunk in self.actor_module:
@@ -674,7 +674,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # Add loss_fn_outputs back (not reduced, kept as list)
         if all_loss_fn_outputs:
             status["loss_fn_outputs"] = all_loss_fn_outputs
-        
+
         clear_router_replay()
 
         return status
