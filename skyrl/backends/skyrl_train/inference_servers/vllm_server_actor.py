@@ -26,8 +26,8 @@ from vllm.utils.system_utils import set_ulimit
 
 from skyrl.backends.skyrl_train.inference_servers.common import (
     ServerInfo,
+    find_and_reserve_port,
     get_node_ip,
-    get_open_port,
 )
 from skyrl.backends.skyrl_train.inference_servers.protocols import ServerActorProtocol
 from skyrl.env_vars import (
@@ -122,7 +122,7 @@ class VLLMServerActor(ServerActorProtocol):
         """
         self._cli_args = vllm_cli_args
         self._ip = get_node_ip()
-        self._port = get_open_port(start_port)
+        self._port, self._port_reservation = find_and_reserve_port(start_port)
         self._server_idx = server_idx
         self._num_gpus_per_server = self.compute_num_gpus_per_server(vllm_cli_args)
         self._use_mp_backend = distributed_executor_backend == "mp"
@@ -279,6 +279,11 @@ class VLLMServerActor(ServerActorProtocol):
 
     async def _run_server(self) -> None:
         """Internal method to run the HTTP server."""
+        # Release the port reservation right before vLLM rebinds.
+        if self._port_reservation is not None:
+            self._port_reservation.close()
+            self._port_reservation = None
+
         sock_addr = (self._cli_args.host, self._cli_args.port)
         sock = create_server_socket(sock_addr)
         app = build_app(self._cli_args)
