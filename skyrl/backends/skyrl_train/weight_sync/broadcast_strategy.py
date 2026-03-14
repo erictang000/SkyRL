@@ -102,10 +102,12 @@ class BroadcastInitInfo(WeightSyncInitInfo):
 class BroadcastWeightUpdateRequest(WeightUpdateRequest):
     """Request for broadcast-based weight transfer.
 
-    Contains only metadata - actual tensor data is sent via torch.distributed.broadcast.
+    When sizes is provided, tensors are packed into a single contiguous buffer
+    and broadcast as one NCCL operation per chunk. The receiver uses sizes to unpack.
+    When sizes is None, falls back to per-tensor broadcast (backward compatible).
     """
 
-    pass
+    sizes: Optional[List[int]] = None
 
 
 class BroadcastWeightTransferSender(WeightTransferSender):
@@ -197,10 +199,10 @@ class BroadcastWeightTransferSender(WeightTransferSender):
         torch.distributed.barrier()
 
     async def _send_chunks_legacy(self, chunks: Iterable[WeightChunk]) -> None:
-        """Per-chunk HTTP + torch.distributed.broadcast (legacy path).
+        """Per-chunk packed broadcast (legacy path).
 
-        Supports multi-parameter chunks (bucketing): one HTTP request per chunk,
-        with individual broadcasts for each tensor in the chunk.
+        Packs all tensors in each chunk into a single contiguous buffer and
+        broadcasts it in one NCCL operation, reducing per-tensor broadcast overhead.
         """
         rank = torch.distributed.get_rank()
 
@@ -211,24 +213,33 @@ class BroadcastWeightTransferSender(WeightTransferSender):
         # All ranks iterate through chunks (weight extraction may involve collective ops)
         for chunk in chunks:
             # Only rank 0 sends request to inference engines
+            sizes = [t.numel() for t in chunk.tensors]
+
             if rank == 0:
+                from skyrl.train.utils.utils import str_to_torch_dtype
+
+                dtype = str_to_torch_dtype(self._init_info.model_dtype_str)
+                device = torch.cuda.current_device()
+
+                total_numel = sum(sizes)
+                packed_tensor = torch.empty(total_numel, device=device, dtype=dtype, requires_grad=False)
+                offset = 0
+                for tensor, size in zip(chunk.tensors, sizes):
+                    packed_tensor[offset : offset + size].copy_(tensor.detach().view(-1))
+                    offset += size
+
                 request = BroadcastWeightUpdateRequest(
                     names=chunk.names,
                     dtypes=[self._init_info.model_dtype_str] * len(chunk),
                     shapes=chunk.shapes,
+                    sizes=sizes,
                 )
                 update_weight_task = asyncio.create_task(self._inference_client.update_named_weights(request))
 
-            # Broadcast each tensor from rank 0 to inference engines (no-op on other training ranks).
-            # The receiver processes names in the same order, so broadcasts stay in sync.
-            def broadcast_tensors(tensors, r, group) -> None:
-                if r == 0 and group is not None:
-                    for t in tensors:
-                        torch.distributed.broadcast(t.data, 0, group=group)
+                def broadcast_packed(t, group):
+                    torch.distributed.broadcast(t.data, 0, group=group)
 
-            await asyncio.to_thread(broadcast_tensors, chunk.tensors, rank, self._model_update_group)
-
-            if rank == 0:
+                await asyncio.to_thread(broadcast_packed, packed_tensor, self._model_update_group)
                 await update_weight_task
 
             torch.distributed.barrier()
@@ -265,6 +276,10 @@ class BroadcastWeightTransferReceiver(WeightTransferReceiver):
     def receive_weights(self, request: BroadcastWeightUpdateRequest) -> Iterator[Tuple[str, torch.Tensor]]:
         """Receive weights via broadcast.
 
+        When request.sizes is set (packed mode), receives a single contiguous
+        buffer and unpacks into individual tensors. Otherwise falls back to
+        per-tensor broadcast for backward compatibility.
+
         Args:
             request: Broadcast weight update request with names, dtypes, shapes.
 
@@ -273,14 +288,26 @@ class BroadcastWeightTransferReceiver(WeightTransferReceiver):
         """
         from skyrl.train.utils.utils import str_to_torch_dtype
 
-        for name, dtype_str, shape in zip(request.names, request.dtypes, request.shapes):
-            dtype = str_to_torch_dtype(dtype_str)
+        if request.sizes is not None:
+            assert len(request.sizes) == len(request), "sizes must match number of parameters"
+            dtype = str_to_torch_dtype(request.dtypes[0])
             assert dtype == self._model_dtype, f"dtype mismatch: request {dtype}, model {self._model_dtype}"
 
-            # Allocate tensor and receive via broadcast
-            weight = torch.empty(shape, dtype=dtype, device="cuda")
-            torch.distributed.broadcast(weight, 0, group=self._model_update_group)
-            yield name, weight
+            total_numel = sum(request.sizes)
+            packed = torch.empty(total_numel, dtype=dtype, device="cuda")
+            torch.distributed.broadcast(packed, 0, group=self._model_update_group)
+
+            offset = 0
+            for name, shape, size in zip(request.names, request.shapes, request.sizes):
+                yield name, packed[offset : offset + size].view(*shape)
+                offset += size
+        else:
+            for name, dtype_str, shape in zip(request.names, request.dtypes, request.shapes):
+                dtype = str_to_torch_dtype(dtype_str)
+                assert dtype == self._model_dtype, f"dtype mismatch: request {dtype}, model {self._model_dtype}"
+                weight = torch.empty(shape, dtype=dtype, device="cuda")
+                torch.distributed.broadcast(weight, 0, group=self._model_update_group)
+                yield name, weight
 
     def teardown(self) -> None:
         """Destroy the process group used for weight transfer."""

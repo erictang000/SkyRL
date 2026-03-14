@@ -54,7 +54,6 @@ def get_test_actor_config(model_name=MODEL_NAME) -> SkyRLTrainConfig:
     if "moonlight" in model_name:
         if cfg.trainer.policy.megatron_config.transformer_config_kwargs is None:
             cfg.trainer.policy.megatron_config.transformer_config_kwargs = dict()
-        cfg.trainer.policy.megatron_config.transformer_config_kwargs["num_layers_in_last_pipeline_stage"] = 13
     if "Qwen3-30B" in model_name or "Qwen1.5-MoE" in model_name:
         cfg.trainer.gradient_checkpointing_use_reentrant = True
 
@@ -118,22 +117,23 @@ def get_test_training_batch(batch_size=4) -> TrainingInputBatch:
 
 
 @pytest.mark.parametrize(
-    ("colocate_all", "inference_tp", "megatron_tp", "megatron_pp", "megatron_ep", "megatron_etp", "lora"),
+    ("colocate_all", "inference_tp", "megatron_tp", "megatron_pp", "megatron_ep", "megatron_etp", "lora", "model_name"),
     [
-        pytest.param(True, 4, 2, 2, 1, None, False, marks=_skip_new_inference, id="colocate_all"),
-        pytest.param(False, 2, 2, 1, 1, None, False, id="non_colocated"),
-        pytest.param(True, 4, 2, 2, 1, None, True, marks=_skip_new_inference, id="colocate_all_lora"),
+        pytest.param(True, 4, 2, 2, 1, None, False, MODEL_NAME, marks=_skip_new_inference, id="colocate_all"),
+        pytest.param(False, 2, 2, 1, 1, None, False, MODEL_NAME, id="non_colocated"),
+        pytest.param(True, 4, 2, 2, 1, None, True, MODEL_NAME, marks=_skip_new_inference, id="colocate_all_lora"),
+        pytest.param(False, 2, 2, 1, 1, None, False, "moonshotai/Moonlight-16B-A3B-Instruct", id="non_colocated_moe"),
     ],
 )
 @pytest.mark.megatron
 def test_megatron_policy_weight_sync(
-    ray_init_fixture, colocate_all, inference_tp, megatron_tp, megatron_pp, megatron_ep, megatron_etp, lora
+    ray_init_fixture, colocate_all, inference_tp, megatron_tp, megatron_pp, megatron_ep, megatron_etp, lora, model_name
 ):
     """
     Test that we can sync weights between policy and inference for megatron then run inference
     """
     try:
-        cfg = get_test_actor_config(model_name=MODEL_NAME)
+        cfg = get_test_actor_config(model_name=model_name)
         if lora:
             cfg.trainer.policy.model.lora = SkyRLLoraConfig(rank=16, alpha=16)
         cfg.trainer.placement.colocate_all = colocate_all
@@ -148,10 +148,23 @@ def test_megatron_policy_weight_sync(
         cfg.trainer.policy.megatron_config.expert_model_parallel_size = megatron_ep
         cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = megatron_etp
 
+        # For large MoE models, reduce layers on the training side to fit in GPU memory.
+        # The inference engine still loads the full model; weight sync updates only the
+        # layers present in the training model.
+        if model_name != MODEL_NAME:
+            if cfg.trainer.policy.megatron_config.transformer_config_kwargs is None:
+                cfg.trainer.policy.megatron_config.transformer_config_kwargs = dict()
+            num_layers = 4
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs["num_layers"] = num_layers
+            hf_config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            first_k_dense = getattr(hf_config, "first_k_dense_replace", 0)
+            moe_layer_pattern = [0] * min(first_k_dense, num_layers) + [1] * max(0, num_layers - first_k_dense)
+            cfg.trainer.policy.megatron_config.transformer_config_kwargs["moe_layer_freq"] = moe_layer_pattern
+
         # If colocate is True, this will load the engine, sleep, and wake up the engine
         with InferenceEngineState.create(
             cfg=cfg,
-            model=MODEL_NAME,
+            model=model_name,
             use_local=True,
             backend="vllm",
             sleep_level=2,  # since we explicitly sync weights
@@ -189,10 +202,10 @@ def test_megatron_policy_weight_sync(
                 cfg.generator.inference_engine.backend, cfg.generator.sampling_params
             )
             tokenizer = (
-                AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True) if _SKYRL_USE_NEW_INFERENCE else None
+                AutoTokenizer.from_pretrained(model_name, trust_remote_code=True) if _SKYRL_USE_NEW_INFERENCE else None
             )
             outputs = asyncio.run(
-                run_inference(client, get_test_prompts(MODEL_NAME), sampling_params, tokenizer=tokenizer)
+                run_inference(client, get_test_prompts(model_name), sampling_params, tokenizer=tokenizer)
             )
 
             print(f"Example output: {outputs['responses'][0]}, {outputs['stop_reasons'][0]}")
