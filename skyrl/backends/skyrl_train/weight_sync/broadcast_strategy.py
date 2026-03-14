@@ -197,37 +197,36 @@ class BroadcastWeightTransferSender(WeightTransferSender):
         torch.distributed.barrier()
 
     async def _send_chunks_legacy(self, chunks: Iterable[WeightChunk]) -> None:
-        """Per-chunk HTTP + torch.distributed.broadcast (legacy path)."""
+        """Per-chunk HTTP + torch.distributed.broadcast (legacy path).
+
+        Supports multi-parameter chunks (bucketing): one HTTP request per chunk,
+        with individual broadcasts for each tensor in the chunk.
+        """
         rank = torch.distributed.get_rank()
 
         # Rank 0 must have a process group to broadcast to inference engines
         if rank == 0:
             assert self._model_update_group is not None, "Rank 0 must have model_update_group"
 
-        # Only rank 0 sends request to inference engines
         # All ranks iterate through chunks (weight extraction may involve collective ops)
         for chunk in chunks:
-            assert len(chunk) == 1, f"Broadcast strategy expects single-parameter chunks, got {len(chunk)}"
-
-            name = chunk.names[0]
-            tensor = chunk.tensors[0]
-            shape = chunk.shapes[0]
-
             # Only rank 0 sends request to inference engines
             if rank == 0:
                 request = BroadcastWeightUpdateRequest(
-                    names=[name],
-                    dtypes=[self._init_info.model_dtype_str],
-                    shapes=[shape],
+                    names=chunk.names,
+                    dtypes=[self._init_info.model_dtype_str] * len(chunk),
+                    shapes=chunk.shapes,
                 )
                 update_weight_task = asyncio.create_task(self._inference_client.update_named_weights(request))
 
-            # Broadcast tensor from rank 0 to inference engines (no-op on other training ranks)
-            def broadcast_tensor(t: torch.Tensor) -> None:
-                if rank == 0 and self._model_update_group is not None:
-                    torch.distributed.broadcast(t.data, 0, group=self._model_update_group)
+            # Broadcast each tensor from rank 0 to inference engines (no-op on other training ranks).
+            # The receiver processes names in the same order, so broadcasts stay in sync.
+            def broadcast_tensors(tensors, r, group) -> None:
+                if r == 0 and group is not None:
+                    for t in tensors:
+                        torch.distributed.broadcast(t.data, 0, group=group)
 
-            await asyncio.to_thread(broadcast_tensor, tensor)
+            await asyncio.to_thread(broadcast_tensors, chunk.tensors, rank, self._model_update_group)
 
             if rank == 0:
                 await update_weight_task
