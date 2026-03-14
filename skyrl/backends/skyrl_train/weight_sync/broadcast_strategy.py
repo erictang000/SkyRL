@@ -289,6 +289,9 @@ class BroadcastWeightTransferReceiver(WeightTransferReceiver):
         from skyrl.train.utils.utils import str_to_torch_dtype
 
         if request.sizes is not None:
+            if not request.sizes:
+                return
+
             assert len(request.sizes) == len(request), "sizes must match number of parameters"
             dtype = str_to_torch_dtype(request.dtypes[0])
             assert dtype == self._model_dtype, f"dtype mismatch: request {dtype}, model {self._model_dtype}"
