@@ -133,8 +133,10 @@ class InferenceEngineClient(InferenceEngineInterface):
         stop_reasons: list[str] = [""] * n
         response_logprobs: List[Optional[List[float]]] = [None for _ in range(n)]
         response_ids: List[List[int]] = [[] for _ in range(n)]
+        rollout_expert_indices: List[Optional[List[List[List[int]]]]] = [None for _ in range(n)]
         # a bit hacky for now
         add_resp_logprobs = False
+        add_rollout_expert_indices = False
 
         for indices, result in zip(indices_list, results):
             for local_idx, original_idx in enumerate(indices):
@@ -144,12 +146,16 @@ class InferenceEngineClient(InferenceEngineInterface):
                 if result.get("response_logprobs", None):
                     add_resp_logprobs = True
                     response_logprobs[original_idx] = result["response_logprobs"][local_idx]
+                if result.get("rollout_expert_indices", None):
+                    add_rollout_expert_indices = True
+                    rollout_expert_indices[original_idx] = result["rollout_expert_indices"][local_idx]
 
         return InferenceEngineOutput(
             responses=responses,
             stop_reasons=stop_reasons,
             response_ids=response_ids,
             response_logprobs=response_logprobs if add_resp_logprobs else None,
+            rollout_expert_indices=rollout_expert_indices if add_rollout_expert_indices else None,
         )
 
     def _select_engine_idx(self, session_id: Optional[Union[str, int]] = None) -> int:

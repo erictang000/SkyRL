@@ -201,6 +201,17 @@ def validate_megatron_cfg(cfg: SkyRLTrainConfig):
         if version > "2.8.1":
             logger.warning("flash_attn > 2.8.1 is not supported for using the megatron backend with flash_attn")
 
+    if cfg.trainer.policy.megatron_config.moe_enable_routing_replay:
+        assert (
+            cfg.generator.inference_engine.enable_return_routed_experts
+        ), "rollout router replay (r3) is only supported when enable_return_routed_experts is True"
+        assert (
+            cfg.trainer.policy.megatron_config.pipeline_model_parallel_size == 1
+        ), "pipeline parallel is not yet supported for router replay (r3) with megatron"
+        assert (
+            cfg.trainer.policy.megatron_config.context_parallel_size == 1
+        ), "context parallel is not yet supported for router replay (r3) with megatron"
+
     worker_configs = [(cfg.trainer.policy, "policy"), (cfg.trainer.ref, "ref")]
     for config, worker_type in worker_configs:
         # context, expert, and expert tensor parallel are not yet supported for megatron
@@ -440,6 +451,17 @@ def validate_generator_cfg(cfg: SkyRLTrainConfig):
 
     assert ie_cfg.distributed_executor_backend in ("mp", "ray"), "invalid distributed executor backend"
 
+    if ie_cfg.enable_return_routed_experts:
+        assert (
+            ie_cfg.distributed_executor_backend == "mp"
+        ), "rollout router replay (r3) can hang with the ray backend - use the vLLM mp backend instead"
+        assert (
+            cfg.trainer.strategy == "megatron"
+        ), "rollout router replay (r3) is only supported with Megatron training backend"
+        assert (
+            cfg.trainer.policy.megatron_config.moe_enable_routing_replay
+        ), "moe_enable_routing_replay must be True to consume rollout expert indices"
+
     pp_size = ie_cfg.pipeline_parallel_size
     tp_pp_size = tp_size * pp_size
     num_gpus_per_node = cfg.trainer.placement.policy_num_gpus_per_node
@@ -495,6 +517,11 @@ def _validate_new_inference_cfg(cfg: SkyRLTrainConfig):
     if cfg.generator.inference_engine.distributed_executor_backend == "mp":
         raise ValueError(
             "the mp backend for vLLM is not yet fully supported for the new inference backend. See https://github.com/NovaSky-AI/SkyRL/issues/1309. Use the ray backend instead."
+        )
+
+    if cfg.generator.inference_engine.enable_return_routed_experts:
+        raise ValueError(
+            "rollout router replay (r3) is not yet fully supported for the new inference backend. See https://github.com/NovaSky-AI/SkyRL/issues/815."
         )
 
 

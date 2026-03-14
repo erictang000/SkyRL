@@ -74,6 +74,7 @@ def create_ray_wrapped_inference_engines_from_config(
         "backend": ie_cfg.backend,
         "engine_init_kwargs": ie_cfg.engine_init_kwargs,
         "enable_ray_prometheus_stats": ie_cfg.enable_ray_prometheus_stats,
+        "enable_return_routed_experts": ie_cfg.enable_return_routed_experts,
         "distributed_executor_backend": ie_cfg.distributed_executor_backend,
     }
 

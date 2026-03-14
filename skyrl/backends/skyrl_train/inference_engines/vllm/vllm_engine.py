@@ -149,6 +149,7 @@ class BaseVLLMInferenceEngine(InferenceEngineInterface):
         stop_reasons: List[str] = []
         response_ids: List[List[int]] = []
         response_logprobs: Optional[List[List[float]]] = []
+        rollout_expert_indices: Optional[List[List[List[List[int]]]]] = []
 
         for output in outputs:
             # TODO(tgriggs): Support n>1 sampling.
@@ -170,14 +171,26 @@ class BaseVLLMInferenceEngine(InferenceEngineInterface):
                     del token_logprobs
             response_logprobs.append(_logprobs)
 
+            _routed_experts = None
+            if resp.routed_experts is not None:
+                if hasattr(resp.routed_experts, "tolist"):
+                    _routed_experts = resp.routed_experts.tolist()
+                else:
+                    _routed_experts = resp.routed_experts
+            rollout_expert_indices.append(_routed_experts)
+
         if len(response_logprobs) and response_logprobs[0] is None:
             response_logprobs = None  # hack: assume uniform sampling params
+
+        if len(rollout_expert_indices) > 0 and rollout_expert_indices[0] is None:
+            rollout_expert_indices = None  # hack: assume uniform sampling params
 
         return InferenceEngineOutput(
             responses=responses,
             stop_reasons=stop_reasons,
             response_ids=response_ids,
             response_logprobs=response_logprobs,
+            rollout_expert_indices=rollout_expert_indices,
         )
 
     def _get_engine(self):
