@@ -17,7 +17,7 @@ set -x
 #        bash examples/algorithms/dapo/prepare_dapo_data.sh
 #   4. Run:
 #        export WANDB_API_KEY=<your_key_here>  # or set LOGGER=console below
-#        bash examples/train/megatron/run_dapo_glm_flash.sh
+#        bash examples/train/megatron/run_dapo_glm_flash_r3.sh
 
 MODEL_NAME="zai-org/GLM-4.7-Flash"
 DATA_DIR="$HOME/data/dapo"
@@ -82,12 +82,16 @@ OPTIMIZER_OFFLOAD_FRACTION=1.0
 
 # TIS parameters
 TIS_IMP_RATIO_CAP=2.0
-USE_TIS=true
+USE_TIS=false
 
 # EFA
 SKYRL_LD_LIBRARY_PATH_EXPORT=1
 LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
 FI_PROVIDER=efa
+
+#r3
+ROUTER_REPLAY=true
+DISTRIBUTED_EXECUTOR_BACKEND=mp
 
 SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
@@ -104,6 +108,9 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   generator.eval_sampling_params.top_p=$EVAL_TOP_P \
   generator.eval_sampling_params.temperature=$TEMPERATURE \
   generator.eval_sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
+  generator.inference_engine.enable_return_routed_experts=$ROUTER_REPLAY \
+  trainer.policy.megatron_config.moe_enable_routing_replay=$ROUTER_REPLAY \
+  generator.inference_engine.distributed_executor_backend="mp" \
   trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
   trainer.algorithm.clip_ratio_c=$CLIP_RATIO_C \
   trainer.policy.model.path="$MODEL_NAME" \
