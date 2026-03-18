@@ -23,9 +23,9 @@ MODEL_NAME="zai-org/GLM-4.7-Flash"
 DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-NUM_NODES=2
+NUM_NODES=4
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=4
+NUM_INFERENCE_ENGINES=8
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=4
 LOGGER="wandb"  # change to "console" to print to stdout
 
@@ -93,6 +93,8 @@ FI_PROVIDER=efa
 ROUTER_REPLAY=true
 DISTRIBUTED_EXECUTOR_BACKEND=mp
 
+UV_HTTP_TIMEOUT=100
+
 SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$TEST_FILE']" \
@@ -149,7 +151,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_forward_batch_size_per_gpu=2 \
   trainer.micro_train_batch_size_per_gpu=2 \
-  trainer.ckpt_interval=1000 \
+  trainer.ckpt_interval=10 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
   trainer.policy.optimizer_config.lr=$LR \
@@ -167,10 +169,10 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_glm4_7_flash" \
-  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_test_checkpointing" \
   trainer.export_path="$HOME/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
-  trainer.resume_mode=latest \
+  trainer.resume_mode=null \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.ckpt_path="/mnt/local_storage/ckpts/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   $@

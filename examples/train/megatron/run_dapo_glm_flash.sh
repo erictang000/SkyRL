@@ -142,7 +142,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_forward_batch_size_per_gpu=2 \
   trainer.micro_train_batch_size_per_gpu=2 \
-  trainer.ckpt_interval=1000 \
+  trainer.ckpt_interval=1 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
   trainer.policy.optimizer_config.lr=$LR \
@@ -165,5 +165,5 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   trainer.hf_save_interval=300 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.ckpt_path="s3://skyrl-anyscale/org_vz1ufrqstecz2uet1xkwdzrm9b/cld_cntqf5nf645kv8esukgcy9yveg/artifact_storage/ckpts/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   $@
