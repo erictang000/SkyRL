@@ -17,11 +17,11 @@ set -x
 #        uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 #   4. Run:
 #        export WANDB_API_KEY=<your_key_here>  # or set LOGGER=console below
-#        bash examples/train/megatron/run_megatron_grpo_glm4_7_30b.sh
+#        bash examples/train/megatron/run_megatron_grpo_glm4_7_30b_lora.sh
 
 MODEL_NAME="zai-org/GLM-4.7-Flash"
 DATA_DIR=${DATA_DIR:-"$HOME/data/gsm8k"}
-CKPT_DIR=${CKPT_DIR:-"/mnt/local_storage/ckpts/glm4_7_30b_a3b_grpo_megatron"}
+CKPT_DIR=${CKPT_DIR:-"/mnt/local_storage/ckpts/glm4_7_30b_a3b_grpo_megatron_lora"}
 LOGGER="wandb"  # change to "console" to print to stdout
 
 INFERENCE_BACKEND="vllm"
@@ -36,7 +36,7 @@ MEGATRON_CP=1
 MEGATRON_EP=8
 MEGATRON_ETP=1
 # MEGATRON_LAST_PIPELINE_STAGE_LAYER=23
-  # trainer.policy.megatron_config.transformer_config_kwargs.num_layers_in_last_pipeline_stage=$MEGATRON_LAST_PIPELINE_STAGE_LAYER \
+#   trainer.policy.megatron_config.transformer_config_kwargs.num_layers_in_last_pipeline_stage=$MEGATRON_LAST_PIPELINE_STAGE_LAYER \
 
 
 # vLLM inference: 2 engines x TP=4 = 8 GPUs (20 heads / 4 = 5 heads per GPU)
@@ -64,6 +64,15 @@ OPTIMIZER_OFFLOAD_FRACTION=1.0
 ROUTER_REPLAY=True
 DISTRIBUTED_EXECUTION_BACKEND="mp"
 
+# LoRA
+LORA_RANK=128
+LORA_ALPHA=128
+
+# TIS parameters
+TIS_IMP_RATIO_CAP=2.0
+USE_TIS=true
+
+
 SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/validation.parquet']" \
@@ -77,6 +86,8 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.
   generator.inference_engine.tensor_parallel_size=$INFERENCE_ENGINE_TP \
   generator.inference_engine.enforce_eager=true \
   generator.inference_engine.engine_init_kwargs.max_model_len=$INFERENCE_ENGINE_MAX_MODEL_LEN \
+  trainer.policy.model.lora.rank=$LORA_RANK \
+  trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.policy.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
   trainer.policy.megatron_config.context_parallel_size=$MEGATRON_CP \
@@ -89,6 +100,8 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.
   trainer.policy.megatron_config.moe_router_enable_expert_bias=$MOE_ROUTER_EXPERT_BIAS \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_cpu_offload=$OPTIMIZER_CPU_OFFLOAD \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_offload_fraction=$OPTIMIZER_OFFLOAD_FRACTION \
+  trainer.algorithm.use_tis=$USE_TIS \
+  trainer.algorithm.tis_imp_ratio_cap=$TIS_IMP_RATIO_CAP \
   trainer.policy.megatron_config.moe_enable_routing_replay=$ROUTER_REPLAY \
   generator.inference_engine.enable_return_routed_experts=$ROUTER_REPLAY \
   generator.inference_engine.distributed_executor_backend=$DISTRIBUTED_EXECUTION_BACKEND \
@@ -104,10 +117,10 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.
   trainer.policy_mini_batch_size=64 \
   trainer.micro_forward_batch_size_per_gpu=2 \
   trainer.micro_train_batch_size_per_gpu=2 \
-  trainer.ckpt_interval=100 \
+  trainer.ckpt_interval=10 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
-  trainer.policy.optimizer_config.lr=1.0e-6 \
+  trainer.policy.optimizer_config.lr=1.0e-5 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
   trainer.policy.optimizer_config.max_grad_norm=1.0 \
   trainer.algorithm.use_kl_loss=false \
@@ -121,7 +134,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="glm4_7_30b_grpo" \
-  trainer.run_name="glm4_7_30b_a3b_grpo_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_fixed_weight_sync_r3" \
+  trainer.run_name="glm4_7_30b_a3b_grpo_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_lora_{$LORA_RANK}_{$LORA_ALPHA}_lr_1e-5_r3_tis_2" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$CKPT_DIR" \
   $@

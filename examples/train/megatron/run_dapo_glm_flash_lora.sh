@@ -17,15 +17,15 @@ set -x
 #        bash examples/algorithms/dapo/prepare_dapo_data.sh
 #   4. Run:
 #        export WANDB_API_KEY=<your_key_here>  # or set LOGGER=console below
-#        bash examples/train/megatron/run_dapo_glm_flash_r3.sh
+#        bash examples/train/megatron/run_dapo_glm_flash_lora.sh
 
 MODEL_NAME="zai-org/GLM-4.7-Flash"
 DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-NUM_NODES=4
+NUM_NODES=2
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=8
+NUM_INFERENCE_ENGINES=4
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=4
 LOGGER="wandb"  # change to "console" to print to stdout
 
@@ -56,7 +56,6 @@ MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=8
 EVAL_N_SAMPLES_PER_PROMPT=32
 ENFORCE_EAGER=true # cuda graphs can cause some instability
-LR=1e-6
 
 # GLM-4.7-Flash supports flash attention (v_head_dim == qk_head_dim + qk_rope_head_dim == 256).
 FLASH_ATTN=true
@@ -82,18 +81,17 @@ OPTIMIZER_OFFLOAD_FRACTION=1.0
 
 # TIS parameters
 TIS_IMP_RATIO_CAP=2.0
-USE_TIS=false
+USE_TIS=true
 
 # EFA
 SKYRL_LD_LIBRARY_PATH_EXPORT=1
 LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
 FI_PROVIDER=efa
 
-#r3
-ROUTER_REPLAY=true
-DISTRIBUTED_EXECUTOR_BACKEND=mp
-
-UV_HTTP_TIMEOUT=100
+# LoRA
+LR=1e-5
+LORA_RANK=128
+LORA_ALPHA=128
 
 SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
@@ -110,12 +108,11 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   generator.eval_sampling_params.top_p=$EVAL_TOP_P \
   generator.eval_sampling_params.temperature=$TEMPERATURE \
   generator.eval_sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
-  generator.inference_engine.enable_return_routed_experts=$ROUTER_REPLAY \
-  trainer.policy.megatron_config.moe_enable_routing_replay=$ROUTER_REPLAY \
-  generator.inference_engine.distributed_executor_backend="mp" \
   trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
   trainer.algorithm.clip_ratio_c=$CLIP_RATIO_C \
   trainer.policy.model.path="$MODEL_NAME" \
+  trainer.policy.model.lora.rank=$LORA_RANK \
+  trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
   trainer.placement.policy_num_nodes=$NUM_NODES \
@@ -151,7 +148,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_forward_batch_size_per_gpu=2 \
   trainer.micro_train_batch_size_per_gpu=2 \
-  trainer.ckpt_interval=10 \
+  trainer.ckpt_interval=1 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
   trainer.policy.optimizer_config.lr=$LR \
@@ -169,10 +166,10 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_glm_flash" \
-  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_test_checkpointing" \
+  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.export_path="$HOME/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
-  trainer.resume_mode=null \
+  trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
   trainer.ckpt_path="/mnt/local_storage/ckpts/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   $@

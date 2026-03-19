@@ -17,7 +17,7 @@ set -x
 #        bash examples/algorithms/dapo/prepare_dapo_data.sh
 #   4. Run:
 #        export WANDB_API_KEY=<your_key_here>  # or set LOGGER=console below
-#        bash examples/train/megatron/run_dapo_glm_flash_r3.sh
+#        bash examples/train/megatron/run_dapo_glm_flash_lora_r3.sh
 
 MODEL_NAME="zai-org/GLM-4.7-Flash"
 DATA_DIR="$HOME/data/dapo"
