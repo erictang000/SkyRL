@@ -16,11 +16,13 @@ INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 NUM_NODES=1
 NUM_GPUS=8
 
-MEGATRON_TP=4
-MEGATRON_PP=1
+MEGATRON_TP=2
+MEGATRON_PP=2
 MEGATRON_CP=1
-MEGATRON_EP=8
+MEGATRON_EP=4
 MEGATRON_ETP=1
+MEGATRON_LAST_PIPELINE_STAGE_LAYER=13
+
 
 NUM_INFERENCE_ENGINES=1
 INFERENCE_ENGINE_TP=8
@@ -30,8 +32,12 @@ INFERENCE_ENGINE_TP=8
 FLASH_ATTN=false
 
 # router replay (r3)
-ROUTER_REPLAY=true
-DISTRIBUTED_EXECUTION_BACKEND="mp"
+ROUTER_REPLAY=False
+DISTRIBUTED_EXECUTION_BACKEND="ray"
+
+# lora
+LORA_RANK=128
+LORA_ALPHA=128
 
 SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron --with blobfile -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -44,6 +50,9 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron --with blobfile
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
   generator.inference_engine.num_engines=$NUM_INFERENCE_ENGINES \
   generator.inference_engine.tensor_parallel_size=$INFERENCE_ENGINE_TP \
+  trainer.policy.model.lora.rank=$LORA_RANK \
+  trainer.policy.model.lora.alpha=$LORA_ALPHA \
+  trainer.policy.megatron_config.transformer_config_kwargs.num_layers_in_last_pipeline_stage=$MEGATRON_LAST_PIPELINE_STAGE_LAYER \
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.policy.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
   trainer.policy.megatron_config.context_parallel_size=$MEGATRON_CP \
@@ -66,7 +75,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron --with blobfile
   trainer.ckpt_interval=100 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
-  trainer.policy.optimizer_config.lr=1.0e-6 \
+  trainer.policy.optimizer_config.lr=1.0e-5 \
   trainer.algorithm.use_kl_loss=false \
   generator.inference_engine.backend=$INFERENCE_BACKEND \
   generator.inference_engine.run_engines_locally=true \
@@ -78,7 +87,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron --with blobfile
   generator.inference_engine.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_router_replay" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_moonlight16b-a3b_with_router_replay" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_moonlight16b-a3b_lora_pls_lr_1e-5" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@

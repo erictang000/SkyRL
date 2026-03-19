@@ -7,7 +7,7 @@ set -x
 # export WANDB_API_KEY=<your_key_here>
 # bash examples/megatron/run_megatron_lora_qwen3-30b-a3b.sh
 
-DATA_DIR="$HOME/data/gsm8k"
+DATA_DIR="/mnt/cluster_storage/data/gsm8k"
 LOGGER="wandb"  # change to "console" to print to stdout
 MODEL_NAME="Qwen/Qwen3-30B-A3B"
 
@@ -16,10 +16,10 @@ INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 NUM_NODES=1
 NUM_GPUS=8
 
-MEGATRON_TP=4
-MEGATRON_PP=1
+MEGATRON_TP=2
+MEGATRON_PP=2
 MEGATRON_CP=1
-MEGATRON_EP=8
+MEGATRON_EP=4
 MEGATRON_ETP=1
 
 NUM_INFERENCE_ENGINES=1
@@ -96,7 +96,7 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   generator.n_samples_per_prompt=5 \
   generator.inference_engine.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="gsm8k_megatron" \
+  trainer.project_name="megatron_lora_debugging" \
   trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_qwen3_30b_a3b" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
