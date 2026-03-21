@@ -1,12 +1,12 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from skyrl.tinker import api
 
 
 def _make_datum() -> api.Datum:
     return api.Datum(
-        model_input=api.ModelInput(chunks=[api.ModelInputChunk(tokens=[1, 2, 3])]),
+        model_input=api.ModelInput(chunks=[api.EncodedTextChunk(tokens=[1, 2, 3])]),
         loss_fn_inputs={
             "target_tokens": api.TensorData(data=[2, 3, 4]),
             "weights": api.TensorData(data=[1.0, 1.0, 1.0]),
@@ -39,3 +39,16 @@ def test_forward_backward_input_rejects_loss_fn_config_for_cross_entropy():
             loss_fn="cross_entropy",
             loss_fn_config={"clip_low_threshold": 0.9},
         )
+
+
+# --- ModelInputChunk discriminator tests (api) ---
+
+_api_adapter = TypeAdapter(api.ModelInputChunk)
+
+
+class TestApiChunkDiscriminatorWithoutType:
+    """Chunks resolved when ``type`` is absent (exclude_unset case)."""
+
+    def test_encoded_text(self):
+        obj = _api_adapter.validate_python({"tokens": [1, 2]})
+        assert isinstance(obj, api.EncodedTextChunk)

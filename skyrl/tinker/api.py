@@ -13,7 +13,11 @@ import fastapi
 import psutil
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    model_validator,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -295,11 +299,15 @@ class TrainingRun(BaseModel):
     user_metadata: dict[str, str] | None = None
 
 
-class ModelInputChunk(BaseModel):
+class EncodedTextChunk(BaseModel):
+    type: Literal["encoded_text"] = "encoded_text"
     tokens: list[int]
 
-    def to_types(self) -> types.ModelInputChunk:
-        return types.ModelInputChunk(tokens=self.tokens)
+    def to_types(self) -> types.EncodedTextChunk:
+        return types.EncodedTextChunk(tokens=self.tokens)
+
+
+ModelInputChunk = EncodedTextChunk
 
 
 class ModelInput(BaseModel):
