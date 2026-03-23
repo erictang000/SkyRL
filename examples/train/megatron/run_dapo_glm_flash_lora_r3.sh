@@ -67,13 +67,17 @@ MEGATRON_CP=1
 MEGATRON_EP=8
 MEGATRON_ETP=1
 # MEGATRON_LAST_PIPELINE_STAGE_LAYER=23
+#   trainer.policy.megatron_config.transformer_config_kwargs.num_layers_in_last_pipeline_stage=$MEGATRON_LAST_PIPELINE_STAGE_LAYER \
+
 
 # MoE routing flags (DeepSeek-V3 style: sigmoid scoring with expert bias)
 MOE_TOKEN_DISPATCHER="alltoall"
 MOE_ROUTER_LB="none"
 MOE_GROUPED_GEMM=true
 MOE_ROUTER_SCORE_FN="sigmoid"
-MOE_ROUTER_EXPERT_BIAS=true
+MOE_ROUTER_EXPERT_BIAS=false
+# MOE_ROUTER_UPDATE_RATE=0
+# moe_router_bias_update_rate
 
 # CPU optimizer offload to fit in 80GB GPUs
 OPTIMIZER_CPU_OFFLOAD=true
@@ -141,6 +145,8 @@ UV_HTTP_TIMEOUT=100 SKYRL_RAY_PG_TIMEOUT_IN_S=600 uv run --isolated --extra mega
   trainer.policy.megatron_config.moe_grouped_gemm=$MOE_GROUPED_GEMM \
   trainer.policy.megatron_config.moe_router_score_function=$MOE_ROUTER_SCORE_FN \
   trainer.policy.megatron_config.moe_router_enable_expert_bias=$MOE_ROUTER_EXPERT_BIAS \
+  trainer.policy.megatron_config.optimizer_config_kwargs.overlap_cpu_optimizer_d2h_h2d=$OPTIMIZER_CPU_OFFLOAD \
+  trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer=$OPTIMIZER_CPU_OFFLOAD \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_cpu_offload=$OPTIMIZER_CPU_OFFLOAD \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_offload_fraction=$OPTIMIZER_OFFLOAD_FRACTION \
   trainer.policy.megatron_config.empty_cuda_cache=true \
@@ -178,7 +184,7 @@ UV_HTTP_TIMEOUT=100 SKYRL_RAY_PG_TIMEOUT_IN_S=600 uv run --isolated --extra mega
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_glm_flash" \
-  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_tis_r3_lora" \
+  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_tis_r3_lora_no_expert_bias" \
   trainer.export_path="/mnt/local_storage/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
   trainer.resume_mode=null \

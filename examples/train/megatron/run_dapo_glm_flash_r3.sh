@@ -20,7 +20,7 @@ set -x
 #        bash examples/train/megatron/run_dapo_glm_flash_r3.sh
 
 MODEL_NAME="zai-org/GLM-4.7-Flash"
-DATA_DIR="$HOME/data/dapo"
+DATA_DIR="/mnt/local_storage/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 NUM_NODES=4
@@ -169,8 +169,8 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_glm_flash" \
-  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_test_checkpointing" \
-  trainer.export_path="$HOME/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_test_full" \
+  trainer.export_path="/mnt/local_storage/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
   trainer.resume_mode=null \
   trainer.max_ckpts_to_keep=3 \
