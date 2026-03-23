@@ -92,12 +92,20 @@ class UnloadModelOutput(BaseModel):
     type: str = "unload_model"
 
 
-class ModelInputChunk(BaseModel):
+class EncodedTextChunk(BaseModel):
+    type: Literal["encoded_text"] = "encoded_text"
     tokens: list[int]
+
+
+ModelInputChunk = EncodedTextChunk
 
 
 class ModelInput(BaseModel):
     chunks: list[ModelInputChunk]
+
+
+class RenderedModelInput(BaseModel):
+    prompt_ids: list[int]
 
 
 class TensorData(BaseModel):
@@ -224,8 +232,8 @@ class PreparedModelPassBatch(BaseModel):
     Engine extracts this from requests, backend converts to JAX arrays and computes.
     """
 
-    # Per-example data (list of lists)
-    all_input_ids: list[list[int]]
+    # Per-example data
+    all_model_inputs: list[ModelInput]
     all_targets: list[list[int]]
     all_token_weights: list[list[float]]
     all_sampling_logprobs: list[list[float]]
@@ -247,7 +255,7 @@ class PreparedSampleBatch(BaseModel):
     """
 
     # Per-sample data
-    all_prompts: list[list[int]]
+    all_model_inputs: list[ModelInput]
     all_sampling_params: list[SamplingParams]
     all_model_ids: list[str]
     all_checkpoint_ids: list[str]
