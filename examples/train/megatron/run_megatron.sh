@@ -6,8 +6,8 @@ set -x
 # export WANDB_API_KEY=<your_key_here>
 # bash examples/train/megatron/run_megatron.sh
 
-DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=4
+DATA_DIR="/mnt/local_storage/data/gsm8k"
+NUM_GPUS=8
 LOGGER="wandb"  # change to "console" to print to stdout
 MODEL_NAME="Qwen/Qwen3-0.6B"
 
@@ -31,7 +31,9 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.strategy=megatron \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
-  generator.inference_engine.num_engines=$NUM_GPUS \
+  trainer.placement.policy_num_nodes=2 \
+  trainer.placement.ref_num_nodes=2 \
+  generator.inference_engine.num_engines=16 \
   generator.inference_engine.tensor_parallel_size=1 \
   trainer.policy.megatron_config.torch_profiler_config.enable=$ENABLE_TORCH_PROFILER \
   trainer.policy.megatron_config.torch_profiler_config.ranks=$RANKS_TO_PROFILE \
@@ -48,11 +50,12 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.eval_before_train=false \
   trainer.eval_interval=5 \
   trainer.update_epochs_per_batch=1 \
-  trainer.train_batch_size=128 \
+  trainer.train_batch_size=64 \
   trainer.policy_mini_batch_size=64 \
   trainer.micro_forward_batch_size_per_gpu=4 \
   trainer.micro_train_batch_size_per_gpu=4 \
-  trainer.ckpt_interval=10 \
+  trainer.ckpt_interval=1 \
+  trainer.max_ckpts_to_keep=-1 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
   trainer.policy.optimizer_config.lr=1.0e-6 \
@@ -66,8 +69,8 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   generator.n_samples_per_prompt=5 \
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}" \
+  trainer.project_name="gsm8k_megatron_test" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}_multinode_s3" \
   trainer.resume_mode=null \
-  trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
+  trainer.ckpt_path="/mnt/local_storage/gsm8k_ckpt" \
   $@

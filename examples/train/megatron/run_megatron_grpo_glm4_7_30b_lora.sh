@@ -56,6 +56,8 @@ MOE_ROUTER_LB="none"
 MOE_GROUPED_GEMM=true
 MOE_ROUTER_SCORE_FN="sigmoid"
 MOE_ROUTER_EXPERT_BIAS=true
+MOE_ROUTER_EXPERT_BIAS_UPDATE_RATE=0
+moe_router_bias_update_rate=0
 
 # CPU optimizer offload to fit in 80GB GPUs
 OPTIMIZER_CPU_OFFLOAD=true

@@ -90,7 +90,7 @@ LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
 FI_PROVIDER=efa
 
 #r3
-ROUTER_REPLAY=true
+ROUTER_REPLAY=false
 DISTRIBUTED_EXECUTOR_BACKEND=mp
 
 UV_HTTP_TIMEOUT=100
@@ -169,7 +169,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=450 uv run --isolated --extra megatron -m examples.tra
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_glm_flash" \
-  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_test_full" \
+  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_test_full_no_r3" \
   trainer.export_path="/mnt/local_storage/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
   trainer.resume_mode=null \
