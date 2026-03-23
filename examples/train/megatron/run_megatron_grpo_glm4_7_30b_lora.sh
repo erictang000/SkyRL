@@ -20,8 +20,9 @@ set -x
 #        bash examples/train/megatron/run_megatron_grpo_glm4_7_30b_lora.sh
 
 MODEL_NAME="zai-org/GLM-4.7-Flash"
-DATA_DIR=${DATA_DIR:-"$HOME/data/gsm8k"}
+DATA_DIR=${DATA_DIR:-"/mnt/local_storage/data/gsm8k"}
 CKPT_DIR=${CKPT_DIR:-"/mnt/local_storage/ckpts/glm4_7_30b_a3b_grpo_megatron_lora"}
+EXPORT_DIR=${EXPORT_DIR:-"/mnt/local_storage/exports"}
 LOGGER="wandb"  # change to "console" to print to stdout
 
 INFERENCE_BACKEND="vllm"
@@ -61,7 +62,7 @@ OPTIMIZER_CPU_OFFLOAD=true
 OPTIMIZER_OFFLOAD_FRACTION=1.0
 
 # Routing replay params
-ROUTER_REPLAY=True
+ROUTER_REPLAY=false
 DISTRIBUTED_EXECUTION_BACKEND="mp"
 
 # LoRA
@@ -70,13 +71,22 @@ LORA_ALPHA=128
 
 # TIS parameters
 TIS_IMP_RATIO_CAP=2.0
-USE_TIS=true
+USE_TIS=false
+
+# MIS parameters
+SEQ_MASK=null # null to turn off
+SEQ_MASK_HIGH=1.05
+SEQ_MASK_LOW=0.95
+
+# Policy loss
+POLICY_LOSS=regular
 
 
-SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
+SKYRL_RAY_PG_TIMEOUT_IN_S=600 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/validation.parquet']" \
   trainer.algorithm.advantage_estimator="grpo" \
+  trainer.algorithm.policy_loss_type=$POLICY_LOSS \
   trainer.policy.model.path=$MODEL_NAME \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
@@ -102,6 +112,9 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_offload_fraction=$OPTIMIZER_OFFLOAD_FRACTION \
   trainer.algorithm.use_tis=$USE_TIS \
   trainer.algorithm.tis_imp_ratio_cap=$TIS_IMP_RATIO_CAP \
+  trainer.algorithm.off_policy_correction.sequence_mask_metric=$SEQ_MASK \
+  trainer.algorithm.off_policy_correction.geo_mask_high=$SEQ_MASK_HIGH \
+  trainer.algorithm.off_policy_correction.geo_mask_low=$SEQ_MASK_LOW \
   trainer.policy.megatron_config.moe_enable_routing_replay=$ROUTER_REPLAY \
   generator.inference_engine.enable_return_routed_experts=$ROUTER_REPLAY \
   generator.inference_engine.distributed_executor_backend=$DISTRIBUTED_EXECUTION_BACKEND \
@@ -134,7 +147,8 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=300 uv run --isolated --extra megatron -m skyrl.train.
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="glm4_7_30b_grpo" \
-  trainer.run_name="glm4_7_30b_a3b_grpo_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_lora_{$LORA_RANK}_{$LORA_ALPHA}_lr_1e-5_r3_tis_2" \
+  trainer.run_name="glm4_7_30b_a3b_grpo_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_lora_{$LORA_RANK}_{$LORA_ALPHA}_lr_1e-5_no_r3_commit_ec49f5d45cc5" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$CKPT_DIR" \
+  trainer.export_path="$EXPORT_DIR" \
   $@
