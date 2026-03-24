@@ -57,14 +57,13 @@ MOE_GROUPED_GEMM=true
 MOE_ROUTER_SCORE_FN="sigmoid"
 MOE_ROUTER_EXPERT_BIAS=true
 MOE_ROUTER_EXPERT_BIAS_UPDATE_RATE=0
-moe_router_bias_update_rate=0
 
 # CPU optimizer offload to fit in 80GB GPUs
 OPTIMIZER_CPU_OFFLOAD=true
 OPTIMIZER_OFFLOAD_FRACTION=1.0
 
 # Routing replay params
-ROUTER_REPLAY=false
+ROUTER_REPLAY=True
 DISTRIBUTED_EXECUTION_BACKEND="mp"
 
 # LoRA
@@ -110,6 +109,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=600 uv run --isolated --extra megatron -m skyrl.train.
   trainer.policy.megatron_config.moe_grouped_gemm=$MOE_GROUPED_GEMM \
   trainer.policy.megatron_config.moe_router_score_function=$MOE_ROUTER_SCORE_FN \
   trainer.policy.megatron_config.moe_router_enable_expert_bias=$MOE_ROUTER_EXPERT_BIAS \
+  trainer.policy.megatron_config.transformer_config_kwargs.moe_router_bias_update_rate=$MOE_ROUTER_EXPERT_BIAS_UPDATE_RATE \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_cpu_offload=$OPTIMIZER_CPU_OFFLOAD \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_offload_fraction=$OPTIMIZER_OFFLOAD_FRACTION \
   trainer.algorithm.use_tis=$USE_TIS \
@@ -149,7 +149,7 @@ SKYRL_RAY_PG_TIMEOUT_IN_S=600 uv run --isolated --extra megatron -m skyrl.train.
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="glm4_7_30b_grpo" \
-  trainer.run_name="glm4_7_30b_a3b_grpo_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_lora_{$LORA_RANK}_{$LORA_ALPHA}_lr_1e-5_no_r3_commit_ec49f5d45cc5" \
+  trainer.run_name="glm4_7_30b_a3b_grpo_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_lora_{$LORA_RANK}_{$LORA_ALPHA}_lr_1e-5_r3_moe_router_bias_update_rate_0" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$CKPT_DIR" \
   trainer.export_path="$EXPORT_DIR" \
