@@ -176,7 +176,7 @@ class WorkerDispatch:
 
         Returns:
             ``result[i][dp_rank]`` is the ObjectRef for mini-batch *i*,
-            DP rank *dp_rank*.  Reusable across epochs.
+            DP rank *dp_rank*.
         """
         dp_size = self._actor_groups[model].actor_infos[0].rank.dp_size
         return MeshDispatch.stage_chunks(dp_size, data, mini_batch_size)
@@ -238,8 +238,8 @@ class WorkerDispatch:
         """
         Run forward/backward pass using pre-staged per-DP chunks.
 
-        Each worker receives only its own small chunk from the object store,
-        avoiding deserialization skew that can cause NCCL collective timeouts.
+        Each worker receives only its own DP chunk from the object store,
+        avoiding unncecessary deserialization overhead.
 
         Args:
             model: Model name ("policy" or "critic")

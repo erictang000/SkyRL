@@ -173,11 +173,10 @@ class MeshDispatch(Dispatch):
         mini_batch_size: int,
     ) -> List[List[ObjectRef]]:
         """
-        Pre-stage all mini-batch chunks in the object store before the training loop.
+        Pre-stage all mini-batch chunks into the object store.
 
         Slices the full batch into mini-batches, chunks each by DP rank, and
-        ``ray.put``s each chunk. This keeps all serialization off the critical
-        path so GPUs stay saturated during training.
+        ``ray.put``s each chunk.
 
         Args:
             dp_size: Number of data-parallel ranks
@@ -217,9 +216,8 @@ class MeshDispatch(Dispatch):
         """
         Dispatch pre-staged per-DP chunks to workers.
 
-        Each worker receives only its own small chunk (already in the object
-        store), avoiding large deserialization skew that can cause NCCL
-        collective timeouts.
+        Each worker receives only its own chunk (already in the object
+        store), avoiding unnecessary deserialization overhead.
 
         Args:
             actor_infos: List of actor info objects
