@@ -161,7 +161,7 @@ def convert_prompts_responses_to_batch_tensors(
 
     # rollout_expert_indices_tensor = None
     # roughly 3.2768 gb
-    rollout_expert_indices_tensor = torch.zeros(len(prompts), 10000, 50, 16, dtype=torch.int32)
+    rollout_expert_indices_tensor = torch.zeros(len(prompts), 1000, 50, 16, dtype=torch.int32)
     # if rollout_expert_indices:
     #     first_non_empty = next((x for x in rollout_expert_indices if x), None)
     #     if first_non_empty:

@@ -1089,8 +1089,7 @@ class RayPPOTrainer:
 
         # Training loop over epochs and mini-batches
         for _epoch in range(self.cfg.trainer.update_epochs_per_batch):
-            for local_step, chunk_refs in enumerate(all_chunk_refs):
-
+            for chunk_refs in all_chunk_refs:
                 status = self.dispatch.forward_backward_from_staged(model, chunk_refs)
                 for k, v in status.items():
                     all_metrics[k].append(v)
