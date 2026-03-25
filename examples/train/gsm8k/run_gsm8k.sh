@@ -11,10 +11,13 @@ set -x
 # You can override the default values with e.g.: `NUM_GPUS=1 bash examples/train/gsm8k/run_gsm8k.sh`.
 
 : "${DATA_DIR:="$HOME/data/gsm8k"}"
-: "${NUM_GPUS:=4}"
+: "${NUM_GPUS:=8}"
 : "${LOGGER:=wandb}" # change to "console" to print to stdout
 
 : "${INFERENCE_BACKEND:=vllm}"
+
+SKYRL_LD_LIBRARY_PATH_EXPORT=1
+LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
 
 uv run --isolated --extra fsdp -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -23,10 +26,11 @@ uv run --isolated --extra fsdp -m skyrl.train.entrypoints.main_base \
   trainer.policy.model.path="Qwen/Qwen2.5-1.5B-Instruct" \
   trainer.placement.colocate_all=true \
   trainer.strategy=fsdp2 \
-  trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
+  trainer.placement.policy_num_nodes=2 \
+  trainer.placement.policy_num_gpus_per_node=8 \
   trainer.placement.critic_num_gpus_per_node=$NUM_GPUS \
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
-  generator.inference_engine.num_engines=$NUM_GPUS \
+  generator.inference_engine.num_engines=16 \
   generator.inference_engine.tensor_parallel_size=1 \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
@@ -35,8 +39,8 @@ uv run --isolated --extra fsdp -m skyrl.train.entrypoints.main_base \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=1024 \
   trainer.policy_mini_batch_size=256 \
-  trainer.micro_forward_batch_size_per_gpu=64 \
-  trainer.micro_train_batch_size_per_gpu=64 \
+  trainer.micro_forward_batch_size_per_gpu=40 \
+  trainer.micro_train_batch_size_per_gpu=40 \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
