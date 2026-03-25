@@ -477,7 +477,7 @@ class MegatronWorker:
                     "position_ids": position_ids,
                     "num_actions": num_actions,
                     "rollout_expert_indices": (
-                        micro.get("rollout_expert_indices") if self.enable_router_replay else None
+                        micro.get("rollout_expert_indices").to(torch.int32) if self.enable_router_replay else None
                     ),
                 }
             )
@@ -672,6 +672,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # Move data to GPU
         data.to(torch.cuda.current_device())
 
+        # make sure everyone starts the forward pass after data is materialized
+        torch.distributed.barrier()
+
         # Build micro-batch dicts expected by forward_backward_mini_batch
         micro_buffer = []
         for experience in BatchIterator(data, micro_batch_size, drop_last=False):
@@ -692,7 +695,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                     "loss_mask": experience.loss_mask,
                     "rollout_action_logprobs": experience.rollout_logprobs,
                     "action_mask": experience.action_mask,
-                    "rollout_expert_indices": experience.rollout_expert_indices if self.enable_router_replay else None,
+                    "rollout_expert_indices": experience.rollout_expert_indices.to(torch.int32) if self.enable_router_replay else None,
                 }
             )
 

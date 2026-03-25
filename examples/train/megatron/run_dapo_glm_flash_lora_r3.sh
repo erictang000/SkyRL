@@ -23,9 +23,9 @@ MODEL_NAME="zai-org/GLM-4.7-Flash"
 DATA_DIR="/mnt/local_storage/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-NUM_NODES=4
+NUM_NODES=2
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=8
+NUM_INFERENCE_ENGINES=4
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=4
 LOGGER="wandb"  # change to "console" to print to stdout
 
@@ -75,9 +75,8 @@ MOE_TOKEN_DISPATCHER="alltoall"
 MOE_ROUTER_LB="none"
 MOE_GROUPED_GEMM=true
 MOE_ROUTER_SCORE_FN="sigmoid"
-MOE_ROUTER_EXPERT_BIAS=false
-# MOE_ROUTER_UPDATE_RATE=0
-# moe_router_bias_update_rate
+MOE_ROUTER_EXPERT_BIAS=true
+
 
 # CPU optimizer offload to fit in 80GB GPUs
 OPTIMIZER_CPU_OFFLOAD=true
@@ -184,7 +183,7 @@ UV_HTTP_TIMEOUT=100 SKYRL_RAY_PG_TIMEOUT_IN_S=600 uv run --isolated --extra mega
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_glm_flash" \
-  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_tis_r3_lora_no_expert_bias" \
+  trainer.run_name="dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_tis_r3_lora" \
   trainer.export_path="/mnt/local_storage/exports/dapo_glm4_7_flash_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
   trainer.resume_mode=null \
