@@ -3,9 +3,9 @@ import os
 import random
 import re
 import shutil
+import tempfile
 from datetime import timedelta
 from typing import List, Optional, Union
-
 
 import megatron.core.parallel_state as mpu
 import numpy as np
@@ -440,7 +440,7 @@ class MegatronStrategy(DistributedStrategy):
         node_local_rank = self.node_local_rank
 
         dir_hash = hashlib.md5(ckpt_dir.encode()).hexdigest()[:12]
-        local_dir = f"/tmp/skyrl_ckpt_load_{dir_hash}"
+        local_dir = os.path.join(tempfile.gettempdir(), f"skyrl_ckpt_load_{dir_hash}")
 
         try:
             all_entries = io.list_dir(ckpt_dir)
