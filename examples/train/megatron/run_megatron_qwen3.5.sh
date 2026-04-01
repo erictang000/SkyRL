@@ -1,7 +1,6 @@
 set -x
 
-# Colocated GRPO training+generation for Moonlight-16B-A3B-Instruct on GSM8K with Megatron.
-# Runs on 2 nodes of 8xH100s
+# Colocated GRPO training+generation for Qwen3.5-0.8B on GSM8K with Megatron.
 
 # uv run examples/train/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # export WANDB_API_KEY=<your_key_here>
@@ -19,15 +18,13 @@ NUM_GPUS=4
 MEGATRON_TP=1
 MEGATRON_PP=1
 MEGATRON_CP=1
-MEGATRON_EP=1
-MEGATRON_ETP=null
 
 NUM_INFERENCE_ENGINES=1
 INFERENCE_ENGINE_TP=4
 
-# # flash attn is not supported for moonlight16b since it is a DeepSeekV3 like model, and uses Multi-Head Latent Attention (MLA)
-# # https://github.com/NVIDIA/TransformerEngine/blob/483d9594fb070f62966f6a12ed6c90942310b48e/transformer_engine/pytorch/attention/dot_product_attention/utils.py#L483
-# FLASH_ATTN=false
+# Qwen3.5 flags
+# make sure to add `transformers>=5.3.0` to the `override-dependencies` section in `pyproject.toml` for Qwen3.5 support
+USE_SAMPLE_PACKING=false # sample packing is not yet supported for GDN layers in megatron - see: https://github.com/NVIDIA/Megatron-LM/pull/2644
 
 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -43,10 +40,7 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.policy.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
   trainer.policy.megatron_config.context_parallel_size=$MEGATRON_CP \
-  trainer.policy.megatron_config.expert_model_parallel_size=$MEGATRON_EP \
-  trainer.policy.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
-  trainer.use_sample_packing=false \
-  trainer.flash_attn=$FLASH_ATTN \
+  trainer.use_sample_packing=$USE_SAMPLE_PACKING \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
   trainer.eval_before_train=false \
@@ -71,7 +65,7 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   generator.inference_engine.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="gsm8k_megatron" \
-  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_moonlight16b-a3b" \
+  trainer.run_name="gsm8k_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_qwen3.5-0.8b" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
   $@
