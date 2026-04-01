@@ -19,29 +19,23 @@ class ModelConfig(PretrainedConfig):
         mhc_expansion_rate: mHC expansion rate. Connectors are trainable when this is > 1.
     """
 
-    # Type hints for config attributes
-    max_lora_adapters: int
-    max_lora_rank: int
-    shard_attention_heads: bool
-    loss_chunk_size: int
-    gradient_checkpointing: bool
-    mhc_expansion_rate: int
-
     def __init__(
         self,
-        config: PretrainedConfig | dict,
+        config: PretrainedConfig | dict | None = None,
         *,
-        max_lora_adapters: int,
-        max_lora_rank: int,
-        shard_attention_heads: bool,
+        max_lora_adapters: int = 0,
+        max_lora_rank: int = 0,
+        shard_attention_heads: bool = True,
         loss_chunk_size: int = 0,
         gradient_checkpointing: bool = False,
         mhc_expansion_rate: int = 1,
+        **kwargs,
     ):
-        # `text_config` can come through as a raw dict from HF configs.
-        super().__init__(**(config if isinstance(config, dict) else config.__dict__))
+        if config is not None:
+            super().__init__(**(config if isinstance(config, dict) else config.__dict__))
+        else:
+            super().__init__(**kwargs)
 
-        # Add LoRA-specific parameters
         self.max_lora_adapters = max_lora_adapters
         self.max_lora_rank = max_lora_rank
         self.shard_attention_heads = shard_attention_heads
@@ -53,10 +47,13 @@ class ModelConfig(PretrainedConfig):
         """Return `text_config` when present, otherwise return this config."""
         return self.get_text_config() if hasattr(self, "text_config") else self
 
-    def get_text_config(self) -> "ModelConfig":
+    def get_text_config(self, decoder=None, encoder=None) -> "ModelConfig":
         """Return a wrapped config built from `self.text_config`."""
+        text_cfg = super().get_text_config(decoder=decoder, encoder=encoder)
+        if text_cfg is self or isinstance(text_cfg, ModelConfig):
+            return text_cfg
         return type(self)(
-            self.text_config,
+            text_cfg,
             max_lora_adapters=self.max_lora_adapters,
             max_lora_rank=self.max_lora_rank,
             shard_attention_heads=self.shard_attention_heads,
