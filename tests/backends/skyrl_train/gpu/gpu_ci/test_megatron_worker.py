@@ -276,7 +276,9 @@ async def test_megatron_forward(
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True, dtype=torch.bfloat16)
         if ep > 1:
             config.num_hidden_layers = 2
-        model = AutoModelForCausalLM.from_pretrained(model_name, config=config, dtype=torch.bfloat16)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, config=config, trust_remote_code=True, dtype=torch.bfloat16
+        )
         model.eval()
         model.to("cuda")
         sequences_fwd = batch["sequences"]
