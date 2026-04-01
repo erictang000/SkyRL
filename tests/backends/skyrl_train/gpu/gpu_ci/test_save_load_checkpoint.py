@@ -237,9 +237,9 @@ def test_save_load_checkpoint(ray_init_fixture, strategy, lora, fully_reshardabl
 @pytest.mark.megatron
 def test_save_load_checkpoint_cloud(ray_init_fixture):
     """
-    Test checkpoint save/load with cloud (S3) storage.
+    Test Megatron checkpoint save/load with cloud (S3) storage.
 
-    Verifies that each rank downloads only its own shard during load (per-rank
+    Each rank should download only its own shard during load (per-rank
     downloading) rather than the entire checkpoint directory.
 
     Steps:
@@ -251,12 +251,8 @@ def test_save_load_checkpoint_cloud(ray_init_fixture):
     """
     from skyrl.backends.skyrl_train.utils.io import io as skyrl_io
 
-    S3_BASE = os.environ.get(
-        "ANYSCALE_ARTIFACT_STORAGE",
-        "s3://anyscale-production-data-cld-hxkifz7xa22mwicp21nzkds1lw"
-        "/org_xc6lv84h3d7m9dljcc17esfw2i"
-        "/cld_hxkifz7xa22mwicp21nzkds1lw/artifact_storage",
-    )
+    S3_BASE = os.environ.get("ANYSCALE_ARTIFACT_STORAGE", None)
+    assert S3_BASE, "ANYSCALE_ARTIFACT_STORAGE environment variable is not set"
     s3_ckpt_root = f"{S3_BASE}/test_ckpt_cloud_{uuid.uuid4().hex[:8]}"
     checkpoint_path = f"{s3_ckpt_root}/global_step_1/policy"
 
