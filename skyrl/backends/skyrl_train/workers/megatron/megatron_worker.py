@@ -284,18 +284,9 @@ class MegatronWorker:
         # MLA models like Moonlight-16B have q_lora_rank=None (no Q compression),
         # but CONFIG_MAPPING skips None so the MCoreMLATransformerConfig default
         # (512) is used instead, causing the wrong model architecture to be built.
+        # see: https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/c8eb587c5fd43163dbcd9c40980225b3fe1981f8/src/megatron/bridge/recipes/moonlight/moonlight_16b.py#L60
         if hasattr(provider, "q_lora_rank") and hasattr(hf_config, "q_lora_rank"):
             provider.q_lora_rank = hf_config.q_lora_rank
-
-        # Workaround: megatron-bridge may not map the HF bias config to
-        # TransformerConfig.add_bias_linear, which defaults to True.  Models
-        # like GLM-4.7-Flash set attention_bias=False (no bias anywhere) but
-        # have no add_bias_linear field, so the bridge leaves the default.
-        # megatron-core >=0.16.1 asserts add_bias_linear==False for shared experts.
-        if hasattr(hf_config, "add_bias_linear"):
-            provider.add_bias_linear = hf_config.add_bias_linear
-        elif hasattr(hf_config, "attention_bias"):
-            provider.add_bias_linear = hf_config.attention_bias
 
         provider.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
         provider.pipeline_model_parallel_size = megatron_config.pipeline_model_parallel_size
