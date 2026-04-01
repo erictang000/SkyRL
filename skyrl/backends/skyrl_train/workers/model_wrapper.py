@@ -78,6 +78,7 @@ class HFModelWrapper(nn.Module):
         rope_scaling: Dict[str, Any] = {},
         rope_theta: float | None = None,
         model_config_kwargs: dict = {},
+        meta_init: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -86,7 +87,6 @@ class HFModelWrapper(nn.Module):
         self.attn_implementation = "flash_attention_2" if use_flash_attention_2 else "sdpa"
         self.use_sample_packing = use_sample_packing
         self.is_vlm = False
-        # packing samples using Flash Attention 2
         if use_sample_packing:
             assert (
                 self.attn_implementation == "flash_attention_2"
@@ -128,16 +128,25 @@ class HFModelWrapper(nn.Module):
             if rope_theta:
                 rope_scaling_kwargs["rope_theta"] = rope_theta
 
-            self.model = model_class.from_pretrained(
-                pretrain_or_model,
-                config=model_config,
-                trust_remote_code=True,
-                attn_implementation=self.attn_implementation,
-                quantization_config=nf4_config,
-                torch_dtype=torch.bfloat16 if bf16 else torch.float32,
-                device_map=device_map,
-                **rope_scaling_kwargs,
-            )
+            if meta_init:
+                with torch.device("meta"):
+                    self.model = model_class.from_config(
+                        model_config,
+                        trust_remote_code=True,
+                        attn_implementation=self.attn_implementation,
+                        torch_dtype=torch.bfloat16 if bf16 else torch.float32,
+                    )
+            else:
+                self.model = model_class.from_pretrained(
+                    pretrain_or_model,
+                    config=model_config,
+                    trust_remote_code=True,
+                    attn_implementation=self.attn_implementation,
+                    quantization_config=nf4_config,
+                    torch_dtype=torch.bfloat16 if bf16 else torch.float32,
+                    device_map=device_map,
+                    **rope_scaling_kwargs,
+                )
 
             # gpt oss
             if Version(transformers.__version__) >= Version("4.56.2"):
@@ -579,6 +588,7 @@ def get_llm_for_sequence_regression(
     sequence_parallel_size=1,
     use_sample_packing: bool = False,
     model_config_kwargs: dict = {},
+    meta_init: bool = False,
     **kwargs,
 ) -> nn.Module:
     """Get transformer with a sequence classification head on top (linear layer).
@@ -618,15 +628,20 @@ def get_llm_for_sequence_regression(
     else:
         nf4_config = None
 
-    model = cls_class.from_pretrained(
-        model_name_or_path,
-        config=config,
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16 if bf16 else torch.float32,
-        quantization_config=nf4_config,
-        device_map=device_map,
-        **kwargs,
-    )
+    if meta_init:
+        with torch.device("meta"):
+            model = cls_class(config)
+            model.to(dtype=torch.bfloat16 if bf16 else torch.float32)
+    else:
+        model = cls_class.from_pretrained(
+            model_name_or_path,
+            config=config,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16 if bf16 else torch.float32,
+            quantization_config=nf4_config,
+            device_map=device_map,
+            **kwargs,
+        )
 
     # LoRA
     if lora_rank > 0:

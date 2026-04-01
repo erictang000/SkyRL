@@ -63,20 +63,13 @@ def init_fn(x: torch.nn.Module):
     return x
 
 
-def get_init_weight_context_manager(use_meta_tensor=True, mesh: DeviceMesh = None):
-    from accelerate import init_empty_weights
-
-    def cpu_init_weights():
-        return torch.device("cpu")
-
-    if use_meta_tensor:
-        if mesh is None:
-            init_context = init_empty_weights if torch.distributed.get_rank() != 0 else cpu_init_weights
-        else:
-            init_context = init_empty_weights if mesh.get_coordinate()[-1] != 0 else cpu_init_weights
-    else:
-        init_context = cpu_init_weights
-    return init_context
+def should_use_meta_init(use_meta_tensor=True, mesh: DeviceMesh = None) -> bool:
+    """Return True when this rank should create an empty model on meta device."""
+    if not use_meta_tensor:
+        return False
+    if mesh is None:
+        return torch.distributed.get_rank() != 0
+    return mesh.get_coordinate()[-1] != 0
 
 
 def get_fsdp_wrap_policy(module, config=None, is_lora=False):
@@ -176,7 +169,13 @@ def offload_fsdp_model_to_cpu(model: FSDP, empty_cache: bool = True):
 
 @torch.no_grad()
 def offload_fsdp2_model_to_cpu(model, empty_cache: bool = True):
-    model.to("cpu", non_blocking=True)
+    has_meta = any(p.device.type == "meta" for p in model.parameters()) or any(
+        b.device.type == "meta" for b in model.buffers()
+    )
+    if has_meta:
+        model.to_empty(device="cpu")
+    else:
+        model.to("cpu", non_blocking=True)
     if empty_cache:
         torch.cuda.empty_cache()
 
