@@ -122,11 +122,10 @@ class HFModelWrapper(nn.Module):
                 # NOTE: In future transformers releases (> 5.0.0), all multimodal models can use AutoModelForMultimodalLM.
                 model_class = AutoModelForImageTextToText
 
-            rope_scaling_kwargs = {}
             if rope_scaling:
-                rope_scaling_kwargs["rope_scaling"] = rope_scaling
+                model_config.rope_scaling = rope_scaling
             if rope_theta:
-                rope_scaling_kwargs["rope_theta"] = rope_theta
+                model_config.rope_theta = rope_theta
 
             if meta_init:
                 with torch.device("meta"):
@@ -145,7 +144,6 @@ class HFModelWrapper(nn.Module):
                     quantization_config=nf4_config,
                     torch_dtype=torch.bfloat16 if bf16 else torch.float32,
                     device_map=device_map,
-                    **rope_scaling_kwargs,
                 )
 
             # gpt oss
@@ -312,16 +310,13 @@ class HFModelWrapper(nn.Module):
         entropy_requires_grad=True,
         pixel_values: Optional[TensorList] = None,
         image_grid_thw: Optional[TensorList] = None,
+        mm_token_type_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Returns action log probs"""
         if self.is_vlm:
-            # VLMs use model specific 3D positional IDs, meaning sequence packing can not be supported.
-            # Sequence packing requires computing position IDs, but position IDs for VLMs are 3D and require
-            # model specific logic to compute.
             assert not self.use_sample_packing, "Sample packing is not supported with VLM vision inputs"
             assert self.sequence_parallel_size == 1, "Sequence parallelism is not supported with VLM vision inputs"
 
-            # Convert TensorList -> concatenated tensors for the HF model
             if isinstance(pixel_values, TensorList):
                 pixel_values = torch.cat(pixel_values.tensors, dim=0)
             if isinstance(image_grid_thw, TensorList):
@@ -361,12 +356,17 @@ class HFModelWrapper(nn.Module):
             )
 
         if self.is_vlm:
+            vlm_kwargs = dict(
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
+            )
+            if mm_token_type_ids is not None:
+                vlm_kwargs["mm_token_type_ids"] = mm_token_type_ids
             output = self.model(
                 sequences_fwd,
                 attention_mask=attention_mask_fwd,
                 position_ids=None,
-                pixel_values=pixel_values,
-                image_grid_thw=image_grid_thw,
+                **vlm_kwargs,
             )
         # NOTE (sumanthrh): Once we have position_ids, we don't need attention mask with flash attention.
         elif self.use_sample_packing and self.attn_implementation == "flash_attention_2":
@@ -488,6 +488,8 @@ def _get_critic_model(
 
             if self.sequence_parallel_size > 1:
                 logger.info("Critic model using sequence parallelism with size: ", self.sequence_parallel_size)
+
+            self.post_init()
 
         def forward(
             self,

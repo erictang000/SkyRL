@@ -72,34 +72,33 @@ def test_custom_chat_template(ray_init_fixture, use_custom_template: bool):
                 "content": "Hello",
             },
         ]
-        payload = {
+        chat_payload = {
             "model": MODEL_QWEN3,
             "messages": messages,
             "max_tokens": 10,
-            "return_token_ids": True,
         }
 
         async def _run():
-            return await client.chat_completion({"json": payload})
+            chat_data = await client.chat_completion({"json": chat_payload})
+            render_data = await client.render_chat_completion({"json": chat_payload})
+            return chat_data, render_data
 
-        data = asyncio.run(_run())
+        data, render_data = asyncio.run(_run())
 
         # 3. Check output
         assert "choices" in data and len(data["choices"]) > 0
         content = data["choices"][0]["message"]["content"]
         assert isinstance(content, str)
 
-        # 4. Check thinking tokens stripped or not
-        assert "prompt_token_ids" in data, f"prompt_token_ids not found in response. Keys: {data.keys()}"
-        prompt_token_ids = data["prompt_token_ids"]
+        # 4. Check thinking tokens stripped or not via the render endpoint
+        prompt_token_ids = render_data.get("prompt_token_ids") or render_data.get("input_ids")
+        assert prompt_token_ids is not None, f"No prompt token ids in render response. Keys: {render_data.keys()}"
         tokenizer = AutoTokenizer.from_pretrained(MODEL_QWEN3)
         prompt_str = tokenizer.decode(prompt_token_ids)
 
         if use_custom_template:
-            # The custom template qwen3_acc_thinking.jinja2 will keep the thinking tokens.
             assert "<think>" in prompt_str and "</think>" in prompt_str
         else:
-            # Default template strips thinking tokens
             assert "<think>" not in prompt_str and "</think>" not in prompt_str
 
     finally:
