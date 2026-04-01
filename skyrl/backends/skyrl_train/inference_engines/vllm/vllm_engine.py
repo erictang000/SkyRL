@@ -15,6 +15,47 @@ from uuid import uuid4
 import ray
 import vllm
 from loguru import logger
+
+# TODO (erictang000): Remove this workaround once vllm 0.19.0 is released.
+# Workaround for vllm 0.18 + transformers v5 incompatibility:
+# vllm's Qwen3_5TextConfig passes ignore_keys_at_rope_validation as a list,
+# but transformers v5's RotaryEmbeddingConfigMixin uses set operations on it
+# (e.g. `set -= ignore_keys`, `ignore_keys | {…}`). Coerce to set in both
+# validate_rope and _check_received_keys to cover all call sites.
+try:
+    from transformers.modeling_rope_utils import RotaryEmbeddingConfigMixin
+
+    _orig_validate_rope = RotaryEmbeddingConfigMixin.validate_rope
+
+    def _patched_validate_rope(self):
+        attr = getattr(self, "ignore_keys_at_rope_validation", None)
+        if attr is not None and not isinstance(attr, set):
+            self.ignore_keys_at_rope_validation = set(attr)
+        return _orig_validate_rope(self)
+
+    RotaryEmbeddingConfigMixin.validate_rope = _patched_validate_rope
+
+    _orig_check_received_keys = RotaryEmbeddingConfigMixin._check_received_keys
+
+    @staticmethod
+    def _patched_check_received_keys(rope_type, received_keys, required_keys, optional_keys=None, ignore_keys=None):
+        if ignore_keys is not None and not isinstance(ignore_keys, set):
+            ignore_keys = set(ignore_keys)
+        return _orig_check_received_keys(rope_type, received_keys, required_keys, optional_keys, ignore_keys)
+
+    RotaryEmbeddingConfigMixin._check_received_keys = _patched_check_received_keys
+
+    _orig_convert_rope = RotaryEmbeddingConfigMixin.convert_rope_params_to_dict
+
+    def _patched_convert_rope(self, **kwargs):
+        attr = getattr(self, "ignore_keys_at_rope_validation", None)
+        if attr is not None and not isinstance(attr, set):
+            self.ignore_keys_at_rope_validation = set(attr)
+        return _orig_convert_rope(self, **kwargs)
+
+    RotaryEmbeddingConfigMixin.convert_rope_params_to_dict = _patched_convert_rope
+except Exception:
+    pass
 from vllm import SamplingParams
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest,
