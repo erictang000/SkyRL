@@ -92,9 +92,7 @@ def test_custom_chat_template(ray_init_fixture, use_custom_template: bool):
 
         # 4. Check thinking tokens stripped or not via the render endpoint
         prompt_token_ids = (
-            render_data.get("prompt_token_ids")
-            or render_data.get("token_ids")
-            or render_data.get("input_ids")
+            render_data.get("prompt_token_ids") or render_data.get("token_ids") or render_data.get("input_ids")
         )
         assert prompt_token_ids is not None, f"No prompt token ids in render response. Keys: {render_data.keys()}"
         tokenizer = AutoTokenizer.from_pretrained(MODEL_QWEN3)

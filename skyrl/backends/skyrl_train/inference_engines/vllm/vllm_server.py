@@ -28,9 +28,12 @@ class VllmServer:
         self.server_args = args
 
     async def run_server(self, **uvicorn_kwargs) -> None:
+        sock_addr = (self.server_args.host or "", self.server_args.port)
+        sock = create_server_socket(sock_addr)
         set_ulimit()
 
         def signal_handler(*_) -> None:
+            # Interrupt server on sigterm while initializing
             raise KeyboardInterrupt("terminated")
 
         signal.signal(signal.SIGTERM, signal_handler)
