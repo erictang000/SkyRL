@@ -252,7 +252,8 @@ def test_save_load_checkpoint_cloud(ray_init_fixture):
     from skyrl.backends.skyrl_train.utils.io import io as skyrl_io
 
     S3_BASE = os.environ.get("ANYSCALE_ARTIFACT_STORAGE", None)
-    assert S3_BASE, "ANYSCALE_ARTIFACT_STORAGE environment variable is not set"
+    if not S3_BASE:
+        pytest.skip("ANYSCALE_ARTIFACT_STORAGE environment variable is not set")
     s3_ckpt_root = f"{S3_BASE}/test_ckpt_cloud_{uuid.uuid4().hex[:8]}"
     checkpoint_path = f"{s3_ckpt_root}/global_step_1/policy"
 
