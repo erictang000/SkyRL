@@ -13,7 +13,7 @@ from tests.backends.skyrl_train.gpu.utils import (
     make_dummy_training_batch,
 )
 
-MODEL_NAME = "Qwen/Qwen3-8B"
+MODEL_NAME = "Qwen/Qwen3-0.6B"
 MOE_MODEL_NAME = "Qwen/Qwen3-30B-A3B"
 
 
@@ -43,7 +43,7 @@ def cfg() -> SkyRLTrainConfig:
         # right now this fails due to token routing issues
         # (True, "fsdp2", MOE_MODEL_NAME),
     ],
-    ids=["packed-fsdp", "unpacked-fsdp", "seqpacked-fsdp2", "unpacked-fsdp2"],
+    ids=["packed-fsdp", "unpacked-fsdp", "packed-fsdp2", "unpacked-fsdp2"],
 )
 async def test_policy_forward_backward_and_optim_step(ray_init_fixture, cfg, packed, strategy, model_name):
     """
