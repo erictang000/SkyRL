@@ -126,15 +126,12 @@ class HFModelWrapper(nn.Module):
                 model_config.rope_scaling = rope_scaling
             if rope_theta:
                 model_config.rope_theta = rope_theta
+            model_config._attn_implementation = self.attn_implementation
 
             if meta_init:
                 with torch.device("meta"):
-                    self.model = model_class.from_config(
-                        model_config,
-                        trust_remote_code=True,
-                        attn_implementation=self.attn_implementation,
-                        torch_dtype=torch.bfloat16 if bf16 else torch.float32,
-                    )
+                    self.model = model_class.from_config(model_config, trust_remote_code=True)
+                self.model.to(torch.bfloat16 if bf16 else torch.float32)
             else:
                 self.model = model_class.from_pretrained(
                     pretrain_or_model,
