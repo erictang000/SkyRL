@@ -288,6 +288,14 @@ class MegatronWorker:
         if hasattr(provider, "q_lora_rank") and hasattr(hf_config, "q_lora_rank"):
             provider.q_lora_rank = hf_config.q_lora_rank
 
+        # Workaround for transformers v5 moving rope_theta into rope_parameters
+        # (previously it was a top-level config attribute). megatron-bridge's
+        # CONFIG_MAPPING reads config.rope_theta which no longer exists in v5,
+        # causing it to fall back to the default rotary_base of 10000.
+        rope_params = getattr(hf_config, "rope_parameters", None) or getattr(hf_config, "rope_scaling", None)
+        if isinstance(rope_params, dict) and "rope_theta" in rope_params:
+            provider.rotary_base = rope_params["rope_theta"]
+
         provider.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
         provider.pipeline_model_parallel_size = megatron_config.pipeline_model_parallel_size
         provider.pipeline_dtype = torch.bfloat16 if bf16 else torch.float32
@@ -508,6 +516,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             optimizer_config=self.cfg.policy.optimizer_config,
             seed=self.cfg.seed,
             is_lora=self._is_lora,
+            node_local_rank=self._local_rank,
         )
         self.strategy.setup_distributed()
 
@@ -822,6 +831,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
             megatron_config=self.cfg.ref.megatron_config,
             optimizer_config=None,
             seed=self.cfg.seed,
+            node_local_rank=self._local_rank,
         )
         self.strategy.setup_distributed()
 
