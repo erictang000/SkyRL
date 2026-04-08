@@ -185,6 +185,9 @@ class RemoteInferenceClient:
     model_name: str = "default"
     """Model name for OpenAI-compatible API calls."""
 
+    enable_return_routed_experts: bool = False
+    """Whether to return routed expert indices (R3 / rollout router replay)."""
+
     active_lora_name: Optional[str] = None
     """Name of the active LoRA adapter. If set, generation requests use this adapter instead of the base model."""
 
@@ -361,11 +364,15 @@ class RemoteInferenceClient:
         raw_results = await asyncio.gather(*[_throttled_generate(idx) for idx in range(batch_size)])
         responses = await asyncio.gather(*[_throttled_detokenize(r["response_ids"]) for r in raw_results])
 
+        rollout_expert_indices = [r.get("routed_experts") for r in raw_results]
+        has_routed_experts = any(x is not None for x in rollout_expert_indices)
+
         return InferenceEngineOutput(
             responses=responses,
             stop_reasons=[r["stop_reason"] for r in raw_results],
             response_ids=[r["response_ids"] for r in raw_results],
             response_logprobs=[r["response_logprobs"] for r in raw_results] if get_logprobs else None,
+            rollout_expert_indices=rollout_expert_indices if has_routed_experts else None,
         )
 
     async def _generate_single(
@@ -384,7 +391,11 @@ class RemoteInferenceClient:
         Returns:
             Dict with keys: stop_reason, response_ids, response_logprobs
         """
-        url = f"{self.proxy_url}/inference/v1/generate"
+        url = (
+            f"{self.proxy_url}/skyrl/v1/generate"
+            if self.enable_return_routed_experts
+            else f"{self.proxy_url}/inference/v1/generate"
+        )
 
         # Use LoRA adapter name if one is active, otherwise use base model name
         effective_model = self.active_lora_name if self.active_lora_name else self.model_name
@@ -412,10 +423,13 @@ class RemoteInferenceClient:
             if logprobs_content:
                 response_logprobs = [logprob_info["logprob"] for logprob_info in logprobs_content]
 
+        routed_experts = choice.get("routed_experts")
+
         return {
             "stop_reason": stop_reason,
             "response_ids": token_ids,
             "response_logprobs": response_logprobs,
+            "routed_experts": routed_experts,
         }
 
     async def sample(self, request_payload: SampleRequestPayload) -> SampleResponse:
