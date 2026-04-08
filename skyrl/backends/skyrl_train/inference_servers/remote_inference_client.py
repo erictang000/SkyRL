@@ -50,7 +50,18 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Required,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 import aiohttp
 
@@ -116,6 +127,33 @@ class PauseMode(Enum):
     ABORT = "abort"
     KEEP = "keep"
     WAIT = "wait"
+
+
+class SampleRequestBody(TypedDict, total=False):
+    """Tinker-style sample request body, mirroring tinker SamplingClient.sample"""
+
+    prompt: Required[Dict[str, Any]]
+    num_samples: int
+    sampling_params: Dict[str, Any]
+    session_id: str
+    include_prompt_logprobs: bool
+    prompt_logprobs: bool
+    topk_prompt_logprobs: int
+
+
+class SampleRequestPayload(TypedDict):
+    """Wrapper for sample request (matches the {"json": ...} convention)."""
+
+    json: SampleRequestBody
+
+
+class SampleResponse(TypedDict):
+    """Return value of RemoteInferenceClient.sample(), mirrors tinker SampleResponse"""
+
+    type: Literal["sample"]
+    sequences: List[Dict[str, Any]]
+    prompt_logprobs: Optional[List[Optional[float]]]
+    topk_prompt_logprobs: Optional[List[Optional[List[Tuple[int, float]]]]]
 
 
 @dataclass
@@ -380,7 +418,7 @@ class RemoteInferenceClient:
             "response_logprobs": response_logprobs,
         }
 
-    async def sample(self, request_payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def sample(self, request_payload: SampleRequestPayload) -> SampleResponse:
         """
         Sample completions via /inference/v1/generate (Tinker API).
 
@@ -388,17 +426,28 @@ class RemoteInferenceClient:
         Uses self._post() for automatic retry + backoff on transient errors.
 
         Args:
-            request_payload: Dict with {"json": <request-body>}.
-                Expected keys in json: prompt, num_samples, sampling_params, session_id.
+            request_payload: SampleRequestPayload with {"json": <request-body>}.
+                Expected keys in json: prompt, num_samples, sampling_params, session_id,
+                include_prompt_logprobs (bool), topk_prompt_logprobs (int).
 
         Returns:
-            Dict with type="sample", sequences list, and stub prompt_logprobs fields.
+            SampleResponse with type="sample", sequences list, prompt_logprobs, and topk_prompt_logprobs.
         """
         session_id, body = _extract_session_id_and_body(request_payload)
 
         prompt = body.get("prompt", {})
         num_samples = body.get("num_samples", 1)
         tinker_params = body.get("sampling_params", {})
+
+        # Note: Tinker SampleRequest uses "prompt_logprobs" (bool), while
+        # SamplingClient.sample() uses "include_prompt_logprobs".
+        include_prompt_logprobs = body.get("include_prompt_logprobs", body.get("prompt_logprobs", False))
+        topk_prompt_logprobs_k = body.get("topk_prompt_logprobs", 0)
+
+        # vLLM prompt logprob mapping
+        prompt_logprobs_sp = None
+        if include_prompt_logprobs:
+            prompt_logprobs_sp = topk_prompt_logprobs_k if topk_prompt_logprobs_k > 0 else 0
 
         # Flatten prompt chunks → token IDs
         token_ids = [tok for chunk in prompt.get("chunks", []) for tok in chunk.get("tokens", [])]
@@ -408,6 +457,7 @@ class RemoteInferenceClient:
             "n": num_samples,
             "logprobs": 0,
             "output_kind": 2,
+            "prompt_logprobs": prompt_logprobs_sp,
         }
 
         for tinker_key, vllm_key in _TINKER_SAMPLE_TO_VLLM_PARAM_MAP.items():
@@ -435,6 +485,33 @@ class RemoteInferenceClient:
             async with gen_sem:
                 response = await self._post(url, json=payload, headers=headers)
 
+        # vLLM returns: list[dict[str(token_id) → {"logprob": float, ...}] | None]
+        result_prompt_logprobs: Optional[List[Optional[float]]] = None
+        result_topk_prompt_logprobs: Optional[List[Optional[List[Tuple[int, float]]]]] = None
+
+        raw_prompt_logprobs = response.get("prompt_logprobs")
+        if raw_prompt_logprobs is not None and include_prompt_logprobs:
+            result_prompt_logprobs = [
+                (pos_dict.get(str(tid)) or {}).get("logprob") if pos_dict is not None else None
+                for tid, pos_dict in zip(token_ids, raw_prompt_logprobs)
+            ]
+            if topk_prompt_logprobs_k > 0:
+                # vLLM returns k or k+1 logprobs per position (the extra entry is the
+                # prompt token when it falls outside the top-k). Tinker always returns
+                # exactly top-k, so we sort and truncate below.
+                result_topk_prompt_logprobs = [
+                    (
+                        sorted(
+                            [(int(tid), entry["logprob"]) for tid, entry in pos_dict.items()],
+                            key=lambda x: x[1],
+                            reverse=True,
+                        )[:topk_prompt_logprobs_k]
+                        if pos_dict is not None
+                        else None
+                    )
+                    for _, pos_dict in zip(token_ids, raw_prompt_logprobs)
+                ]
+
         # Transform response choices → sequences
         sequences = []
         for choice in response.get("choices", []):
@@ -456,8 +533,8 @@ class RemoteInferenceClient:
         return {
             "type": "sample",
             "sequences": sequences,
-            "prompt_logprobs": None,
-            "topk_prompt_logprobs": None,
+            "prompt_logprobs": result_prompt_logprobs,
+            "topk_prompt_logprobs": result_topk_prompt_logprobs,
         }
 
     async def chat_completion(
