@@ -72,6 +72,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.model.path="$MODEL_NAME" \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
+  trainer.use_sample_packing=False \
   trainer.placement.policy_num_nodes=$NUM_NODES \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \

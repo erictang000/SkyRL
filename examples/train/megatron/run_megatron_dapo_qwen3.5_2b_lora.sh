@@ -39,7 +39,7 @@ MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=16
 EVAL_N_SAMPLES_PER_PROMPT=32
 ENFORCE_EAGER=true # cuda graphs can cause some instability
-LR=1e-6
+LR=1e-5
 
 # megatron config
 MEGATRON_TP=1
@@ -80,6 +80,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.model.path="$MODEL_NAME" \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
+  trainer.use_sample_packing=False \
   trainer.placement.policy_num_nodes=$NUM_NODES \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \

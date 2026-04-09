@@ -41,22 +41,28 @@ def _compute_distributed_log_softmax(
             log probabilities normalized across the full vocabulary dimension.
     """
     logits_max = torch.amax(vocab_parallel_logits, dim=-1, keepdim=True)
+    torch.cuda.synchronize()
+    logits_max_cpu = logits_max.cpu()
     torch.distributed.all_reduce(
-        logits_max,
+        logits_max_cpu,
         op=torch.distributed.ReduceOp.MAX,
         group=group,
     )
+    logits_max = logits_max_cpu.to(vocab_parallel_logits.device)
 
     # Subtract the maximum value.
     vocab_parallel_logits = vocab_parallel_logits - logits_max
 
     sum_exp_logits = vocab_parallel_logits.exp().sum(-1, keepdim=True).float()
 
+    torch.cuda.synchronize()
+    sum_exp_cpu = sum_exp_logits.cpu()
     torch.distributed.all_reduce(
-        sum_exp_logits,
+        sum_exp_cpu,
         op=torch.distributed.ReduceOp.SUM,
         group=group,
     )
+    sum_exp_logits = sum_exp_cpu.to(vocab_parallel_logits.device)
 
     return vocab_parallel_logits - sum_exp_logits.log_().to(vocab_parallel_logits.dtype)
 
@@ -90,11 +96,14 @@ class DistributedLogprob(torch.autograd.Function):
         log_probs = torch.gather(log_probs, -1, masked_target.unsqueeze(-1)).squeeze(-1)
         log_probs[target_mask] = 0.0
 
+        torch.cuda.synchronize()
+        log_probs_cpu = log_probs.cpu()
         torch.distributed.all_reduce(
-            log_probs,
+            log_probs_cpu,
             op=torch.distributed.ReduceOp.SUM,
             group=group,
         )
+        log_probs = log_probs_cpu.to(log_probs.device)
 
         if not inference_only:
             # only save for backward when we have inference only=False

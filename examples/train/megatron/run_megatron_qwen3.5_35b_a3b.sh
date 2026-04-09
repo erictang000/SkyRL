@@ -28,7 +28,7 @@ INFERENCE_ENGINE_TP=8
 OPTIMIZER_OFFLOAD=true
 OPTIMIZER_OFFLOAD_FRACTION=1.0
 
-# Qwen3.5 flags
+# Qwen3.5
 USE_SAMPLE_PACKING=false # sample packing is not yet supported for GDN layers in megatron - see: https://github.com/NVIDIA/Megatron-LM/pull/2644
 
 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
