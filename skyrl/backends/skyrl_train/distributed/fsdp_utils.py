@@ -328,9 +328,13 @@ def fsdp2_load_full_state_dict(model: torch.nn.Module, full_sd: dict, cpu_offloa
     if dist.get_rank() == 0:
         for (param_name, full_param), sharded_param in zip(full_sd.items(), meta_sharded_sd.values()):
             full_param = full_param.detach().cuda()
-            mesh = sharded_param.device_mesh
             dist.broadcast(full_param, src=0)
-            sharded_tensor = distribute_tensor(full_param, mesh, sharded_param.placements)
+
+            if hasattr(sharded_param, "device_mesh"):
+                sharded_tensor = distribute_tensor(full_param, sharded_param.device_mesh, sharded_param.placements)
+            else:
+                sharded_tensor = full_param
+
             to_contiguous, casting_dtype = _infer_parameter_dtype(
                 model,
                 param_name,
@@ -342,9 +346,13 @@ def fsdp2_load_full_state_dict(model: torch.nn.Module, full_sd: dict, cpu_offloa
     else:
         for param_name, sharded_param in meta_sharded_sd.items():
             full_tensor = torch.empty(sharded_param.size(), device="cuda", dtype=sharded_param.dtype)
-            mesh = sharded_param.device_mesh
             dist.broadcast(full_tensor, src=0)
-            sharded_tensor = distribute_tensor(full_tensor, mesh, sharded_param.placements)
+
+            if hasattr(sharded_param, "device_mesh"):
+                sharded_tensor = distribute_tensor(full_tensor, sharded_param.device_mesh, sharded_param.placements)
+            else:
+                sharded_tensor = full_tensor
+
             to_contiguous, casting_dtype = _infer_parameter_dtype(
                 model,
                 param_name,

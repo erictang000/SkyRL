@@ -341,7 +341,8 @@ class CudaIpcWeightTransferReceiver(WeightTransferReceiver):
 
         offset = 0
         for name, shape, size in zip(request.names, request.shapes, request.sizes):
-            yield name, packed_tensor[offset : offset + size].view(*shape)
+            chunk = packed_tensor[offset : offset + size]
+            yield name, chunk.view(*shape) if shape else chunk.squeeze()
             offset += size
 
     def teardown(self) -> None:

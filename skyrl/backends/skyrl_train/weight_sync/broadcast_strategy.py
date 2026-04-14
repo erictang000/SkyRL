@@ -302,7 +302,8 @@ class BroadcastWeightTransferReceiver(WeightTransferReceiver):
 
             offset = 0
             for name, shape, size in zip(request.names, request.shapes, request.sizes):
-                yield name, packed[offset : offset + size].view(*shape)
+                chunk = packed[offset : offset + size]
+                yield name, chunk.view(*shape) if shape else chunk.squeeze()
                 offset += size
         else:
             for name, dtype_str, shape in zip(request.names, request.dtypes, request.shapes):
