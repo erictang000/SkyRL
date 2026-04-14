@@ -5,6 +5,7 @@ Generic server actor pool.
 from typing import Any, List, Union
 
 import ray
+from loguru import logger
 
 from skyrl.backends.skyrl_train.inference_servers.common import ServerInfo
 
@@ -71,3 +72,8 @@ class ServerActorPool:
         """Shutdown all actors."""
         shutdown_refs = [actor.shutdown.remote() for actor in self._actors]
         ray.get(shutdown_refs)
+        for actor in self._actors:
+            try:
+                ray.kill(actor)
+            except Exception as e:
+                logger.info(f"Encountered exception while cleaning up actor {actor}: {e}")
