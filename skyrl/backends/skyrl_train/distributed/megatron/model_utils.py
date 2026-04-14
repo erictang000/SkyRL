@@ -561,15 +561,25 @@ class _VocabParallelEntropy(torch.autograd.Function):
         def mul_reduce(a, b):
             return (a * b).sum(dim=-1, keepdim=True)
 
+        tp_group = mpu.get_tensor_model_parallel_group()
         logits_max = vocab_parallel_logits.max(dim=-1, keepdim=True).values
-        dist.all_reduce(logits_max, op=dist.ReduceOp.MAX, group=mpu.get_tensor_model_parallel_group())
+        torch.cuda.synchronize()
+        logits_max_cpu = logits_max.cpu()
+        dist.all_reduce(logits_max_cpu, op=dist.ReduceOp.MAX, group=tp_group)
+        logits_max = logits_max_cpu.to(vocab_parallel_logits.device)
         normalized_vocab_parallel_logits = vocab_parallel_logits - logits_max
         normalized_exp_logits = normalized_vocab_parallel_logits.exp_()
         normalized_sum_exp_logits = normalized_exp_logits.sum(dim=-1, keepdim=True)
-        dist.all_reduce(normalized_sum_exp_logits, group=mpu.get_tensor_model_parallel_group())
+        torch.cuda.synchronize()
+        nsel_cpu = normalized_sum_exp_logits.cpu()
+        dist.all_reduce(nsel_cpu, group=tp_group)
+        normalized_sum_exp_logits = nsel_cpu.to(vocab_parallel_logits.device)
         softmax_logits = normalized_exp_logits.div_(normalized_sum_exp_logits)
         sum_softmax_times_logits = mul_reduce(softmax_logits, vocab_parallel_logits)
-        dist.all_reduce(sum_softmax_times_logits, group=mpu.get_tensor_model_parallel_group())
+        torch.cuda.synchronize()
+        smtl_cpu = sum_softmax_times_logits.cpu()
+        dist.all_reduce(smtl_cpu, group=tp_group)
+        sum_softmax_times_logits = smtl_cpu.to(vocab_parallel_logits.device)
         entropy = logits_max + normalized_sum_exp_logits.log() - sum_softmax_times_logits
         ctx.save_for_backward(vocab_parallel_logits, softmax_logits, sum_softmax_times_logits)
         return entropy.squeeze(dim=-1)

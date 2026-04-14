@@ -9,8 +9,8 @@ DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 NUM_NODES=1
-NUM_GPUS_PER_NODE=4
-NUM_INFERENCE_ENGINES=4
+NUM_GPUS_PER_NODE=8
+NUM_INFERENCE_ENGINES=8
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=1
 LOGGER="wandb"  # change to "console" to print to stdout
 
@@ -34,7 +34,7 @@ MAX_PROMPT_LENGTH=$((1024 * 2))
 MAX_RESPONSE_LENGTH=$((1024 * 8))
 
 # repro run parameters
-TRAIN_BATCH_SIZE=512
+TRAIN_BATCH_SIZE=128
 MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=16
 EVAL_N_SAMPLES_PER_PROMPT=32
@@ -49,6 +49,10 @@ MEGATRON_CP=1
 # TIS parameters
 TIS_IMP_RATIO_CAP=2.0
 TIS_TYPE=token
+
+# Qwen3.5 params
+USE_SAMPLE_PACKING=false # sample packing is not yet supported for GDN layers in megatron - see: https://github.com/NVIDIA/Megatron-LM/pull/2644
+
 
 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
@@ -72,7 +76,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.model.path="$MODEL_NAME" \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
-  trainer.use_sample_packing=False \
+  trainer.use_sample_packing=$USE_SAMPLE_PACKING \
   trainer.placement.policy_num_nodes=$NUM_NODES \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
@@ -89,13 +93,13 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
-  trainer.micro_forward_batch_size_per_gpu=16 \
-  trainer.micro_train_batch_size_per_gpu=8 \
+  trainer.micro_forward_batch_size_per_gpu=2 \
+  trainer.micro_train_batch_size_per_gpu=2 \
   trainer.ckpt_interval=-1 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
   trainer.policy.optimizer_config.lr=$LR \
-  trainer.policy.optimizer_config.num_warmup_steps=160 \
+  trainer.policy.optimizer_config.num_warmup_steps=40 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
   trainer.policy.optimizer_config.max_grad_norm=1.0 \
   generator.inference_engine.backend=vllm \
@@ -108,7 +112,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="dapo_aime" \
+  trainer.project_name="dapo_aime_qwen3.5" \
   trainer.run_name="dapo_qwen3.5_2b_base" \
   trainer.export_path="$HOME/exports/dapo_qwen3.5_2b_base" \
   trainer.hf_save_interval=-1 \

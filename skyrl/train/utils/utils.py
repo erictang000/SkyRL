@@ -567,6 +567,25 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
     # TODO(sumanthrh): introduce a debug mode and add debugging flags like `CUDA_LAUNCH_BLOCKING` here
     env_vars = {}
 
+    # # Disable GIB NCCL plugin if libibverbs is not available (e.g. on GCP B200 nodes
+    # # where GIB env vars are pre-configured but RDMA libraries are not installed).
+    # # Without this, NCCL hangs during multi-GPU collectives because the gIB plugin
+    # # fails silently when it can't load libibverbs.so.
+    # if os.environ.get("NCCL_NET") == "gIB":
+    #     import ctypes
+
+    #     try:
+    #         ctypes.CDLL("libibverbs.so.1")
+    #     except OSError:
+    #         logger.warning(
+    #             "NCCL_NET=gIB is set but libibverbs.so is missing. "
+    #             "Disabling GIB NCCL plugin to avoid hangs. "
+    #             "Install libibverbs (apt install libibverbs-dev) for proper GIB support."
+    #         )
+    #         env_vars["NCCL_NET"] = ""
+    #         env_vars["NCCL_TUNER_CONFIG_PATH"] = ""
+    #         env_vars["LD_LIBRARY_PATH"] = ""
+
     # NOTE (charlie): See https://github.com/vllm-project/vllm/blob/c6b0a7d3ba03ca414be1174e9bd86a97191b7090/vllm/worker/worker_base.py#L445
     # and https://docs.vllm.ai/en/v0.9.2/usage/troubleshooting.html?h=nccl_cumem_enable#known-issues
     if cfg.generator.inference_engine.weight_sync_backend == "nccl":

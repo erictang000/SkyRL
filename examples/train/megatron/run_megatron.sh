@@ -13,14 +13,16 @@ MODEL_NAME="Qwen/Qwen3-0.6B"
 
 INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 
-MEGATRON_TP=2
-MEGATRON_PP=2
+MEGATRON_TP=1
+MEGATRON_PP=1
 MEGATRON_CP=1
 
 # torch profiler config
 ENABLE_TORCH_PROFILER=false
 RANKS_TO_PROFILE="[0]"
 SAVE_PATH="$HOME/megatron_prof/tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_${MODEL_NAME}"
+
+NCCL_NET="Socket"
 
 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -56,7 +58,7 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
   trainer.policy.optimizer_config.lr=1.0e-6 \
-  trainer.algorithm.use_kl_loss=true \
+  trainer.algorithm.use_kl_loss=false \
   generator.inference_engine.backend=$INFERENCE_BACKEND \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \
