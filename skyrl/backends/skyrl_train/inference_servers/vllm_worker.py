@@ -40,6 +40,20 @@ class WorkerWrap:
         """Test RPC call to worker."""
         return args, kwargs
 
+    def debug_weight_checksum(self) -> dict:
+        """Compute checksums of model weights for debugging weight sync."""
+        checksums = {}
+        for name, param in self.model_runner.model.named_parameters():
+            data = param.data.float()
+            checksums[name] = {
+                "sum": data.sum().item(),
+                "absmax": data.abs().max().item(),
+                "shape": list(data.shape),
+            }
+            if len(checksums) >= 3:
+                break
+        return checksums
+
     def init_weight_update_communicator(self, init_info: bytes):
         """
         Initialize weight update communicator from init info.

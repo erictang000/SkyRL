@@ -19,7 +19,8 @@ from tests.backends.skyrl_train.gpu.utils import (
     run_inference,
 )
 
-MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+MODEL = "google/gemma-4-E2B"
+# MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 MOE_MODEL = "hf-internal-testing/tiny-qwen3-moe"
 
 
@@ -69,11 +70,11 @@ _skip_new_inference = pytest.mark.skipif(_SKYRL_USE_NEW_INFERENCE, reason="Not y
     ],
     ids=[
         "no_colocate_nccl_fsdp_vllm",
-        "colocate_nccl_fsdp_vllm",
+        "x_colocate_nccl_fsdp_vllm",
         "no_colocate_gloo_fsdp_vllm",
         "colocate_gloo_fsdp_vllm",
         "no_colocate_nccl_fsdp2_vllm",
-        "colocate_nccl_fsdp2_vllm",
+        "x_colocate_nccl_fsdp2_vllm",
         "colocate_nccl_fsdp2_vllm_mp",
         "non_colocated_nccl_fsdp2_vllm_mp",
         "colocate_nccl_fsdp2_vllm_dp",
@@ -116,6 +117,8 @@ async def test_policy_local_engines_e2e(
     ) as engines:
         client, pg = engines.client, engines.pg
 
+        await client.sleep()
+
         policy = init_worker_with_type(
             "policy",
             shared_pg=pg,
@@ -131,6 +134,11 @@ async def test_policy_local_engines_e2e(
                 "pass_through", "init_weight_sync_state", client, cfg.generator.inference_engine
             )
         )
+        # if colocate_all:
+        #     await client.wake_up(tags=["weights", "kv_cache"])
+        # else:
+        #     await client.wake_up(tags=["weights"])
+        await client.wake_up(tags=["weights"])
         await client.reset_prefix_cache()
         ray.get(
             policy.async_run_ray_method(
@@ -139,7 +147,7 @@ async def test_policy_local_engines_e2e(
         )
         if colocate_all:
             policy.offload_to_cpu()
-            await client.wake_up()
+            await client.wake_up(tags=["kv_cache"])
 
         sampling_params = get_sampling_params_for_backend(
             cfg.generator.inference_engine.backend, cfg.generator.sampling_params
