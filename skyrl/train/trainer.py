@@ -277,6 +277,7 @@ class RayPPOTrainer:
                         for key in ["rewards"]:
                             training_input.pop(key)
                         training_input.metadata.pop("uids")
+                        training_input.metadata.pop("is_last_step", None)
 
                     if self.cfg.trainer.dump_data_batch:
                         # dump data to file
@@ -664,14 +665,12 @@ class RayPPOTrainer:
                 "rollout_expert_indices": rollout_expert_indices_tensor,
                 "pixel_values": pixel_values,
                 "image_grid_thw": image_grid_thw,
-                "is_last_step": (
-                    torch.tensor(generator_output["is_last_step"], dtype=torch.bool)
-                    if generator_output.get("is_last_step", None) is not None
-                    else None
-                ),
             },
         )
         training_input.metadata = {"uids": uids}
+        if generator_output.get("is_last_step", None) is not None:
+            training_input.metadata["is_last_step"] = generator_output["is_last_step"]
+
         # padded response length
         training_input.metadata["response_length"] = response_masks_tensor.shape[1]
         batch_num_seq, batch_padded_seq_len = sequences_tensor.shape
@@ -686,9 +685,6 @@ class RayPPOTrainer:
             assert (
                 "trajectory_ids" in generator_output
             ), "Expected `trajectory_ids` in generator output for step wise training"
-            training_input.metadata["trajectory_ids"] = [
-                trajectory_id.to_string() for trajectory_id in generator_output["trajectory_ids"]
-            ]
         training_input.metadata["avg_response_length"] = sum(
             len(sample_response_ids) for sample_response_ids in response_ids
         ) / len(response_ids)
@@ -804,6 +800,7 @@ class RayPPOTrainer:
             - `["values"]`: Float[torch.Tensor, "batch_size seqlen"]
             - `["rewards"]`: Float[torch.Tensor, "batch_size seqlen"]
             - `.metadata["uids"]`: List[str]
+            - `.metadata["is_last_step"]`: List[bool] for step-wise training
 
         Adds:
             - `["advantages"]`: Float[torch.Tensor, "batch_size seqlen"]
@@ -812,7 +809,7 @@ class RayPPOTrainer:
         token_level_rewards = data["rewards"]
 
         if self.cfg.generator.step_wise_trajectories:
-            is_last_step = data["is_last_step"].bool()
+            is_last_step = torch.tensor(data.metadata["is_last_step"], dtype=torch.bool)
             index = np.array(data.metadata["uids"])
             values = data["values"]
             # Step-wise only supports outcome-based estimators (GRPO, RLOO, MAXRL); ensured by `validate_cfg`.
@@ -871,7 +868,7 @@ class RayPPOTrainer:
 
         return_sums = token_level_rewards.sum(dim=-1)[: num_samples - pad_size]
         if self.cfg.generator.step_wise_trajectories:
-            avg_rewards: float = return_sums[data["is_last_step"][: num_samples - pad_size]].mean().item()
+            avg_rewards: float = return_sums[is_last_step[: num_samples - pad_size]].mean().item()
         else:
             avg_rewards: float = return_sums.mean().item()
 
@@ -930,10 +927,6 @@ class RayPPOTrainer:
                     pad_indices = [i % n for i in range(pad_size)]
                     padding = TensorList([tensor[i].clone() for i in pad_indices])
                     new_tensors[key] = TensorList.cat([tensor, padding])
-                elif key == "is_last_step":
-                    additional_dims = tensor.shape[1:]
-                    padding_tensor = torch.ones(pad_size, *additional_dims, dtype=tensor.dtype, device=tensor.device)
-                    new_tensors[key] = torch.cat([tensor, padding_tensor], dim=0)
                 elif key == "loss_mask":
                     # ensures that padding tensors don't count towards the loss
                     additional_dims = tensor.shape[1:]
@@ -948,13 +941,16 @@ class RayPPOTrainer:
 
         new_training_input = TrainingInputBatch(new_tensors)
         new_training_input.metadata = {}
-        new_training_input.metadata["uids"] = training_input.metadata["uids"] + [f"pad{i}" for i in range(pad_size)]
-        if "trajectory_ids" in training_input.metadata:
-            new_training_input.metadata["trajectory_ids"] = training_input.metadata["trajectory_ids"] + [
-                f"pad{i}" for i in range(pad_size)
-            ]
         for key, value in training_input.metadata.items():
-            if key not in ["uids", "trajectory_ids"]:
+            if key == "uids":
+                new_training_input.metadata["uids"] = training_input.metadata["uids"] + [
+                    f"pad{i}" for i in range(pad_size)
+                ]
+            elif key == "is_last_step":
+                new_training_input.metadata["is_last_step"] = training_input.metadata["is_last_step"] + [
+                    True for i in range(pad_size)
+                ]
+            else:
                 new_training_input.metadata[key] = copy.deepcopy(value)
         return new_training_input
 
