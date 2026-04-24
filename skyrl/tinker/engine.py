@@ -119,14 +119,16 @@ def prepare_model_pass_batch(
     all_model_ids = []
     all_sampling_logprobs = []
     all_advantages = []
+    all_values = []
+    all_returns = []
     all_loss_fns = []
     all_loss_fn_configs = []
     request_batch_slices = []
 
     for request_id, (model_id, request_data) in requests.items():
-        if request_data.loss_fn not in types.LOSS_TYPES:
+        if request_data.loss_fn not in types.SUPPORTED_LOSS_FNS:
             raise ValueError(
-                f"Unknown loss function '{request_data.loss_fn}'. Must be one of: {list(types.LOSS_TYPES.keys())}"
+                f"Unknown loss function '{request_data.loss_fn}'. Must be one of: {sorted(types.SUPPORTED_LOSS_FNS)}"
             )
         request_start = len(all_model_inputs)
         for item in request_data.data:
@@ -136,6 +138,8 @@ def prepare_model_pass_batch(
             all_token_weights.append(loss_fn_inputs.weights.data)
             all_sampling_logprobs.append(loss_fn_inputs.logprobs.data)
             all_advantages.append(loss_fn_inputs.advantages.data)
+            all_values.append(loss_fn_inputs.values.data)
+            all_returns.append(loss_fn_inputs.returns.data)
             all_model_ids.append(model_id)
             all_loss_fns.append(request_data.loss_fn)
             all_loss_fn_configs.append(request_data.loss_fn_config)
@@ -148,6 +152,8 @@ def prepare_model_pass_batch(
         all_token_weights=all_token_weights,
         all_sampling_logprobs=all_sampling_logprobs,
         all_advantages=all_advantages,
+        all_values=all_values,
+        all_returns=all_returns,
         all_model_ids=all_model_ids,
         all_loss_fns=all_loss_fns,
         all_loss_fn_configs=all_loss_fn_configs,
@@ -439,7 +445,7 @@ class TinkerEngine:
     def process_create_model(self, model_id: str, request_data: types.CreateModelInput) -> types.CreateModelOutput:
         """Create and initialize a model."""
         # Create model in backend (allocates adapter_index, creates optimizer, and configures adapter)
-        self.backend.create_model(model_id, request_data.lora_config)
+        self.backend.create_model(model_id, request_data.lora_config, model_role=request_data.model_role)
 
         logger.info(f"Created LoRA model {model_id}")
 
