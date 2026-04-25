@@ -589,8 +589,8 @@ class InferenceEngineState:
             cli_args = build_vllm_cli_args(cfg)
             if enable_lora:
                 cli_args.enable_lora = True
-                if active_lora_name is None:
-                    active_lora_name = "skyrl-lora"
+            if cli_args.enable_lora and active_lora_name is None:
+                active_lora_name = "skyrl-lora"
 
             setup = create_inference_servers(
                 ie_cfg,
