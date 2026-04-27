@@ -679,6 +679,12 @@ class WeightsInfoResponse(BaseModel):
     lora_rank: int | None = None
 
 
+@app.post("/api/v1/client/config")
+async def client_config():
+    """Stub for tinker SDK client_config handshake."""
+    return {}
+
+
 @app.get("/api/v1/healthz", response_model=HealthResponse)
 async def healthz():
     """Checks if the API server is ready."""
