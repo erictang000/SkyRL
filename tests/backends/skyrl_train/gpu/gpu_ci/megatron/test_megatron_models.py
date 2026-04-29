@@ -165,6 +165,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             marks=pytest.mark.skip(reason="running into correctness issues for tiny qwen3.5"),
         ),
         pytest.param(2, 1, 1, 2, 1, 2, 4, "eatang/nemotron3-moe-tiny-random", 2e-1, 2e-2, id="nemotron3-moe_tp2_ep2"),
+        pytest.param(4, 1, 1, 8, 1, 8, 8, "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", 2e-1, 5e-2, id="nemotron3-nano_tp4_ep8"),
     ],
 )
 async def test_logprobs_matching_roundtrip(
@@ -187,6 +188,7 @@ async def test_logprobs_matching_roundtrip(
         cfg.generator.max_turns = 1
 
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        tokenizer.pad_token = tokenizer.eos_token
 
         async with InferenceEngineState.create(
             cfg=cfg,
