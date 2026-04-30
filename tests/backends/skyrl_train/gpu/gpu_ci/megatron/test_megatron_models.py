@@ -29,7 +29,7 @@ from tests.backends.skyrl_train.gpu.utils import (
 )
 
 NUM_PROMPTS = 10
-N_SAMPLES_PER_PROMPT = 4
+N_SAMPLES_PER_PROMPT = 8
 MAX_GENERATE_LENGTH = 128
 
 
@@ -39,7 +39,8 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
     cfg.trainer.micro_forward_batch_size_per_gpu = 2
     cfg.trainer.micro_train_batch_size_per_gpu = 2
     cfg.trainer.use_sample_packing = True
-    cfg.generator.inference_engine.distributed_executor_backend = "mp"
+    cfg.generator.inference_engine.distributed_executor_backend = "ray"
+    cfg.generator.inference_engine.gpu_memory_utilization = 0.7
     # flash attn + mla works without sample packing, logprobs are crazy/wrong
     # but flash-attn correctly throws error with sample packing
     # we should add an assert that if you set use_sample_packing=False flash attn can accidentally be used
@@ -165,7 +166,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             marks=pytest.mark.skip(reason="running into correctness issues for tiny qwen3.5"),
         ),
         pytest.param(2, 1, 1, 2, 1, 2, 4, "eatang/nemotron3-moe-tiny-random", 2e-1, 2e-2, id="nemotron3-moe_tp2_ep2"),
-        pytest.param(4, 1, 1, 8, 1, 8, 8, "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", 2e-1, 5e-2, id="nemotron3-nano_tp4_ep8"),
+        pytest.param(1, 1, 1, 8, 1, 4, 8, "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", 2e-1, 5e-2, id="nemotron3-nano_tp4_ep8"),
     ],
 )
 async def test_logprobs_matching_roundtrip(
