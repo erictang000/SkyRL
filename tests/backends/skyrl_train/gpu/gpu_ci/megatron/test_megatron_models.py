@@ -182,6 +182,9 @@ async def construct_training_input_from_generator_output(generator_output, token
         ),
         pytest.param(2, 1, 1, 2, 1, 2, 4, "eatang/nemotron3-moe-tiny-random", 2e-1, 2e-2, id="nemotron3-moe_tp2_ep2"),
         pytest.param(1, 1, 1, 8, 1, 4, 8, "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", 2e-1, 5e-2, id="nemotron3-nano_tp4_ep8"),
+        # diagnostic-only variant: run the full nano model with EP=2 / TP=2 to
+        # match the (passing) tiny test layout. Used to localize the failure.
+        pytest.param(2, 1, 1, 2, 1, 2, 8, "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", 2e-1, 5e-2, id="nemotron3-nano_tp2_ep2"),
     ],
 )
 async def test_logprobs_matching_roundtrip(
