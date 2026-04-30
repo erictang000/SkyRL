@@ -26,8 +26,6 @@ Usage:
         skyrl.backends.skyrl_train.inference_servers.new_inference_worker_wrap.NewInferenceWorkerWrap
 """
 
-import os
-
 import torch
 
 # Workaround for a vLLM layerwise-reload corruption affecting NemotronH/Mamba.
@@ -53,34 +51,6 @@ except ImportError:
     pass
 
 VLLM_NEW_INFERENCE_WORKER_EXTENSION_CLS = f"{__name__}.NewInferenceWorkerWrap"
-
-
-def _compute_param_stats(t: torch.Tensor) -> tuple:
-    if t.is_meta:
-        return ("meta", 0.0, 0.0, 0.0, 0, 0)
-    with torch.no_grad():
-        ft = t.detach().float()
-        if ft.numel() == 0:
-            return ("ok", 0.0, 0.0, 0.0, 0, 0)
-        std = float(ft.std().item()) if ft.numel() > 1 else 0.0
-        return (
-            "ok",
-            float(ft.mean().item()),
-            std,
-            float(ft.abs().max().item()),
-            int(torch.isnan(ft).sum().item()),
-            int(torch.isinf(ft).sum().item()),
-        )
-
-
-def _write_param_stats(path: str, items, mode: str = "w") -> None:
-    with open(path, mode) as f:
-        for name, tensor in items:
-            status, mean, std, abs_max, n_nan, n_inf = _compute_param_stats(tensor)
-            f.write(
-                f"{name}\t{tuple(tensor.shape)}\t{tensor.dtype}\t{status}\t"
-                f"{mean:.6e}\t{std:.6e}\t{abs_max:.6e}\t{n_nan}\t{n_inf}\n"
-            )
 
 
 class NewInferenceWorkerWrap:
@@ -119,26 +89,6 @@ class NewInferenceWorkerWrap:
                 "start_weight_update called while a weight update is "
                 "already active. Call finish_weight_update first."
             )
-
-        # Optional one-shot diagnostic dump. Set SKYRL_DUMP_VLLM_PARAM_STATS=/some/dir
-        # to capture pre/post named_parameters stats, per-chunk input tensor
-        # stats, names that load_weights accepted, and named_buffers — all per
-        # global rank. Used to identify silently-skipped weights during sync.
-        dump_dir = os.environ.get("SKYRL_DUMP_VLLM_PARAM_STATS")
-        do_dump = bool(dump_dir) and not getattr(self, "_skyrl_dumped", False)
-        self._skyrl_dump_dir = dump_dir if do_dump else None
-        if do_dump:
-            os.makedirs(dump_dir, exist_ok=True)
-            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-            self._skyrl_dump_rank = rank
-            torch.cuda.synchronize()
-            _write_param_stats(
-                f"{dump_dir}/pre.rank{rank}.txt",
-                self.model_runner.model.named_parameters(),
-            )
-            # Truncate per-chunk files (we'll append).
-            open(f"{dump_dir}/input.rank{rank}.txt", "w").close()
-            open(f"{dump_dir}/loaded.rank{rank}.txt", "w").close()
 
         if is_checkpoint_format:
             from vllm.model_executor.model_loader.reload import (
@@ -205,28 +155,13 @@ class NewInferenceWorkerWrap:
             offset += size
 
         model = self.model_runner.model
-        if self._skyrl_dump_dir:
-            rank = self._skyrl_dump_rank
-            _write_param_stats(f"{self._skyrl_dump_dir}/input.rank{rank}.txt", weights, mode="a")
-
         with torch.device(self.device):
             if self._skyrl_is_checkpoint_format:
-                loaded = model.load_weights(weights=weights)
+                model.load_weights(weights=weights)
             else:
-                loaded = None
                 for name, weight in weights:
                     param = model.get_parameter(name)
                     param.copy_(weight)
-
-        if self._skyrl_dump_dir:
-            with open(f"{self._skyrl_dump_dir}/loaded.rank{self._skyrl_dump_rank}.txt", "a") as f:
-                if isinstance(loaded, set):
-                    for name in sorted(loaded):
-                        f.write(f"{name}\n")
-                elif loaded is None:
-                    f.write(f"# chunk_returned None (kernel-format path) chunk_size={len(weights)}\n")
-                else:
-                    f.write(f"# chunk_returned {type(loaded).__name__}\n")
 
         # Ensure consumption of packed_tensor finishes before we return (and
         # before the sender drops its reference on the next barrier).
@@ -243,14 +178,6 @@ class NewInferenceWorkerWrap:
         if not getattr(self, "_skyrl_weight_update_active", False):
             raise RuntimeError("start_weight_update must be called before finish_weight_update.")
 
-        if self._skyrl_dump_dir:
-            rank = self._skyrl_dump_rank
-            torch.cuda.synchronize()
-            _write_param_stats(
-                f"{self._skyrl_dump_dir}/preFinalize.rank{rank}.txt",
-                self.model_runner.model.named_parameters(),
-            )
-
         if self._skyrl_is_checkpoint_format:
             from vllm.model_executor.model_loader.reload import (
                 finalize_layerwise_reload,
@@ -259,20 +186,6 @@ class NewInferenceWorkerWrap:
             model = self.model_runner.model
             with torch.device(self.device):
                 finalize_layerwise_reload(model, self.model_config)
-
-        if self._skyrl_dump_dir:
-            rank = self._skyrl_dump_rank
-            torch.cuda.synchronize()
-            _write_param_stats(
-                f"{self._skyrl_dump_dir}/post.rank{rank}.txt",
-                self.model_runner.model.named_parameters(),
-            )
-            _write_param_stats(
-                f"{self._skyrl_dump_dir}/buffers.rank{rank}.txt",
-                self.model_runner.model.named_buffers(),
-            )
-            self._skyrl_dumped = True
-            self._skyrl_dump_dir = None
 
         self._skyrl_weight_update_active = False
         self._skyrl_is_checkpoint_format = True

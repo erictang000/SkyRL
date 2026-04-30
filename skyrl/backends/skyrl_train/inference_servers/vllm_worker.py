@@ -14,38 +14,12 @@ Usage:
     vllm serve ... --worker-extension-cls skyrl_train.inference_servers.vllm_worker.WorkerWrap
 """
 
-import os
 import warnings
 
 import torch
 
 # Path to this worker extension class for use in CLI args (derived from module path)
 VLLM_WORKER_EXTENSION_CLS = f"{__name__}.WorkerWrap"
-
-
-def _compute_param_stats(t: torch.Tensor) -> tuple:
-    with torch.no_grad():
-        ft = t.detach().float()
-        if ft.numel() == 0:
-            return (0.0, 0.0, 0.0, 0, 0)
-        std = float(ft.std().item()) if ft.numel() > 1 else 0.0
-        return (
-            float(ft.mean().item()),
-            std,
-            float(ft.abs().max().item()),
-            int(torch.isnan(ft).sum().item()),
-            int(torch.isinf(ft).sum().item()),
-        )
-
-
-def _write_param_stats(path: str, items) -> None:
-    with open(path, "w") as f:
-        for name, tensor in items:
-            mean, std, abs_max, n_nan, n_inf = _compute_param_stats(tensor)
-            f.write(
-                f"{name}\t{tuple(tensor.shape)}\t{tensor.dtype}\t"
-                f"{mean:.6e}\t{std:.6e}\t{abs_max:.6e}\t{n_nan}\t{n_inf}\n"
-            )
 
 
 class WorkerWrap:
@@ -116,42 +90,7 @@ class WorkerWrap:
         for name, tensor in self._weight_receiver.receive_weights(request):
             weight_list.append((name, tensor))
 
-        # Optional one-shot diagnostic dump. Set SKYRL_DUMP_VLLM_PARAM_STATS=/some/dir
-        # to capture pre/post named_parameters stats, input tensor stats, the set of
-        # names AutoWeightsLoader actually accepted, and named_buffers, all per
-        # global rank. Used to identify silently-skipped weights during sync.
-        dump_dir = os.environ.get("SKYRL_DUMP_VLLM_PARAM_STATS")
-        do_dump = bool(dump_dir) and not getattr(self, "_skyrl_dumped", False)
-        if do_dump:
-            os.makedirs(dump_dir, exist_ok=True)
-            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-            torch.cuda.synchronize()
-            _write_param_stats(
-                f"{dump_dir}/pre.rank{rank}.txt",
-                self.model_runner.model.named_parameters(),
-            )
-            _write_param_stats(f"{dump_dir}/input.rank{rank}.txt", weight_list)
-
-        loaded = self.model_runner.model.load_weights(weights=weight_list)
-
-        if do_dump:
-            with open(f"{dump_dir}/loaded.rank{rank}.txt", "w") as f:
-                if isinstance(loaded, set):
-                    f.write(f"# returned_type=set count={len(loaded)}\n")
-                    for name in sorted(loaded):
-                        f.write(f"{name}\n")
-                else:
-                    f.write(f"# returned {type(loaded).__name__} (no name set available)\n")
-            torch.cuda.synchronize()
-            _write_param_stats(
-                f"{dump_dir}/post.rank{rank}.txt",
-                self.model_runner.model.named_parameters(),
-            )
-            _write_param_stats(
-                f"{dump_dir}/buffers.rank{rank}.txt",
-                self.model_runner.model.named_buffers(),
-            )
-            self._skyrl_dumped = True
+        self.model_runner.model.load_weights(weights=weight_list)
 
         for weight in weight_list:
             del weight
