@@ -40,7 +40,6 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
     cfg.trainer.micro_train_batch_size_per_gpu = 2
     cfg.trainer.use_sample_packing = True
     cfg.generator.inference_engine.distributed_executor_backend = "ray"
-    cfg.generator.inference_engine.gpu_memory_utilization = 0.7
     # flash attn + mla works without sample packing, logprobs are crazy/wrong
     # but flash-attn correctly throws error with sample packing
     # we should add an assert that if you set use_sample_packing=False flash attn can accidentally be used
@@ -64,6 +63,22 @@ def _extra_env_vars_for_model(model_name: str) -> dict[str, str] | None:
     if "glm" in model_name.lower():
         return {"NVTE_FUSED_ATTN": "1"}
     return None
+
+
+def _engine_overrides_for_model(model_name: str) -> dict:
+    """Per-model overrides for vLLM engine init.
+
+    The 30B nemotron-3-nano has max_seq_len=262144 in HF config which produces
+    a huge KV cache; with Megatron colocated and offload_model=False during
+    sync, the second wake_up(kv_cache) blows past GPU memory. Cap max_model_len
+    at a value comfortably above prompt+gen length and lower gpu memory
+    utilization so vLLM leaves enough headroom for the resident Megatron model.
+    """
+    overrides = {"engine_init_kwargs": {}, "gpu_memory_utilization": 0.9}
+    if "Nemotron-3-Nano" in model_name:
+        overrides["engine_init_kwargs"] = {"max_model_len": 4096}
+        overrides["gpu_memory_utilization"] = 0.6
+    return overrides
 
 
 async def generate_with_vllm(generator, client, model_name, tokenizer, return_training_input=False):
@@ -191,6 +206,7 @@ async def test_logprobs_matching_roundtrip(
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         tokenizer.pad_token = tokenizer.eos_token
 
+        engine_overrides = _engine_overrides_for_model(model_name)
         async with InferenceEngineState.create(
             cfg=cfg,
             model=model_name,
@@ -198,8 +214,8 @@ async def test_logprobs_matching_roundtrip(
             colocate_all=True,
             backend="vllm",
             sleep_level=1,
-            gpu_memory_utilization=0.9,
-            engine_init_kwargs={},
+            gpu_memory_utilization=engine_overrides["gpu_memory_utilization"],
+            engine_init_kwargs=engine_overrides["engine_init_kwargs"],
         ) as engines:
             client, pg = engines.client, engines.pg
             await client.wake_up()
@@ -266,6 +282,10 @@ async def test_logprobs_matching_roundtrip(
                         "pass_through", "broadcast_to_inference_engines", client, cfg.generator.inference_engine
                     )
                 )
+            # Offload Megatron model so vLLM has room for the KV cache when we
+            # wake it up. Without this the 30B nemotron-3-nano test OOMs at
+            # wake_up(kv_cache).
+            policy.offload_to_cpu(offload_optimizer=False, offload_model=True)
             await client.wake_up(tags=["kv_cache"])
 
             (response_mask_2, logprobs_t_2) = await generate_with_vllm(
