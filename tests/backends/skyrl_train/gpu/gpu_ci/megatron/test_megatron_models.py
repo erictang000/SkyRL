@@ -82,11 +82,16 @@ def _engine_overrides_for_model(model_name: str) -> dict:
     need the global config. (Matches what vLLM 0.19 used by default.)
     """
     overrides = {"engine_init_kwargs": {}, "gpu_memory_utilization": 0.9}
+    # Both nemotron3 models (the user's tiny eatang/nemotron3-moe-tiny-random
+    # and the upstream Nemotron-3-Nano) need moe_backend="triton" on vllm 0.20:
+    # the auto-selected FlashInfer Cutlass / TRTLLM MoE backends call
+    # get_current_vllm_config() in their kernel ctor, and the layerwise reload
+    # path triggered by the post-sync update_weights call invokes that ctor
+    # outside an active set_current_vllm_config() context.
+    if "nemotron3" in model_name.lower() or "Nemotron-3" in model_name:
+        overrides["engine_init_kwargs"] = {"moe_backend": "triton"}
     if "Nemotron-3-Nano" in model_name:
-        overrides["engine_init_kwargs"] = {
-            "max_model_len": 4096,
-            "moe_backend": "triton",
-        }
+        overrides["engine_init_kwargs"]["max_model_len"] = 4096
         overrides["gpu_memory_utilization"] = 0.6
     return overrides
 
