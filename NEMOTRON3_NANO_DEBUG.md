@@ -9,15 +9,21 @@ Two branches on origin:
 
 ## TL;DR — current state
 
-| test | vLLM 0.19.0 (overnight branch) | vLLM 0.20.0 (this branch) |
-|---|---|---|
-| `nemotron3-moe_tp2_ep2` (tiny, user's primary target) | PASSES (diff 0.017 / 0.155) | **PASSES** (diff **0.010** / 0.154) — pre-sync match is ~2× tighter |
-| `nemotron3-nano_tp4_ep8` (full 30B nano) | fails: NaN logprobs after sync | fails: **finite but wrong** logprobs after sync (no NaN, mean shifts -0.14 → -1.60, diff 1.46 vs 0.2 threshold) |
+| test | vLLM 0.19.0 (overnight branch) | vLLM 0.20.0 (this branch) | vLLM 0.20.0 + main merge w/ PR #1581 |
+|---|---|---|---|
+| `nemotron3-moe_tp2_ep2` (tiny, user's primary target) | PASSES (diff 0.017 / 0.155) | **PASSES** (diff **0.010** / 0.154) — pre-sync match is ~2× tighter | **PASSES** (diff 0.0099 / 0.154) — bit-identical to pre-merge run16 |
+| `nemotron3-nano_tp4_ep8` (full 30B nano) | fails: NaN logprobs after sync | fails: **finite but wrong** logprobs after sync (no NaN, mean shifts -0.14 → -1.60, diff 1.46 vs 0.2 threshold) | **same failure** — diff **1.457** vs 0.2, mean -0.139 → -1.595 (run17) |
 
 The vLLM 0.20 upgrade resolved the **NaN** failure mode and the
 "`Failed to load weights`" warning spam, but exposed an underlying weight-
 sync correctness gap: post-sync vLLM produces sane but **systematically wrong**
 logprobs, suggesting some weights still aren't transferred correctly.
+
+PR #1581 (weight-metadata bucket-walk fix from main) does **not** help the
+nano test — its fix targets `is_grouped_export=True` (FusedExpertMapping),
+but NemotronH uses `AutoMapping` so the bucket-walk change doesn't apply to
+this path. Pre- and post-sync stats on the merged stack are essentially
+bit-identical to the pre-merge run (diff 1.457 vs 1.458; <0.1% drift).
 
 ## What landed on `nemotron3_nano_vllm020`
 
@@ -89,6 +95,26 @@ flash-attn = { url = "...torch2.11.../flash_attn-2.8.3+cu12torch2.11..whl", ... 
   - post-sync mean: **-1.596**, std 0.368
 - The "Failed to load weights" warning spam from vLLM 0.19 is **gone** in this run (0 vs 36 warnings on 0.19). The layerwise reload mechanism appears healthier on 0.20.
 
+### Re-run on merged stack (run 17 — main pulled in, includes PR #1581)
+
+After the user pulled in main (which contained PR #1581 "Fix weight metadata
+handling for megatron weight sync" and PR #1586 "Bump megatron-bridge"), I
+re-ran the nano test on the merged branch.
+
+- Pre-sync (Megatron-vs-vLLM): mean diff **0.041289**, std 0.155066 ✓ (< 0.05)
+  - vLLM mean -0.138592 / std 0.256518
+  - Megatron mean -0.155418 / std 0.315716
+- Post-sync (vLLM-vs-vLLM after sync): mean diff **1.456988**, std 0.427263 ✗
+  - Pre-sync vLLM mean -0.138592 / std 0.256518
+  - Post-sync vLLM mean **-1.594951** / std 0.366788
+  - Threshold 0.2 → fails by ~7×.
+- Total runtime: 592.71s (0:09:52).
+
+These numbers are bit-for-bit close to run14 (1.457 vs 1.458 pre-merge), so
+PR #1581 has effectively zero impact on this failure mode. Confirms that
+its fix targets `is_grouped_export=True` paths (FusedExpertMapping) only,
+while NemotronH's bridge uses `AutoMapping` (`is_grouped_export=False`).
+
 ### Tiny regression check (runs 15 & 16)
 - Run 15 (initial vllm 0.20 attempt, no `moe_backend` override): **fails**
   with the same `AssertionError: Current vLLM config is not set` from
@@ -152,4 +178,7 @@ In rough priority order:
 - `run12_nano_vllm020.log` — vllm 0.20 PyPI wheel run (failed with libcudart.so.13).
 - `run13_nano_vllm020_cu129.log` — vllm 0.20+cu129 wheel run (failed with AssertionError on FlashInfer Cutlass init during layerwise reload).
 - `run14_nano_vllm020_triton.log` — vllm 0.20+cu129 + `moe_backend=triton` (no NaN, no AssertionError; logprob threshold still failing — diff 1.46 vs 0.2).
-- `run15_tiny_vllm020.log` — tiny regression check, currently running.
+- `run15_tiny_vllm020.log` — tiny regression on first 0.20 attempt (failed: AssertionError, before triton override).
+- `run16_tiny_vllm020_triton.log` — tiny on 0.20 + triton MoE: PASSED.
+- `run17_nano_merged.log` — nano on merged stack (vllm 0.20 + triton MoE + PR #1581 + bridge bump): same failure as run14 (diff 1.457 vs 0.2).
+- `run18_tiny_merged.log` — tiny regression on merged stack.
