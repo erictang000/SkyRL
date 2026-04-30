@@ -1,201 +1,148 @@
 # Nemotron-3 Nano CI debug log
 
-Tracking the overnight investigation of the post-sync NaN in
+Tracking the investigation of the post-sync NaN in
 `uv run --isolated --extra dev --extra megatron -- pytest -s tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_megatron_models.py -k nemotron3-nano_tp4_ep8`.
 
-Branch: `nemotron3_nano_ci_overnight` (pushed to origin).
+Two branches on origin:
+- `nemotron3_nano_ci_overnight` — initial overnight investigation on vLLM 0.19.0 / torch 2.10.0.
+- `nemotron3_nano_vllm020` (current) — vLLM 0.20.0 / torch 2.11 upgrade attempt.
 
-## TL;DR
+## TL;DR — current state
 
-| test | result |
-|---|---|
-| `nemotron3-moe_tp2_ep2` (tiny, the user's primary target) | **PASSES** end-to-end with my OOM fix in place |
-| `nemotron3-nano_tp4_ep8` (full 30B nano, derisking) | **fails post-sync** with NaN in vLLM logprobs. The Megatron forward itself is correct (logprob diff vs first vLLM gen is 0.042 < 0.05). The bridge sends 6243 valid weights with no NaN/Inf. The bug is downstream of the bridge — in vLLM's layerwise reload path under nemotron-3-nano-specific conditions that don't reproduce on the tiny model. |
+| test | vLLM 0.19.0 (overnight branch) | vLLM 0.20.0 (this branch) |
+|---|---|---|
+| `nemotron3-moe_tp2_ep2` (tiny, user's primary target) | **PASSES** | (running — will record below) |
+| `nemotron3-nano_tp4_ep8` (full 30B nano) | fails: NaN logprobs after sync | fails: **finite but wrong** logprobs after sync (no NaN, mean shifts -0.14 → -1.60, diff 1.46 vs 0.2 threshold) |
 
-The tiny model creation script (`create_nemotron3_moe_tiny.py`) and the
-tiny test it backs are in good shape. The full nano test still requires
-fixes outside the scope of this overnight session — see "Open hypotheses"
-below.
+The vLLM 0.20 upgrade resolved the **NaN** failure mode and the
+"`Failed to load weights`" warning spam, but exposed an underlying weight-
+sync correctness gap: post-sync vLLM produces sane but **systematically wrong**
+logprobs, suggesting some weights still aren't transferred correctly.
 
-## What landed in `nemotron3_nano_ci_overnight`
+## What landed on `nemotron3_nano_vllm020`
 
 | commit | purpose |
 |---|---|
-| `496bfb5a` | snapshot of the user's WIP test edits |
-| `86fe57b7` | **fix**: per-model engine overrides + offload Megatron model after sync to avoid OOM at `wake_up(kv_cache)` for the 30B nano test |
-| `d3d13ec`, `d52a1e7`, `7e49668` | **diagnostic**: env vars `SKYRL_DUMP_WEIGHT_NAMES`, `SKYRL_DUMP_BROADCAST_NAMES` to dump bridge-emitted (name, shape, NaN/Inf, abs_max, mean) for diagnosis |
-| `08c5d4b` | **diagnostic**: env var `SKYRL_NEMOTRON_DISABLE_BUCKETING=1` to push bucket threshold to 1 TB and exercise the no-bucketing path |
-| `01c4a1d3`, `7dcc5a20` | this writeup, plus a diagnostic-only EP=2 variant that's been removed after collecting data |
-| `7dcc5a20` | restored test list to user's original (no diagnostic-only variants left) |
+| `1ca719cb` | bump pyproject.toml: vllm 0.19.0 → 0.20.0, torch 2.10 → 2.11, flashinfer 0.6.6 → 0.6.8.post1 (+ flashinfer-cubin), TE 2.10 → 2.11. Drop torch-2.10 wheel URL overrides for causal-conv1d / mamba-ssm; build them from PyPI source distribution (no upstream torch-2.11 wheels yet). Update flash-attn URL to lesj0610 fork's torch-2.11 wheel. |
+| `7ee05938` | regenerate uv.lock (1559+/489-) for the new graph |
+| `f4af91d4` | use vLLM 0.20.0+cu129 wheel (the PyPI default 0.20.0 is built against CUDA 13 and breaks at runtime with `libcudart.so.13: cannot open shared object file`); torch / torchvision stay on cu128 because flashrl needs torch 2.7 there |
+| `c867a68f` | force `moe_backend="triton"` in the nano test's `engine_init_kwargs`. Without this, vLLM 0.20 auto-selects FlashInfer Cutlass on B200 and the kernel ctor calls `get_current_vllm_config()` outside an active config context during the layerwise reload, raising `AssertionError: Current vLLM config is not set`. |
 
-## Test summary
+`pyproject.toml` highlights of the change:
 
-The test does:
-1. Initial vLLM gen → returns logprobs.
-2. Megatron forward → returns logprobs.
-3. Compare (Megatron vs vLLM gen #1) — passes a strict threshold.
-4. Broadcast Megatron weights to vLLM via NCCL.
-5. Second vLLM gen → returns logprobs.
-6. Compare (vLLM gen #1 vs vLLM gen #2) — should match because we just resynced the same weights back.
-
-Goal: prove a Megatron training step's weights round-trip into vLLM correctly.
-
-## Status
-
-- ✅ Tiny CI (`nemotron3-moe_tp2_ep2`, `eatang/nemotron3-moe-tiny-random`, 7 layers, 16 experts, EP=2, TP=2, inference_tp=2) **passes** end-to-end.
-  - Megatron-vs-vLLM logprob diff: 0.017 (< 0.02 threshold).
-  - Post-sync vLLM logprob diff: 0.155 (< 0.2 threshold).
-- ❌ Full nano (`nemotron3-nano_tp4_ep8`, `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16`, 52 layers, 128 experts, EP=8, TP=1, inference_tp=4) **fails**: vLLM produces NaN logprobs in the post-sync generation.
-  - Megatron-vs-vLLM logprob diff (pre-sync): 0.042 — passes the 0.05 threshold, so the Megatron forward itself is correct.
-  - Sync completes (`sync_weights, time cost ~5s`), then the next vLLM `generate` returns NaN logprobs → JSON serializer raises `Out of range float values are not JSON compliant: nan`.
-- ❌ Same nano model with EP=2, TP=2 (matching the passing tiny layout) **also fails** with the same NaN — so EP scale alone is not the trigger.
-
-## Fixes already landed
-
-1. **Per-model engine overrides** in `test_megatron_models.py`. The HF config
-   has `max_position_embeddings=262144`, which inflates the KV cache to ~106 GB
-   per GPU at `gpu_memory_utilization=0.9`. With Megatron co-resident the
-   second `wake_up(kv_cache)` OOMed. Cap `max_model_len=4096` and lower
-   `gpu_memory_utilization=0.6` for the nemotron-3-nano test only.
-2. **Offload Megatron model after sync, before `wake_up(kv_cache)`**. The
-   previous `offload_model=False` was the reason the OOM hit even at low
-   memory utilization.
-
-After (1) and (2), the test gets *past* the OOM and surfaces the actual NaN —
-the issue the user originally described.
-
-## Findings (all confirmed by reproduction)
-
-### 1. The "Failed to load weights" warnings from vLLM are NOISE
-
-`layerwise.py:230` fires for every container module with
-`load_numel_total == 0` on reload — i.e., every parent module without direct
-parameters. The tiny test (which **passes**) produces 36 of these warnings;
-the nano test (which **fails**) produces 37. Identical pattern, not a signal.
-Counted via `grep -c "Failed to load weights"` on each run log.
-
-### 2. Bridge name → vLLM name mapping is correct
-
-`vllm.model_executor.models.nemotron_h.NemotronHForCausalLM.hf_to_vllm_mapper`
-applies:
-
-```python
-WeightsMapper(
-    orig_to_new_prefix={"backbone": "model"},
-    orig_to_new_substr={"A_log": "A", "embeddings": "embed_tokens"},
-)
+```diff
+-    "vllm==0.19.0; sys_platform == 'linux'",
++    "vllm==0.20.0; sys_platform == 'linux'",
+-    "torch==2.10.0; sys_platform == 'linux'",
++    "torch==2.11.0; sys_platform == 'linux'",
+-    "transformer-engine[pytorch]==2.10.0; sys_platform == 'linux'",
++    "transformer-engine[pytorch]==2.11.0; sys_platform == 'linux'",
+-    "flashinfer-python==0.6.6; ...",
++    "flashinfer-python==0.6.8.post1; ...",
+-    "flashinfer-jit-cache==0.6.6; ...",
++    "flashinfer-jit-cache==0.6.8.post1; ...",
++    "flashinfer-cubin==0.6.8.post1; ...",
 ```
 
-Bridge emits → vLLM gets:
-- `backbone.embeddings.weight` → `model.embed_tokens.weight` ✓
-- `backbone.layers.X.mixer.A_log` → `model.layers.X.mixer.A` ✓ (with the special A_log → A weight loader applying `-exp(...)`)
-- `backbone.layers.X.mixer.experts.Y.up_proj.weight` → routed via `experts.{Y}.up_proj.` substring → `experts.w13_weight` (shard_id=w1, expert_id=Y) ✓
+```toml
+[[tool.uv.index]]
+name = "vllm-cu129"
+url = "https://wheels.vllm.ai/0.20.0/cu129"
+explicit = true
 
-All 6243 bridge-emitted weights for the nano model have valid vLLM destinations.
-
-### 3. Metadata vs broadcast name order matches exactly
-
-```
-$ diff <(awk -F'\t' '{print $1}' metadata_names_nano.txt) \
-       <(awk -F'\t' '{print $2}' broadcast_names_nano.txt)
-[empty]
+[tool.uv.sources]
+vllm = [{ index = "vllm-cu129", marker = "sys_platform == 'linux'" }]
+flash-attn = { url = "...torch2.11.../flash_attn-2.8.3+cu12torch2.11..whl", ... }
+# causal-conv1d, mamba-ssm: removed URL pins so they build from PyPI sdist
 ```
 
-So the names sent over HTTP (used by vLLM to allocate slots) match the
-order of tensors streamed via NCCL. **Not a name-vs-tensor mismatch.**
+## Detailed run progression on `nemotron3_nano_vllm020`
 
-### 4. Bucketing is not the cause
+### 1. Initial install with default PyPI wheel (run12)
+- `import vllm` succeeds.
+- Test fails in 45s with `ImportError: libcudart.so.13: cannot open shared object file`.
+- Cause: vLLM 0.20.0 PyPI wheel was switched to CUDA 13 (per the 0.20 release notes); we have CUDA 12.9 with torch+cu128.
 
-Setting `SKYRL_NEMOTRON_DISABLE_BUCKETING=1` (push bucket threshold to 1 TB
-so all weights go in one bucket): same NaN. Eliminates per-bucket export
-non-determinism as a hypothesis.
+### 2. Switch to vllm 0.20.0+cu129 wheel (run13)
+- Install OK.
+- Test progresses past the import. First vLLM gen and Megatron forward succeed.
+- Megatron-vs-vLLM logprob diff (pre-sync): **0.041** (< 0.05 ✓).
+- Sync completes in 2.4s.
+- Second forward fails inside `process_weights_after_loading` for FusedMoE:
+  ```
+  File ".../flashinfer_cutlass_moe.py", line 98, in __init__
+      get_current_vllm_config().compilation_config.max_cudagraph_capture_size
+  AssertionError: Current vLLM config is not set. ...
+  ```
+- Cause: vLLM 0.20 made the config assertion stricter. On B200 (capability ≥ 90) the auto-selected MoE backend is FlashInfer Cutlass, whose kernel ctor reads `get_current_vllm_config()`. The layerwise reload triggered by the broadcast happens outside `set_current_vllm_config()` context, so the assert trips.
 
-### 5. Bridge does NOT emit NaN/Inf, and value magnitudes are bounded
+### 3. Force triton MoE backend (run14)
+- `engine_init_kwargs={"max_model_len": 4096, "moe_backend": "triton"}` passed through
+  `_engine_overrides_for_model("Nemotron-3-Nano")`.
+- First vLLM gen (50s — slower than 0.19's 20s due to flashinfer autotune on init).
+- Megatron-vs-vLLM logprob diff (pre-sync): **0.041** ✓.
+- Sync completes in ~5s.
+- `wake_up(kv_cache)` succeeds — no OOM, no AssertionError, no NaN.
+- Second vLLM gen completes in 8s without crashing.
+- ❌ But `vLLM logprob diff (pre vs post sync)` = **1.458** (vs 0.2 threshold).
+  - pre-sync mean: -0.139, std 0.257
+  - post-sync mean: **-1.596**, std 0.368
+- The "Failed to load weights" warning spam from vLLM 0.19 is **gone** in this run (0 vs 36 warnings on 0.19). The layerwise reload mechanism appears healthier on 0.20.
 
-`SKYRL_DUMP_BROADCAST_NAMES=...` with the value-stats version logs
-`nan=0	inf=0	abs_max=...	mean=...` for every broadcast tensor. Across all
-6243 weights for the nano model, **zero** NaN, **zero** Inf. The largest
-`abs_max` was 25.88 (Mamba `D` parameters), and the largest weight-matrix
-`abs_max` was 0.98 (an attention `o_proj.weight`) — all comfortably within
-BF16 dynamic range. Megatron's logprob output before sync is also clean.
+### Tiny regression check (run15, in progress)
+- Running `nemotron3-moe_tp2_ep2` on the upgraded stack to verify the
+  passing test from the overnight branch still passes here. Result will be
+  appended below.
 
-### 6. EP scale is not the trigger
+## Findings
 
-`nemotron3-nano_tp2_ep2` (full nano model, same layout as the passing tiny
-test) fails identically. The bug is something specific to the full nano
-model's *content* (real trained weights and/or 52-layer scale), not to EP=8.
-
-## What differs between the passing tiny and failing nano
-
-| field | tiny (passes) | nano (fails) |
-|---|---|---|
-| `n_routed_experts` | 16 | 128 |
-| `num_experts_per_tok` | 4 | 6 |
-| `num_hidden_layers` | 7 | 52 |
-| `routed_scaling_factor` | 2.5 | 2.5 |
-| `mlp_hidden_act` | relu2 | relu2 |
-| Real trained weights | no (random init, std 0.1) | yes |
-| Bridge buckets | 1 | 62 (or 1 with the override; both fail) |
-
-## Open hypotheses (in priority order, for follow-up)
-
-1. **vLLM layerwise reload + FusedMoE has a bug specific to large numbers
-   of experts (128) or large param sizes**. Same code path is exercised by
-   the tiny test which works at 16 experts. The buffered weight-loader
-   args reference views into NCCL's packed-broadcast buffers; with 128
-   experts × 2 shards × 22 MoE layers = 5632 buffered loads per pass,
-   stream / refcount edge cases are more likely to bite. Worth checking
-   whether `online_process_loader`'s deferred replay correctly references
-   the broadcast tensors after the consumer rotates buffers.
-2. **`process_weights_after_loading` re-run during reload** — for
-   unquantized FusedMoE on Triton, `_setup_kernel` is called again on
-   reload, which calls `replace_parameter`. Then `_place_kernel_tensors`
-   replaces the params again with the saved kernel_tensors. This double-
-   replace is correct in theory; verify the kernel actually picks up the
-   current weights at next forward (it accesses `layer.w13_weight` lazily,
-   so should). Worth printing the FusedMoE weight L2-norm at
-   `process_weights_after_loading` entry and exit to see if the values
-   actually survive the reload.
-3. **Real-weight dynamic range issue exposed only after reload** — the
-   first vLLM forward (loaded directly from HF safetensors) works on the
-   real weights, so values themselves are fine. But if the layerwise
-   reload introduces a subtle precision difference (e.g., a transpose loop
-   that's slow for BF16 with padding), some intermediate computation could
-   overflow. Worth A/B testing by patching vLLM to skip layerwise reload
-   for FusedMoE specifically.
-4. **vLLM upstream MoE bugfixes since 0.19.0** — commits `e8eb049`
-   (`Unpad routed output before shared expert add`) and `12a3f64`
-   (`Only unpad routed output before shared expert add or routed output
-   transform`) on vLLM main are post-0.19.0 and look related to NemotronH
-   shared-experts handling. We're pinned to `vllm==0.19.0` via the
-   archived wheel; updating to a newer vLLM is the cleanest test.
+1. **vLLM 0.20.0 PyPI wheel is built for CUDA 13** and silently breaks the
+   moment any CUDA op touches `libcudart.so`. For SkyRL stacks running CUDA
+   12.x, we must pull the cu129 wheel from `wheels.vllm.ai/0.20.0/cu129`.
+2. **vLLM 0.20.0's `get_current_vllm_config()` is stricter** and will assert
+   in `process_weights_after_loading` for FusedMoE backends whose ctor reads
+   the global config (FlashInfer Cutlass and FlashInfer TRTLLM both do). Any
+   hot-reload code path (like SkyRL's layerwise reload during weight
+   broadcast) trips this. Forcing `moe_backend="triton"` is a clean
+   workaround until vLLM either wraps the reload path in
+   `set_current_vllm_config()` or moves the config read out of the ctor.
+3. **The underlying weight-sync correctness gap persists.** vLLM 0.19's NaN
+   was the visible symptom; on vLLM 0.20 the model produces finite but
+   wrong-magnitude logprobs after sync (post-sync mean shifted by ~1.5
+   nats). This means some weights still aren't being transferred / applied
+   correctly. The bridge sends 6243 weights with no NaN/Inf (verified on
+   vLLM 0.19; bridge is unchanged), so the wrongness is on the vLLM side
+   of the layerwise reload.
 
 ## Suggested next steps
 
-In rough order of effort vs likely value:
+In rough priority order:
 
-1. **Try a newer vLLM** (post-`12a3f64`) — if those upstream bugfixes for
-   the shared-experts add address the same edge case, this might just
-   work without further debugging.
-2. **Add an in-vLLM sanity probe**: monkey-patch `NemotronHForCausalLM.load_weights`
-   to assert no NaN in the loaded `w13_weight`/`w2_weight` after each call.
-3. **Bisect with smaller variants**: take the tiny model architecture but
-   bump `n_routed_experts` to 64, then 128, then add layers. Find the
-   minimum config that triggers the failure. That gives a cheap repro.
-4. **Disable layerwise reload entirely** for the nemotron3 case — patch
-   the `is_checkpoint_format=False` codepath but apply WeightsMapper
-   translation on the trainer side so direct param copy works. If that
-   passes, the bug is unambiguously in the layerwise reload mechanism.
+1. **Identify which weights diverge.** Add an instrumentation step that, for
+   a small layer subset, dumps the post-sync vLLM weight stats (norm, max,
+   sum) and compares against the corresponding bridge-emitted stats. The
+   logprob shift of ~1.5 nats is consistent with a major component (e.g.,
+   `lm_head.weight`, `embeddings`, or one of the early MoE layers) being
+   off.
+2. **Bisect the bridge mapping.** Run with a scaled-down dump (e.g.,
+   only the first MoE layer's experts) and compare the FusedMoE
+   `w13_weight` / `w2_weight` post-reload against the same params after a
+   fresh vLLM init from disk. If they differ, the layerwise reload is
+   silently corrupting expert ordering.
+3. **Try `moe_backend="flashinfer_cutlass"` once a config-context fix lands
+   upstream.** vLLM 0.20's release notes mention "B200 MoE configs for
+   Nemotron Nano were added," so the FlashInfer kernel may be where the
+   model was actually validated.
+4. **Cherry-pick the fix vs full upgrade.** Given vLLM 0.20 doesn't fully
+   fix the issue, weigh keeping vLLM 0.19 + the existing OOM workarounds
+   (which makes the tiny test pass) versus pushing forward on 0.20 (more
+   alignment with upstream, no NaN, but threshold still failing).
 
 ## Build artifacts and logs (in `.claude/runs/`, not committed)
 
-- `run01_baseline.log` — original failure (OOM at wake_up kv_cache).
-- `run02_oom_fix.log` — first NaN failure post-OOM-fix.
-- `run03_tiny.log` — tiny model passes (initial confirmation).
-- `run04_with_dump.log`, `bridge_names_nano.txt` — bridge-emitted name dump (6243 names).
-- `run05_tiny_dump.log`, `bridge_names_tiny.txt` — tiny model name dump (146 names).
-- `run06_both_dumps.log`, `metadata_names_nano.txt`, `broadcast_names_nano.txt` — confirms metadata vs broadcast name order match.
-- `run07_nobucket.log` — nano test with bucketing disabled, still NaN.
-- `run08_ep2.log` — full nano with EP=2/TP=2, still NaN.
-- `run09_stats.log`, `broadcast_stats_nano.txt` — value statistics for every bridge-emitted weight; confirmed clean (no NaN/Inf, abs_max bounded).
-- `run10_final_tiny.log` — final verification that tiny still passes after all fixes.
+- `run01_baseline.log` … `run10_final_tiny.log` — vllm 0.19 investigation logs (overnight branch).
+- `run11_install_smoke.log` — vllm 0.20 + torch 2.11 import smoke test (passed).
+- `run12_nano_vllm020.log` — vllm 0.20 PyPI wheel run (failed with libcudart.so.13).
+- `run13_nano_vllm020_cu129.log` — vllm 0.20+cu129 wheel run (failed with AssertionError on FlashInfer Cutlass init during layerwise reload).
+- `run14_nano_vllm020_triton.log` — vllm 0.20+cu129 + `moe_backend=triton` (no NaN, no AssertionError; logprob threshold still failing — diff 1.46 vs 0.2).
+- `run15_tiny_vllm020.log` — tiny regression check, currently running.
