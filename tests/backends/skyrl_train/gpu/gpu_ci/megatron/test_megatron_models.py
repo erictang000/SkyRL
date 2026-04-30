@@ -73,10 +73,20 @@ def _engine_overrides_for_model(model_name: str) -> dict:
     sync, the second wake_up(kv_cache) blows past GPU memory. Cap max_model_len
     at a value comfortably above prompt+gen length and lower gpu memory
     utilization so vLLM leaves enough headroom for the resident Megatron model.
+
+    On vLLM 0.20 + B200, the auto-selected MoE backend is FlashInfer Cutlass.
+    During the layerwise reload triggered by our weight broadcast, that
+    backend's __init__ calls ``get_current_vllm_config()`` outside an active
+    ``set_current_vllm_config()`` context and asserts. Force ``moe_backend=
+    "triton"`` to keep the reload path on a backend whose kernel ctor doesn't
+    need the global config. (Matches what vLLM 0.19 used by default.)
     """
     overrides = {"engine_init_kwargs": {}, "gpu_memory_utilization": 0.9}
     if "Nemotron-3-Nano" in model_name:
-        overrides["engine_init_kwargs"] = {"max_model_len": 4096}
+        overrides["engine_init_kwargs"] = {
+            "max_model_len": 4096,
+            "moe_backend": "triton",
+        }
         overrides["gpu_memory_utilization"] = 0.6
     return overrides
 
