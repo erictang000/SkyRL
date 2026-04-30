@@ -243,6 +243,12 @@ class MegatronWeightExtractor(WeightExtractor):
         self._ensure_buckets_initialized()
         device = torch.cuda.current_device()
 
+        # Optional debug dump of the broadcast (post-bucket) name order.
+        broadcast_dump_path = os.environ.get("SKYRL_DUMP_BROADCAST_NAMES")
+        broadcast_dump_fh = None
+        if broadcast_dump_path and torch.distributed.get_rank() == 0:
+            broadcast_dump_fh = open(broadcast_dump_path, "w")
+
         if not self.enable_bucketing:
             # No bucketing: yield one chunk per parameter
             hf_params_generator = self.bridge.export_hf_weights(
@@ -253,6 +259,8 @@ class MegatronWeightExtractor(WeightExtractor):
 
             for name, tensor in hf_params_generator:
                 tensor = tensor.to(device=device, dtype=dtype, non_blocking=True)
+                if broadcast_dump_fh:
+                    broadcast_dump_fh.write(f"{name}\t{tuple(tensor.shape)}\n")
 
                 yield WeightChunk(
                     names=[name],
@@ -265,6 +273,7 @@ class MegatronWeightExtractor(WeightExtractor):
             # PP-collective caches; reuse the pre-computed bucket structure.
             fresh_tasks = self.bridge.get_conversion_tasks(self.actor_module)
 
+            bucket_index = 0
             for index_group in self.bucket_index_groups:
                 bucket_tasks = [fresh_tasks[i] for i in index_group]
                 hf_params_generator = self.bridge.export_hf_weights(
@@ -287,6 +296,8 @@ class MegatronWeightExtractor(WeightExtractor):
                     dtypes_list.append(str(dtype))
                     shapes.append(list(tensor.shape))
                     tensors.append(tensor)
+                    if broadcast_dump_fh:
+                        broadcast_dump_fh.write(f"bucket={bucket_index}\t{name}\t{tuple(tensor.shape)}\n")
 
                 # Yield one chunk containing all parameters in this bucket
                 if tensors:
@@ -296,6 +307,10 @@ class MegatronWeightExtractor(WeightExtractor):
                         shapes=shapes,
                         tensors=tensors,
                     )
+                bucket_index += 1
+
+        if broadcast_dump_fh:
+            broadcast_dump_fh.close()
 
 
 class MegatronWorker:
