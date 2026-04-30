@@ -297,7 +297,18 @@ class MegatronWeightExtractor(WeightExtractor):
                     shapes.append(list(tensor.shape))
                     tensors.append(tensor)
                     if broadcast_dump_fh:
-                        broadcast_dump_fh.write(f"bucket={bucket_index}\t{name}\t{tuple(tensor.shape)}\n")
+                        # Compute simple value stats for NaN/Inf/extreme-magnitude detection.
+                        # Synchronize so the .to() above completes before stats.
+                        torch.cuda.synchronize()
+                        ft = tensor.float()
+                        n_nan = int(torch.isnan(ft).sum().item())
+                        n_inf = int(torch.isinf(ft).sum().item())
+                        f_max = float(ft.abs().max().item())
+                        f_mean = float(ft.float().mean().item()) if ft.numel() > 0 else 0.0
+                        broadcast_dump_fh.write(
+                            f"bucket={bucket_index}\t{name}\t{tuple(tensor.shape)}\t"
+                            f"nan={n_nan}\tinf={n_inf}\tabs_max={f_max:.3e}\tmean={f_mean:.3e}\n"
+                        )
 
                 # Yield one chunk containing all parameters in this bucket
                 if tensors:
