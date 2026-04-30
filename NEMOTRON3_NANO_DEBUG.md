@@ -11,7 +11,7 @@ Two branches on origin:
 
 | test | vLLM 0.19.0 (overnight branch) | vLLM 0.20.0 (this branch) |
 |---|---|---|
-| `nemotron3-moe_tp2_ep2` (tiny, user's primary target) | **PASSES** | (running — will record below) |
+| `nemotron3-moe_tp2_ep2` (tiny, user's primary target) | PASSES (diff 0.017 / 0.155) | **PASSES** (diff **0.010** / 0.154) — pre-sync match is ~2× tighter |
 | `nemotron3-nano_tp4_ep8` (full 30B nano) | fails: NaN logprobs after sync | fails: **finite but wrong** logprobs after sync (no NaN, mean shifts -0.14 → -1.60, diff 1.46 vs 0.2 threshold) |
 
 The vLLM 0.20 upgrade resolved the **NaN** failure mode and the
@@ -89,10 +89,17 @@ flash-attn = { url = "...torch2.11.../flash_attn-2.8.3+cu12torch2.11..whl", ... 
   - post-sync mean: **-1.596**, std 0.368
 - The "Failed to load weights" warning spam from vLLM 0.19 is **gone** in this run (0 vs 36 warnings on 0.19). The layerwise reload mechanism appears healthier on 0.20.
 
-### Tiny regression check (run15, in progress)
-- Running `nemotron3-moe_tp2_ep2` on the upgraded stack to verify the
-  passing test from the overnight branch still passes here. Result will be
-  appended below.
+### Tiny regression check (runs 15 & 16)
+- Run 15 (initial vllm 0.20 attempt, no `moe_backend` override): **fails**
+  with the same `AssertionError: Current vLLM config is not set` from
+  FlashInfer Cutlass that we saw on the nano test. This was a vllm 0.20
+  regression vs 0.19 — the tiny test passes on 0.19.
+- Run 16 (after applying `moe_backend="triton"` to all `nemotron3*` models):
+  **PASSES** end-to-end.
+  - Megatron-vs-vLLM logprob diff: **0.0099** (< 0.02). Notably ~2× tighter
+    than on vLLM 0.19 (0.017), suggesting vLLM 0.20's MoE numerics are
+    closer to Megatron's reference.
+  - Post-sync vLLM logprob diff: **0.154** (< 0.2). Same as on 0.19.
 
 ## Findings
 
