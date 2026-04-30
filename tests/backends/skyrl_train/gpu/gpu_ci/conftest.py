@@ -43,6 +43,13 @@ def _build_ray_env_vars():
             raise RuntimeError("SKYRL_PYTHONPATH_EXPORT is set but PYTHONPATH is not defined in environment")
         env_vars["PYTHONPATH"] = pythonpath
 
+    # Forward any SKYRL_DUMP_* debug env vars from the parent shell so
+    # diagnostic instrumentation (e.g. SKYRL_DUMP_VLLM_PARAM_STATS read inside
+    # vLLM Ray actors) actually reaches the actors.
+    for k, v in os.environ.items():
+        if k.startswith("SKYRL_DUMP_"):
+            env_vars[k] = v
+
     return env_vars
 
 
