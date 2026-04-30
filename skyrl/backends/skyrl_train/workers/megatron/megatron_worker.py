@@ -211,6 +211,16 @@ class MegatronWeightExtractor(WeightExtractor):
             shapes.append(list(tensor.shape))
             del tensor
         self._weight_metadata_cache = {"names": names, "dtype_names": dtype_names, "shapes": shapes}
+
+        # Optional debug dump of broadcast names (set SKYRL_DUMP_WEIGHT_NAMES=/path).
+        dump_path = os.environ.get("SKYRL_DUMP_WEIGHT_NAMES")
+        if dump_path and torch.distributed.get_rank() == 0:
+            with open(dump_path, "w") as f:
+                for n, s in zip(names, shapes):
+                    f.write(f"{n}\t{tuple(s)}\n")
+            import sys as _sys
+
+            print(f"[MegatronWeightExtractor] dumped {len(names)} weight names to {dump_path}", file=_sys.stderr, flush=True)
         return self._weight_metadata_cache
 
     def _ensure_buckets_initialized(self):
