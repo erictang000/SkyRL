@@ -113,8 +113,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.n_samples_per_prompt=$N_SAMPLES_PER_PROMPT \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.6 \
-  +generator.inference_engine.engine_init_kwargs.moe_backend=triton \
-  +generator.inference_engine.engine_init_kwargs.max_model_len=12288 \
+  generator.inference_engine.engine_init_kwargs="{moe_backend: triton, max_model_len: 12288}" \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_nemotron3_nano" \
   trainer.run_name="dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \

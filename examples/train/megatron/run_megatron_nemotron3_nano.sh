@@ -67,8 +67,7 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   environment.env_class=gsm8k \
   generator.n_samples_per_prompt=5 \
   generator.inference_engine.gpu_memory_utilization=0.6 \
-  +generator.inference_engine.engine_init_kwargs.moe_backend=triton \
-  +generator.inference_engine.engine_init_kwargs.max_model_len=4096 \
+  generator.inference_engine.engine_init_kwargs="{moe_backend: triton, max_model_len: 4096}" \
   trainer.logger="$LOGGER" \
   trainer.project_name="nemotron3_nano" \
   trainer.run_name="nemotron3_nano_megatron" \
