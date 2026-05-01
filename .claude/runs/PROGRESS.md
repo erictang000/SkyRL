@@ -402,6 +402,11 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 12: 0.539 / -1.226 / 0.127  ← peak so far, pass@16 +16.4pp vs step 1
 - 13: 0.453 / -1.481 / 0.076
 - 14: 0.484 / -1.286 / 0.124
+- 15: 0.523 / -1.186 / 0.156
+
+Mean pass@16 of last 5 (steps 11-15) = **0.501** vs first 5 (1-5) = 0.375.
+That's +12.6pp lift in mean batch reward — well above the 0.7% noise band
+of a single 30-prompt × 16-sample step.
 
 **Eval @ step 10** (AIME-2024, n_samples=32, 4k cap):
 - `pass_at_32: 0.333` (vs 0.30 baseline → 1 more AIME problem solved)
