@@ -9,13 +9,15 @@ training outcomes:
    evals. Validation pass@1 stable at 0.952 — the Nemotron-3-Nano-30B-A3B
    instruct model is essentially at gsm8k ceiling, so RL movement is small
    (within noise). Train pass@5 oscillates 0.94–0.97.
-2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 12 RL steps +
-   baseline eval + eval@step10 (and counting). Train pass@16 0.375 → **0.539**
-   at step 12 (+0.164 = +16.4pp), raw_reward −1.62 → −1.23, mean_positive
-   0.055 → 0.127 (+131%). **Validation @ step 10 vs step 0**: pass@32 0.30 →
-   0.333 (+3.3pp, 1 more AIME problem solved); mean_positive_reward 0.108
-   → 0.155 (+44%); correct-answer length 3111 → 2916 tokens (model getting
-   more concise). Clear, accelerating upward learning signal.
+2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 17 RL steps +
+   baseline eval + eval@10 (and counting; eval@20 will fire on step 20).
+   Mean pass@16 lifted from 0.375 (steps 1-5) to 0.508 (steps 11-17),
+   peak 0.539 at step 12 and step 17 (+16.4pp), raw_reward -1.62 → ~-1.20,
+   mean_positive_reward 0.055 → ~0.15 (~3x). **Validation @ step 10 vs
+   step 0**: pass@32 0.30 → 0.333 (+3.3pp, 1 more AIME problem solved);
+   mean_positive_reward 0.108 → 0.155 (+44%); correct-answer length
+   3111 → 2916 tokens (more concise). Clear sustained learning signal on
+   train + held-out.
 
 **Critical fixes** (committed; without these neither script trains):
 1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
@@ -403,10 +405,15 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 13: 0.453 / -1.481 / 0.076
 - 14: 0.484 / -1.286 / 0.124
 - 15: 0.523 / -1.186 / 0.156
+- 16: 0.531 / -1.215 / 0.137
+- 17: 0.539 / -1.166 / 0.154
 
-Mean pass@16 of last 5 (steps 11-15) = **0.501** vs first 5 (1-5) = 0.375.
-That's +12.6pp lift in mean batch reward — well above the 0.7% noise band
-of a single 30-prompt × 16-sample step.
+Mean pass@16 of last 7 (steps 11-17) = **0.508** vs first 5 (1-5) = 0.375.
+That's +13.3pp lift in mean batch reward — well above the 0.7% noise band
+of a single 30-prompt × 16-sample step. Trajectory has settled into a
+0.48-0.54 plateau, with raw_reward stably between -1.17 and -1.29 (vs
+baseline -1.62) — the model is producing more correct answers in shorter
+responses, lowering both the wrong-answer count and the overlong penalty.
 
 **Eval @ step 10** (AIME-2024, n_samples=32, 4k cap):
 - `pass_at_32: 0.333` (vs 0.30 baseline → 1 more AIME problem solved)
