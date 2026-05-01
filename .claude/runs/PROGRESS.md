@@ -10,10 +10,12 @@ training outcomes:
    instruct model is essentially at gsm8k ceiling, so RL movement is small
    (within noise). Train pass@5 oscillates 0.94–0.97.
 2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — completed 10 RL
-   steps + 1 baseline eval. Train pass@16 lifted from 0.375 (step 1) →
-   0.422 (step 10) with peak 0.445; raw_reward −1.62 → −1.43;
-   mean_positive_reward 0.055 → 0.095. Real upward learning signal
-   despite high RL variance.
+   steps + baseline eval + eval@step10. Train pass@16 0.375 → 0.422 (peak
+   0.445), raw_reward −1.62 → −1.43, mean_positive 0.055 → 0.095.
+   **Validation @ step 10 vs step 0**: pass@32 0.30 → 0.333 (+3.3pp,
+   1 more AIME problem solved); mean_positive_reward 0.108 → 0.155
+   (+44%); correct-answer length 3111 → 2916 tokens (model getting
+   more concise). Real upward learning signal on held-out AIME.
 
 **Critical fixes** (committed; without these neither script trains):
 1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
@@ -397,7 +399,12 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 9: 0.375 / -1.448 / 0.093
 - 10: 0.422 / -1.430 / 0.095  ← all 3 metrics new peaks
 
-Eval@step10 started 12:14, expected to finish ~12:21.
+**Eval @ step 10** (AIME-2024, n_samples=32, 4k cap):
+- `pass_at_32: 0.333` (vs 0.30 baseline → 1 more AIME problem solved)
+- `avg_score: -0.69` (vs -0.78 baseline → less overlong penalty)
+- `mean_positive_reward: 0.155` (vs 0.108 baseline → +44%)
+- avg response 3907 tokens (vs 3989 baseline → slightly shorter)
+- correct-answer avg 2916 tokens (vs 3111 baseline → -195 tokens)
 
 **Take-aways:**
 - pass@16 trajectory: 0.375 (step 1) → 0.422 (step 10), peak 0.445 at step 6.
