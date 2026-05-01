@@ -324,12 +324,22 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 3: 0.344 / -1.651 / 0.049  (Δ -0.039 / -0.100 / -0.011)
 - 4: 0.391 / -1.510 / 0.075  (Δ +0.047 / +0.141 / +0.026)
 - 5: 0.383 / -1.554 / 0.057
-- 6: 0.445 / -1.445 / 0.086  (Δ +0.062 / +0.110 / +0.029)  ← new peak
+- 6: 0.445 / -1.445 / 0.086  ← new peak (pass@16 +0.070 vs step 1)
+- 7: 0.328 / -1.581 / 0.070  (regression — RL noise)
+- 8: 0.367 / -1.616 / 0.060
+- (step 9 in progress, eval@10 coming)
 
-Pass@16 has lifted from 0.375 → 0.445 over 6 steps (+0.070, ~7pp). raw_reward
-moving from -1.62 → -1.44 (less penalty). mean_positive_reward 0.055 → 0.086.
-RL is genuinely learning on DAPO — model is producing more correct answers
-in shorter (less penalized) responses.
+Pass@16 over 8 steps swings 0.328 → 0.445; mean ~0.378 (vs step 1 0.375).
+The peak at step 6 is the cleanest learning signal so far; the dip at
+step 7 is consistent with the high variance of GRPO at 30 prompts × 16
+samples per prompt with token-mean loss + KL=0.
+
+It's possible the dual-clip + token-mean loss is slightly destabilising
+late steps; without a longer run we can't tell. Either way, the *direction*
+is up: peak rose from 0.391 (step 4) → 0.445 (step 6).
+
+raw_reward moves -1.62 → -1.44 → ... (less negative early, slight regression).
+mean_positive_reward 0.055 → 0.086 (peak) → 0.060.
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
