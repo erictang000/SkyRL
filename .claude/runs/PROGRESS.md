@@ -73,14 +73,29 @@ properly-emitted `<|im_end|>`. Two things went wrong:
    thinking-on; the `<think></think>` prompt suffix probably puts the model
    in a regime it didn't see in post-training.
 
-### gsm8k_run05 (2026-05-01 02:02 UTC) — running
+### gsm8k_run05 (2026-05-01 02:02–02:26 UTC) — KILLED, format mismatch ruled in
 
-Re-enabled thinking (default), tighter sampling, smaller batch:
-- `temperature=0.7`, `top_p=0.9`
-- `max_generate_length=3000` (lets the thinking trace finish before answer)
-- `train_batch_size=256`, `policy_mini_batch_size=64`, `eval_batch_size=256`
-  (trims per-step gen workload; 100 steps now feasible in overnight window)
-- back to `batched=true` (no chat_template override needed since default
-  thinking-on is what the model wants)
-- `engine_init_kwargs={moe_backend: triton, max_model_len: 4096}` retained.
+Step 1 reward still 0 across 1280 generations, but the example output now
+showed sane (if very short) text:
+
+```
+Output (Total Reward: 0.0000):
+ an<|im_end|>
+```
+
+That is, real tokens, immediate EOS — not gibberish. So sampling at T=0.7+top_p=0.9
++ thinking-on yields valid completions; the bottleneck is now the SCORER, not
+the generator. The Nemotron-3-Nano instruct model never spontaneously emits
+the GSM8K ground-truth format `#### N` — it ends responses naturally
+("The answer is 42." or `$\boxed{42}$`). The strict scorer rejects all of
+those.
+
+### gsm8k_run06 (2026-05-01 02:26 UTC) — running
+
+Patched `skyrl-gym/skyrl_gym/envs/gsm8k/env.py` to default to flexible scoring
+(takes the last number in the response). Override with
+`SKYRL_GSM8K_SCORING_METHOD=strict` to restore original behavior.
+
+Same training config as run05 (T=0.7, top_p=0.9, max_gen=3000, batch=256,
+thinking-on). Just the scorer changed.
 
