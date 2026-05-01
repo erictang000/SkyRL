@@ -90,12 +90,21 @@ the GSM8K ground-truth format `#### N` — it ends responses naturally
 ("The answer is 42." or `$\boxed{42}$`). The strict scorer rejects all of
 those.
 
-### gsm8k_run06 (2026-05-01 02:26 UTC) — running
+### gsm8k_run06 (2026-05-01 02:26–03:06 UTC) — DIED, root disk filled
 
-Patched `skyrl-gym/skyrl_gym/envs/gsm8k/env.py` to default to flexible scoring
-(takes the last number in the response). Override with
-`SKYRL_GSM8K_SCORING_METHOD=strict` to restore original behavior.
+Ray workers' `uv pip install` failed with "No space left on device" trying to
+hardlink flashinfer cubins into `~/.cache/uv/archive-v0/`. After 5 restart
+cycles, `~/.cache/uv/builds-v0/` had 268 leftover `.tmp*` install scratches
+(~30G) and `/tmp/ray/session_*` had 6G of stale GCS data. With the model
+download (37G archive-v0) on top, the 194G root disk hit 100%.
 
-Same training config as run05 (T=0.7, top_p=0.9, max_gen=3000, batch=256,
-thinking-on). Just the scorer changed.
+**Cleanup**: removed `.tmp*` build scratches and old ray sessions, then moved
+`~/.cache/uv/archive-v0/` (37G) and `~/.cache/uv/builds-v0/` to
+`/mnt/nvme/etang/uv-cache/` and symlinked them. Future builds hardlink within
+nvme so install is fast. Root disk back to 66G free.
+
+### gsm8k_run07 (2026-05-01 03:06 UTC) — running
+
+Same config as run06 (flexible scoring + thinking-on + tight sampling +
+batch=256), now with uv cache on /mnt/nvme so disk doesn't fill again.
 
