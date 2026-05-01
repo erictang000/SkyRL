@@ -322,12 +322,14 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 1: 0.375 / -1.621 / 0.055
 - 2: 0.383 / -1.551 / 0.060  (Δ +0.008 / +0.070 / +0.005)
 - 3: 0.344 / -1.651 / 0.049  (Δ -0.039 / -0.100 / -0.011)
-- 4: 0.391 / -1.510 / 0.075  (Δ +0.047 / +0.141 / +0.026)  ← new peak
+- 4: 0.391 / -1.510 / 0.075  (Δ +0.047 / +0.141 / +0.026)
+- 5: 0.383 / -1.554 / 0.057
+- 6: 0.445 / -1.445 / 0.086  (Δ +0.062 / +0.110 / +0.029)  ← new peak
 
-Real upward trend in pass@16 from 0.375 → 0.391 over 4 steps. raw_reward
-also moving up (less negative as the model writes shorter/correct answers
-that trip the overlong soft penalty less). DAPO is noisier than gsm8k but
-the signal is there.
+Pass@16 has lifted from 0.375 → 0.445 over 6 steps (+0.070, ~7pp). raw_reward
+moving from -1.62 → -1.44 (less penalty). mean_positive_reward 0.055 → 0.086.
+RL is genuinely learning on DAPO — model is producing more correct answers
+in shorter (less penalized) responses.
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
