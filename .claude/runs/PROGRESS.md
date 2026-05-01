@@ -288,6 +288,18 @@ Reduce activation footprint:
 If still OOM, will reduce `MAX_RESPONSE_LENGTH` (8192 → 4096) — most AIME
 problems fit in 4k.
 
+### dapo_run02 (2026-05-01 07:31–07:34 UTC) — DIED, expandable_segments incompatible
+
+vLLM's `CuMemAllocator.__init__` asserts that
+`PYTORCH_CUDA_ALLOC_CONF` does not contain `expandable_segments:True`. Open
+issue: pytorch/pytorch#147851.
+
+### dapo_run03 (2026-05-01 07:34 UTC) — running
+
+Drop `expandable_segments`, also drop `MAX_RESPONSE_LENGTH` 8192→4096 and
+`max_model_len` 12288→8192 (still fits AIME's typical 1-3k token answers
+plus a 2k prompt budget). Hopefully step 1 train fits.
+
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
 reward over 100 steps is realistic but it'll be a slow polish: mean might

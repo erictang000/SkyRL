@@ -4,9 +4,10 @@ set -x
 # layerwise-reload corruption that derails post-sync generation for nemotron_h.
 # See PROGRESS.md / gsm8k_run09 → run11 for the diagnosis.
 export _SKYRL_USE_NEW_INFERENCE=0
-# Reduce fragmentation so a 4 GiB allocation can land — the long-sequence
-# packed batches for DAPO push memory close to the limit (run01 OOMed).
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# NOTE: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is incompatible with
+# vLLM's CuMemAllocator (assertion in vllm/device_allocator/cumem.py:132,
+# pytorch/pytorch#147851). Rely on smaller micro batches + shorter
+# MAX_RESPONSE_LENGTH instead.
 
 # Colocated DAPO training+generation for Nemotron3-Nano-30B-A3B on DAPO with Megatron.
 # Should run on 1 node of 8xB2000
@@ -41,7 +42,10 @@ TOP_P=1.0
 EVAL_TOP_P=0.7
 CLIP_RATIO_C=10.0
 MAX_PROMPT_LENGTH=$((1024 * 2))
-MAX_RESPONSE_LENGTH=$((1024 * 8))
+# Reduced from 8192 to 4096 for the overnight smoke run — full 8k responses
+# pushed Megatron's packed activations OOM (run01) and we don't have headroom
+# at this batch size. AIME problems usually fit in 4k.
+MAX_RESPONSE_LENGTH=$((1024 * 4))
 
 # repro run parameters
 TRAIN_BATCH_SIZE=128
@@ -121,7 +125,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.n_samples_per_prompt=$N_SAMPLES_PER_PROMPT \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.6 \
-  generator.inference_engine.engine_init_kwargs="{moe_backend: triton, max_model_len: 12288}" \
+  generator.inference_engine.engine_init_kwargs="{moe_backend: triton, max_model_len: 8192}" \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_nemotron3_nano" \
   trainer.run_name="dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
