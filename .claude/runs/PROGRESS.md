@@ -36,5 +36,17 @@ that override, so first weight sync → assert.
 
 Wandb run: `nemotron3_nano/runs/ugu4kh1a` (failed, will start a new one).
 
-### gsm8k_run02 (relaunching with fix)
+### gsm8k_run02 (2026-05-01 01:05 UTC) — FAILED, restarted as run03
+
+CLI parse error: SkyRL's `from_cli_overrides` rejects the Hydra-style `+` prefix
+explicitly. Used `engine_init_kwargs="{moe_backend: triton, max_model_len: 4096}"`
+inline-dict syntax instead — works because the field is `Dict[str, Any]`.
+
+### gsm8k_run03 (2026-05-01 01:07 UTC) — running, reward 0 at step 1
+
+Wandb: `nemotron3_nano/runs/4o2nbzpb`. First weight sync succeeded (9.9s).
+Step 1 generated 5×1024 = 5120 completions, but `reward/avg_pass_at_5: 0.0`,
+`reward/avg_raw_reward: 0.0`. Watching for step 2 to confirm whether this is
+a real format/scoring issue (gsm8k env uses strict `#### NUMBER` regex) or
+just a noisy first batch.
 
