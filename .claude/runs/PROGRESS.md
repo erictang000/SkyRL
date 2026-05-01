@@ -110,9 +110,15 @@ renames between `builds-v0/` (nvme) and `sdists-v9/` (root) when caching
 editable wheels, which fails with `EXDEV: Invalid cross-device link`. Looped
 in raylet bootstrap, never reached vLLM init.
 
-### gsm8k_run08 (2026-05-01 03:38 UTC) — running
+### gsm8k_run08 (2026-05-01 03:38–03:40 UTC) — DIED, EXDEV again
 
-Moved every uv cache subdir (`sdists-v9`, `wheels-v6`, `simple-v21`, `git-v0`,
-`interpreter-v4`) to `/mnt/nvme/etang/uv-cache/` and symlinked, so all uv
-intermediates live on a single filesystem. Same training config.
+Symlinking subdirs wasn't enough — uv creates `.tmp*` scratch files directly
+under `~/.cache/uv/` (the cache root, on root disk) and then atomic-renames
+them into `archive-v0/` (symlinked to nvme) → cross-device.
+
+### gsm8k_run09 (2026-05-01 03:40 UTC) — running
+
+Replaced the entire `~/.cache/uv` directory with a symlink to
+`/mnt/nvme/etang/uv-cache`. Every cache write — including the temp scratch
+files at the cache root — is now on a single filesystem. Same training config.
 
