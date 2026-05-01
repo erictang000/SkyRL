@@ -1,5 +1,10 @@
 set -x
 
+# Use the legacy (non-chunked) inference path to avoid the vLLM 0.20
+# layerwise-reload corruption that derails post-sync generation for nemotron_h.
+# See PROGRESS.md / gsm8k_run09 → run11 for the diagnosis.
+export _SKYRL_USE_NEW_INFERENCE=0
+
 # Colocated DAPO training+generation for Nemotron3-Nano-30B-A3B on DAPO with Megatron.
 # Should run on 1 node of 8xB2000
 
