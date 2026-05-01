@@ -9,15 +9,17 @@ training outcomes:
    evals. Validation pass@1 stable at 0.952 — the Nemotron-3-Nano-30B-A3B
    instruct model is essentially at gsm8k ceiling, so RL movement is small
    (within noise). Train pass@5 oscillates 0.94–0.97.
-2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 20 RL steps +
-   3 evals. Train pass@16 0.375 (step 1) → **0.719** (step 20, peak),
-   +34.4pp. raw_reward -1.62 → -0.67; mean_positive_reward 0.055 → 0.275 (5x).
+2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 25+ RL steps +
+   3 evals (still running). Train pass@16 0.375 (step 1) → **0.742**
+   (step 25 peak, +36.7pp). raw_reward -1.62 → ~-0.6; mean_positive_reward
+   0.055 → ~0.30 (5-6x). Mean of last 5 steps (21-25) = 0.717 vs first 5
+   (1-5) = 0.375 — sustained, +34pp lift in batch reward.
    **Held-out AIME pass@32: 0.300 (step 0) → 0.333 (step 10) → 0.500
    (step 20).** That's +20pp absolute, +67% relative — the model now
    solves 15/30 AIME-2024 problems vs 9/30 at baseline, while writing
    correct answers ~25% shorter (3111 → 2320 tokens). Mean_positive_reward
    on validation 0.108 → 0.316 (2.9x). avg_score -0.78 → -0.37 (overlong
-   penalty roughly halved).
+   penalty roughly halved). eval@30 will fire on step 30.
 
 **Critical fixes** (committed; without these neither script trains):
 1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
@@ -411,7 +413,10 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 19: 0.641 / -0.888 / 0.211
 - 20: 0.719 / -0.668 / 0.275
 - 21: 0.688 / -0.780 / 0.253
-- 22: 0.727 / -0.582 / 0.291  ← all 3 new peaks. pass@16 +35.2pp vs step 1
+- 22: 0.727 / -0.582 / 0.291
+- 23: 0.727 / -0.515 / 0.319
+- 24: 0.703 / -0.783 / 0.240
+- 25: 0.742 / -0.588 / 0.297  ← new pass@16 peak. +36.7pp vs step 1
 
 Mean pass@16 of last 7 (steps 11-17) = **0.508** vs first 5 (1-5) = 0.375.
 That's +13.3pp lift in mean batch reward — well above the 0.7% noise band
