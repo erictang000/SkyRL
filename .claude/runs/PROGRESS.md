@@ -103,8 +103,16 @@ download (37G archive-v0) on top, the 194G root disk hit 100%.
 `/mnt/nvme/etang/uv-cache/` and symlinked them. Future builds hardlink within
 nvme so install is fast. Root disk back to 66G free.
 
-### gsm8k_run07 (2026-05-01 03:06 UTC) — running
+### gsm8k_run07 (2026-05-01 03:06–03:38 UTC) — DIED, cross-device link
 
-Same config as run06 (flexible scoring + thinking-on + tight sampling +
-batch=256), now with uv cache on /mnt/nvme so disk doesn't fill again.
+Symlinking only `archive-v0/` and `builds-v0/` to nvme wasn't enough: uv also
+renames between `builds-v0/` (nvme) and `sdists-v9/` (root) when caching
+editable wheels, which fails with `EXDEV: Invalid cross-device link`. Looped
+in raylet bootstrap, never reached vLLM init.
+
+### gsm8k_run08 (2026-05-01 03:38 UTC) — running
+
+Moved every uv cache subdir (`sdists-v9`, `wheels-v6`, `simple-v21`, `git-v0`,
+`interpreter-v4`) to `/mnt/nvme/etang/uv-cache/` and symlinked, so all uv
+intermediates live on a single filesystem. Same training config.
 
