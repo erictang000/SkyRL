@@ -1,5 +1,14 @@
 set -x
 
+# Use the legacy (non-chunked) inference path. The new path goes through
+# vLLM's layerwise reload, which re-runs `process_weights_after_loading` and
+# (likely) re-creates view-buffer aliases that corrupt MoE/conv weights for
+# nemotron_h beyond the `conv_weights` skip we already added. Standalone
+# vLLM with HF weights at T=0.7 produces correct gsm8k answers; post-Megatron-
+# sync vLLM produces degenerate output. Legacy path uses CUDA IPC + direct
+# model.load_weights, no reload machinery.
+export _SKYRL_USE_NEW_INFERENCE=0
+
 # Colocated GRPO training+generation for Nemotron3-Nano-30B-A3B on GSM8K with Megatron.
 
 # uv run examples/train/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k

@@ -145,11 +145,32 @@ That's strange for a 30B math-capable model. Two hypotheses:
    logits for non-greedy sampling, which derails autoregressive trajectories
    even if logprobs at any single step are nominally correct.
 
-### Standalone vLLM test (2026-05-01 04:03 UTC)
+### Standalone vLLM test (2026-05-01 04:03 UTC) — model is fine
 
-Spinning up vLLM offline with HF weights directly (no Megatron sync) to
-disambiguate (1) vs (2). If raw HF weights also produce degenerate output
-under the same sampling settings, hypothesis (1) wins and we either need a
-different prompt format or a different model. If raw HF weights produce
-coherent gsm8k answers, the Megatron→vLLM weight-sync path is the issue.
+vLLM offline + HF weights, exact same engine config (moe_backend=triton,
+gpu_mem=0.6, max_model_len=4096), gsm8k-style prompts:
+
+- **greedy**: prompt 0 → "0.15*220 = 33. So new price = 220 + 33 = 253. ... ####253" (113 tokens)
+- **T=0.3, top_p=0.95**: same answer, "#### 253" (91 tokens)
+- **T=0.7, top_p=0.9**: full reasoning + boxed math + "#### 253" (252 tokens)
+
+So at the same sampling settings used in production training, the bare model
+produces correct gsm8k answers. The bug is in the Megatron→vLLM weight-sync
+path: post-init-sync vLLM has subtly-wrong weights that derail at T>0 with
+long generation, even though logprob alignment within ±5e-2 of Megatron
+satisfies the unit test (greedy, 128 tokens).
+
+### gsm8k_run10 (2026-05-01 04:09 UTC) — running, legacy inference path
+
+Hypothesis: vLLM 0.20's chunked weight transfer (`update_weights_chunk`) goes
+through `initialize_layerwise_reload` → `process_weights_after_loading` →
+`_copy_and_restore_kernel_tensors`, which we already saw corrupts conv1d
+weights via the `conv_weights` view-buffer alias (fixed by adding to
+`SKIP_TENSORS`). Likely OTHER nemotron_h weights have similar
+view-buffer aliases that we haven't patched.
+
+Switched to the legacy path with `_SKYRL_USE_NEW_INFERENCE=0`, which uses
+CUDA IPC + direct `model.load_weights(weight_list)` — no `initialize_layerwise_reload`
+machinery, no kernel-tensor materialize/restore dance. Expect this to match
+the standalone test's behavior post-sync.
 
