@@ -9,18 +9,17 @@ training outcomes:
    evals. Validation pass@1 stable at 0.952 — the Nemotron-3-Nano-30B-A3B
    instruct model is essentially at gsm8k ceiling, so RL movement is small
    (within noise). Train pass@5 oscillates 0.94–0.97.
-2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 29+ RL steps +
-   3 evals (still running). Train pass@16 0.375 (step 1) → **0.797**
-   (step 29 peak, +42.2pp). raw_reward -1.62 → -0.32 (5x smaller penalty);
-   mean_positive_reward 0.055 → 0.370 (~7x). Mean of last 5 (25-29) = 0.767
-   vs first 5 (1-5) = 0.375 — +39pp lift in batch reward over 25 steps.
-   **Held-out AIME pass@32: 0.300 (step 0) → 0.333 (step 10) → 0.500
-   (step 20).** That's +20pp absolute, +67% relative — the model now
-   solves 15/30 AIME-2024 problems vs 9/30 at baseline, while writing
-   correct answers ~25% shorter (3111 → 2320 tokens). Mean_positive_reward
-   on validation 0.108 → 0.316 (2.9x). avg_score -0.78 → -0.37 (overlong
-   penalty roughly halved). eval@30 will fire on step 30 — given current
-   train trajectory, expect another step up.
+2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 30+ RL steps +
+   4 evals (still running). Train pass@16 0.375 (step 1) → **0.805**
+   (step 30 peak, +43pp). raw_reward -1.62 → -0.32; mean_positive_reward
+   0.055 → 0.370 (~7x). Mean of last 5 (26-30) = 0.780 vs first 5
+   (1-5) = 0.375 — +40.5pp lift in batch reward over 25 steps.
+   **Held-out AIME pass@32 trajectory: 0.300 (step 0) → 0.333 (step 10) →
+   0.500 (step 20) → 0.567 (step 30).** +26.7pp absolute, +89% relative.
+   17/30 AIME-2024 problems solved at step 30 vs 9/30 at baseline; the
+   4k-capped post-RL model exceeds the 8k-baseline AIME score using half
+   the budget. mean_positive_reward 0.108 → 0.369 (3.4x); correct-answer
+   length 3111 → 2004 (−36%); avg_score -0.78 → -0.26.
 
 **Critical fixes** (committed; without these neither script trains):
 1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
@@ -421,7 +420,8 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 26: 0.789 / -0.443 / 0.319
 - 27: 0.758 / -0.518 / 0.310
 - 28: 0.750 / -0.567 / 0.296
-- 29: 0.797 / -0.323 / 0.370  ← all 3 new peaks. +42.2pp vs step 1
+- 29: 0.797 / -0.323 / 0.370
+- 30: 0.805 / -0.479 / 0.329  ← pass@16 new peak. +43pp vs step 1
 
 Mean pass@16 of last 7 (steps 11-17) = **0.508** vs first 5 (1-5) = 0.375.
 That's +13.3pp lift in mean batch reward — well above the 0.7% noise band
@@ -446,8 +446,17 @@ responses, lowering both the wrong-answer count and the overlong penalty.
 - min response 693 tokens (vs 1707 at baseline → model can now answer
   short problems concisely instead of always rambling near the cap)
 
-The 4k-capped model at step 20 matches the 8k-baseline AIME score (15/30)
-while using ~half the budget. Strong RL signal on a held-out test set.
+**Eval @ step 30** (AIME-2024, n_samples=32, 4k cap):
+- `pass_at_32: 0.567` (vs 0.30 baseline → **+26.7pp**, **17/30 problems**)
+- `avg_score: -0.26` (vs -0.78 baseline → ~⅔ less penalty)
+- `mean_positive_reward: 0.369` (vs 0.108 baseline → **3.4x**)
+- avg response 3282 tokens (vs 3989 baseline → −18%)
+- correct-answer avg 2004 tokens (vs 3111 baseline → **−36%**)
+- min response 499 tokens (vs 1707 at baseline → −71% — short problems
+  now get concise answers instead of always rambling to cap)
+
+The 4k-capped model at step 30 *exceeds* the 8k-baseline AIME score (15/30
+@8k → 17/30 @4k) while using just half the budget. Strong RL on AIME.
 
 **Take-aways:**
 - pass@16 trajectory: 0.375 (step 1) → 0.422 (step 10), peak 0.445 at step 6.
