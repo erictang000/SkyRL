@@ -204,6 +204,14 @@ corrupted by `_layerwise_process` / `process_weights_after_loading`.
 - 2: 0.977 / 0.952  (Δ +0.008 / +0.012)
 - 3: 0.969 / 0.937  (Δ -0.008 / -0.015)
 - 4: 0.977 / 0.952  (Δ +0.008 / +0.015)
+- 5: 0.973 / 0.946
+- 6: 0.973 / 0.938
+
+**Eval @ step 5** (validation, 1319 prompts, n_samples=1):
+- `eval/all/avg_score: 0.953` (pass@1)
+- mean response length 390 tokens; failures rambled to 871 tokens avg.
+- Spot-checked outputs: coherent reasoning, correct `#### 18` / `#### 3` /
+  `#### 70000` answers. Model is genuinely solving gsm8k.
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
