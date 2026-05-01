@@ -116,9 +116,40 @@ Symlinking subdirs wasn't enough — uv creates `.tmp*` scratch files directly
 under `~/.cache/uv/` (the cache root, on root disk) and then atomic-renames
 them into `archive-v0/` (symlinked to nvme) → cross-device.
 
-### gsm8k_run09 (2026-05-01 03:40 UTC) — running
+### gsm8k_run09 (2026-05-01 03:40–04:03 UTC) — KILLED, model emitted degenerate repetition
 
-Replaced the entire `~/.cache/uv` directory with a symlink to
-`/mnt/nvme/etang/uv-cache`. Every cache write — including the temp scratch
-files at the cache root — is now on a single filesystem. Same training config.
+uv cache fix worked, init succeeded in 7min, first sync clean, step 1 produced
+1280 generations and reward = 0 across all of them. The example completion
+this time was a long degenerate repetition:
+
+```
+Output (Total Reward: 0.0000):
+ the in the and after the and after the and after the after the and after
+ the and after the and after the and after the and after the and after the
+ and after the and after the and after the and after the and after... [many KB]
+```
+
+Multiple symptoms point to the model itself, not the scoring or sampling:
+- run04 (T=1.0, no top filter, thinking off) → multilingual junk
+- run05/09 (T=0.7, top_p=0.9, thinking on) → either short " an<EOS>" OR long
+  repetition like above
+- Even with `flexible` scoring (extracts last number from output), reward=0
+  because the rambles contain *no numbers at all*.
+
+That's strange for a 30B math-capable model. Two hypotheses:
+1. **Model issue**: the chat template + plain-math prompt puts this
+   reasoning/agent-tuned model into a degenerate regime. It was post-trained
+   on tool-calling and structured reasoning prompts, not bare gsm8k-style.
+2. **Numerical issue**: triton MoE backend (we forced this off FlashInfer
+   cutlass to dodge the layerwise reload bug) might produce numerically wrong
+   logits for non-greedy sampling, which derails autoregressive trajectories
+   even if logprobs at any single step are nominally correct.
+
+### Standalone vLLM test (2026-05-01 04:03 UTC)
+
+Spinning up vLLM offline with HF weights directly (no Megatron sync) to
+disambiguate (1) vs (2). If raw HF weights also produce degenerate output
+under the same sampling settings, hypothesis (1) wins and we either need a
+different prompt format or a different model. If raw HF weights produce
+coherent gsm8k answers, the Megatron→vLLM weight-sync path is the issue.
 
