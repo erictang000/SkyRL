@@ -234,6 +234,26 @@ Validation is bit-flat at 0.952±0.001 → model at ceiling on gsm8k. RL is
 moving rewards within noise but not lifting validation. Time to cut over
 to DAPO (harder task, more learning headroom).
 
+### gsm8k summary
+
+- 16 training steps, 3 evals, ~2.4h wallclock.
+- Train reward stable in 0.94–0.97 band (1σ noise ~0.7%).
+- Validation pass@1: 0.953 → 0.951 → 0.952 (flat).
+- Training pipeline confirmed end-to-end on legacy CUDA-IPC path with the
+  Mamba conv_weights fix. Underlying lesson: vLLM 0.20's chunked weight
+  reload on `nemotron_h` is broken beyond `conv_weights` — keep the workaround.
+
+### dapo_run01 (2026-05-01 06:35 UTC) — running
+
+DAPO config matches the script with the same `_SKYRL_USE_NEW_INFERENCE=0`
++ `engine_init_kwargs={moe_backend: triton, max_model_len: 12288}` fixes
+applied. `eval_interval` bumped 5 → 10 to keep eval cost (≈13min/eval at
+gsm8k scale; DAPO eval will be larger since `eval_n_samples_per_prompt=32`)
+from dominating wall time.
+
+Per-step expected to be 15-25 min (2048 generations × up to 8192 tokens).
+Hoping for 8-15 steps in remaining budget.
+
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
 reward over 100 steps is realistic but it'll be a slow polish: mean might
