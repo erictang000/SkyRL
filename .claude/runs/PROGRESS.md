@@ -213,6 +213,19 @@ corrupted by `_layerwise_process` / `process_weights_after_loading`.
 - Spot-checked outputs: coherent reasoning, correct `#### 18` / `#### 3` /
   `#### 70000` answers. Model is genuinely solving gsm8k.
 
+**Reward trajectory cont'd:**
+- 7: 0.984 / 0.965 ← peak
+- 8: 0.973 / 0.955
+- 9: 0.973 / 0.952
+- 10: 0.984 / 0.951
+- 11: 0.973 / 0.953
+
+**Eval @ step 10**: `avg_score: 0.951` (essentially same as step 5).
+
+So validation has plateaued at ~0.95 — the model is at ceiling. Going to
+let gsm8k run to ~step 20 to confirm trajectory, then cut over to DAPO
+(harder math task, more headroom for RL training to show real curves).
+
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
 reward over 100 steps is realistic but it'll be a slow polish: mean might
