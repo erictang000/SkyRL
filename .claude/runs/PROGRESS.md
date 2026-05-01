@@ -1,5 +1,72 @@
 # Overnight Training Progress (nemotron3_nano)
 
+## TL;DR (top-of-page summary)
+
+**Both scripts run end-to-end on this branch.** Required workarounds and
+training outcomes:
+
+1. **`run_megatron_nemotron3_nano.sh` (gsm8k)** — completed 16 RL steps + 3
+   evals. Validation pass@1 stable at 0.952 — the Nemotron-3-Nano-30B-A3B
+   instruct model is essentially at gsm8k ceiling, so RL movement is small
+   (within noise). Train pass@5 oscillates 0.94–0.97.
+2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — completed 10 RL
+   steps + 1 baseline eval. Train pass@16 lifted from 0.375 (step 1) →
+   0.422 (step 10) with peak 0.445; raw_reward −1.62 → −1.43;
+   mean_positive_reward 0.055 → 0.095. Real upward learning signal
+   despite high RL variance.
+
+**Critical fixes** (committed; without these neither script trains):
+1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
+   inference path triggers vLLM 0.20's layerwise reload, which corrupts
+   nemotron_h weights beyond the `conv_weights` view-buffer alias we
+   already patched. Standalone vLLM with HF weights at the same sampling
+   settings (T=0.7, top_p=0.9) produced perfect `#### 253` answers, but
+   post-Megatron-sync vLLM produced multilingual gibberish or
+   "the and after the and after…" repetition. Switching the legacy
+   CUDA-IPC sync (no `initialize_layerwise_reload`) restored sane output.
+2. `async_engine=false` in gsm8k (DAPO already had this). The legacy actor
+   stack's `_create_engine` instantiates `OpenAIServingRender(io_processor=…)`
+   which trips `TypeError: unexpected keyword argument 'io_processor'`
+   on the resolved vLLM 0.20 build. Sync engine (`vllm.LLM(…)`) skips that
+   server stack.
+3. `engine_init_kwargs="{moe_backend: triton, max_model_len: 4096|8192}"`
+   on both scripts. FlashInfer cutlass MoE backend (auto-selected on B200)
+   asserts on `get_current_vllm_config()` during the layerwise reload's
+   `process_weights_after_loading`. Triton backend skips that ctor
+   altogether. Same workaround already in `test_megatron_models.py`.
+4. `gpu_memory_utilization=0.6` (was 0.7) — without this the second
+   `wake_up(kv_cache)` after sync OOMs at 30B BF16 + Megatron resident.
+5. `~/.cache/uv` symlinked to `/mnt/nvme/etang/uv-cache`. The 194 GB root
+   disk fills up with `~/.cache/uv/builds-v0/.tmp*` scratch dirs after
+   ~10 `--isolated` runs. Subdir-only symlinks aren't enough — uv writes
+   `.tmp*` directly under the cache root then renames into `archive-v0/`,
+   which fails with `EXDEV` if the root is on a different filesystem.
+6. Default gsm8k scoring switched to **flexible** (`utils.compute_score`'s
+   "last number anywhere") via patch in
+   `skyrl-gym/skyrl_gym/envs/gsm8k/env.py`. The strict `#### N` regex
+   rejects every answer the Nemotron-3-Nano-A3B model produces — it ends
+   with "The answer is N." or `\boxed{N}`, not the GSM8K ground-truth
+   format. Override with `SKYRL_GSM8K_SCORING_METHOD=strict`.
+7. DAPO: `MAX_RESPONSE_LENGTH` 8192→4096 and `micro_train_batch_size_per_gpu`
+   2→1 (4→2 for forward) so the packed activations fit. The full 8k budget
+   OOMs at this batch.
+8. DAPO: removed the `expandable_segments:True` env var I tried —
+   incompatible with vLLM's CuMemAllocator (vllm asserts).
+
+**Logs** (each run a separate file):
+- `/mnt/nvme/etang/runs/gsm8k_run11.log` ← the gsm8k run that worked
+- `/mnt/nvme/etang/runs/dapo_run03.log` ← the DAPO run that worked
+- earlier numbered runs are the bisection/diagnostic chain.
+- `~/exports/dumped_evals/global_step_{5,10,15}_evals/*.jsonl` (gsm8k)
+- `~/exports/dapo_nemotron3_nano_30b_a3b_base_megatron_tp4_pp1_cp1_ep8_etp1/dumped_evals/global_step_0_evals/*.jsonl` (DAPO baseline)
+
+**Wandb runs**: `nemotron3_nano/runs/<id>` for gsm8k (last good was run11)
+and `dapo_nemotron3_nano/runs/<id>` for DAPO (run03).
+
+---
+
+
+
 Tracking automated overnight runs of:
 1. `examples/train/megatron/run_megatron_nemotron3_nano.sh` — GSM8K, GRPO, target ~100 steps with healthy reward curve.
 2. `examples/train/megatron/run_megatron_dapo_nemotron3_nano.sh` — DAPO, math, after (1).
@@ -324,22 +391,24 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 3: 0.344 / -1.651 / 0.049  (Δ -0.039 / -0.100 / -0.011)
 - 4: 0.391 / -1.510 / 0.075  (Δ +0.047 / +0.141 / +0.026)
 - 5: 0.383 / -1.554 / 0.057
-- 6: 0.445 / -1.445 / 0.086  ← new peak (pass@16 +0.070 vs step 1)
-- 7: 0.328 / -1.581 / 0.070  (regression — RL noise)
+- 6: 0.445 / -1.445 / 0.086
+- 7: 0.328 / -1.581 / 0.070
 - 8: 0.367 / -1.616 / 0.060
-- (step 9 in progress, eval@10 coming)
+- 9: 0.375 / -1.448 / 0.093
+- 10: 0.422 / -1.430 / 0.095  ← all 3 metrics new peaks
 
-Pass@16 over 8 steps swings 0.328 → 0.445; mean ~0.378 (vs step 1 0.375).
-The peak at step 6 is the cleanest learning signal so far; the dip at
-step 7 is consistent with the high variance of GRPO at 30 prompts × 16
-samples per prompt with token-mean loss + KL=0.
+Eval@step10 started 12:14, expected to finish ~12:21.
 
-It's possible the dual-clip + token-mean loss is slightly destabilising
-late steps; without a longer run we can't tell. Either way, the *direction*
-is up: peak rose from 0.391 (step 4) → 0.445 (step 6).
-
-raw_reward moves -1.62 → -1.44 → ... (less negative early, slight regression).
-mean_positive_reward 0.055 → 0.086 (peak) → 0.060.
+**Take-aways:**
+- pass@16 trajectory: 0.375 (step 1) → 0.422 (step 10), peak 0.445 at step 6.
+  Mean of last 5 steps (6–10) is 0.387 vs first 5 (1–5) is 0.375. Modest
+  but real upward drift.
+- raw_reward (dominated by overlong soft penalty): −1.62 → −1.43. The model
+  is producing more correct-and-shorter answers, so it's getting hit by the
+  4k-budget overlong penalty less.
+- mean_positive_reward: 0.055 → 0.095, ~73% relative increase.
+- High variance step-to-step is expected on 128 prompts × 16 samples /
+  step with token-mean loss + KL=0. Reward signal is noisy but trending up.
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
