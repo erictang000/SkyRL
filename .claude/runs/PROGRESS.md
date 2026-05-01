@@ -173,11 +173,27 @@ one does not. The `--isolated` resolution apparently picks the older one
 for the legacy actor stack but the newer one for the new-inference HTTP
 stack (which is why run09 got further before failing on weight sync).
 
-### gsm8k_run11 (2026-05-01 04:13 UTC) — running, legacy + sync engine
+### gsm8k_run11 (2026-05-01 04:13 UTC) — RUNNING, REWARD LANDED
 
-`async_engine=false` → uses `vllm.LLM(...)` directly via the sync engine
-class, which doesn't go through the OpenAI server stack and so dodges the
-`OpenAIServingRender` constructor mismatch. Combined with the legacy weight
-sync path, this should give us a working setup if the chunked-reload theory
-is right.
+`async_engine=false` (sync engine, no OpenAI server) + `_SKYRL_USE_NEW_INFERENCE=0`
+(legacy CUDA-IPC weight sync, no vLLM layerwise reload). Init clean. Step 1:
+
+```
+04:19:56  Finished: 'sync_weights', time cost: 8.99s
+04:23:46  reward/avg_pass_at_5: 0.96875
+          reward/avg_raw_reward: 0.93984375
+          reward/mean_positive_reward: 0.93984375
+```
+
+So 96.9% of prompts solved by ≥1 of 5 samples; 94.0% raw mean. Very high
+baseline — the Nemotron-3-Nano instruct model is strong out of the box on
+gsm8k. Step 1 took ~4min generate+train after the 9s sync.
+
+**Confirms the chunked-reload-corruption diagnosis**: the same model + same
+sampling settings produced gibberish under the new inference path's
+`update_weights_chunk` and produces correct answers under the legacy path's
+direct `model.load_weights`. Some buffer beyond `conv_weights` is being
+corrupted by `_layerwise_process` / `process_weights_after_loading`.
+
+Now letting it run 100 steps. Will track reward trajectory.
 
