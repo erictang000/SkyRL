@@ -195,5 +195,11 @@ sampling settings produced gibberish under the new inference path's
 direct `model.load_weights`. Some buffer beyond `conv_weights` is being
 corrupted by `_layerwise_process` / `process_weights_after_loading`.
 
-Now letting it run 100 steps. Will track reward trajectory.
+**Step times:**
+- gen 3-4min, train ~3min, sync ~30s ⇒ ~7 min/step
+- 100 steps projects to ~11.7h, feasible in remaining budget
+
+**Reward trajectory (step → pass@5 / raw_reward):**
+- 1: 0.969 / 0.940
+- 2: 0.977 / 0.952  (Δ +0.008 / +0.012)
 
