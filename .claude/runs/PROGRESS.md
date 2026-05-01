@@ -294,11 +294,29 @@ vLLM's `CuMemAllocator.__init__` asserts that
 `PYTORCH_CUDA_ALLOC_CONF` does not contain `expandable_segments:True`. Open
 issue: pytorch/pytorch#147851.
 
-### dapo_run03 (2026-05-01 07:34 UTC) — running
+### dapo_run03 (2026-05-01 07:34 UTC) — running, no OOM
 
-Drop `expandable_segments`, also drop `MAX_RESPONSE_LENGTH` 8192→4096 and
-`max_model_len` 12288→8192 (still fits AIME's typical 1-3k token answers
-plus a 2k prompt budget). Hopefully step 1 train fits.
+Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
+`max_model_len` 12288→8192. Init clean.
+
+**Eval@step0 baseline** (AIME-2024, 32 samples, 4k cap):
+- `pass_at_32: 0.30` (9/30 problems — vs 0.50 at 8k baseline; truncation
+  hurts AIME because some problems take >4k tokens to solve)
+- `avg_score: -0.78`, mean_positive_reward 0.108
+- avg response length: 3989 tokens (most hit the 4k cap)
+
+**Step 1** (07:46 → 08:14):
+- Gen: 15:06 (vs 28 min at 8k — much faster)
+- Train: 10:17 (no OOM)
+- Sync: 30s
+- ⇒ ~25 min / step
+- pass@16: 0.375
+- raw_reward: -1.62 (overlong penalty heavier at 4k since most responses
+  bump the cap)
+- mean_positive_reward: 0.055
+
+**Per-step projections**: ~25 min/step + every-10-steps eval (~7 min) means
+~26 min/step amortized. Remaining ~4-5h budget → 9-11 DAPO steps.
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
