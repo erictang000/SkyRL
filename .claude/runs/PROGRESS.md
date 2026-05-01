@@ -10,14 +10,14 @@ training outcomes:
    instruct model is essentially at gsm8k ceiling, so RL movement is small
    (within noise). Train pass@5 oscillates 0.94–0.97.
 2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 20 RL steps +
-   baseline eval + eval@10 + eval@20 (in progress). Train pass@16 0.375
-   (step 1) → **0.719** (step 20, peak), +34.4pp. raw_reward -1.62 →
-   -0.67; mean_positive_reward 0.055 → 0.275 (5x). Trajectory accelerated
-   late (steps 18-20: 0.672, 0.641, 0.719) — RL is finding gains, not
-   plateauing. **Validation @ step 10 vs step 0**: pass@32 0.30 → 0.333
-   (+3.3pp); mean_positive_reward 0.108 → 0.155 (+44%); correct-answer
-   length 3111 → 2916 tokens (more concise). eval@20 should land much
-   higher.
+   3 evals. Train pass@16 0.375 (step 1) → **0.719** (step 20, peak),
+   +34.4pp. raw_reward -1.62 → -0.67; mean_positive_reward 0.055 → 0.275 (5x).
+   **Held-out AIME pass@32: 0.300 (step 0) → 0.333 (step 10) → 0.500
+   (step 20).** That's +20pp absolute, +67% relative — the model now
+   solves 15/30 AIME-2024 problems vs 9/30 at baseline, while writing
+   correct answers ~25% shorter (3111 → 2320 tokens). Mean_positive_reward
+   on validation 0.108 → 0.316 (2.9x). avg_score -0.78 → -0.37 (overlong
+   penalty roughly halved).
 
 **Critical fixes** (committed; without these neither script trains):
 1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
@@ -424,6 +424,18 @@ responses, lowering both the wrong-answer count and the overlong penalty.
 - `mean_positive_reward: 0.155` (vs 0.108 baseline → +44%)
 - avg response 3907 tokens (vs 3989 baseline → slightly shorter)
 - correct-answer avg 2916 tokens (vs 3111 baseline → -195 tokens)
+
+**Eval @ step 20** (AIME-2024, n_samples=32, 4k cap):
+- `pass_at_32: 0.500` (vs 0.30 baseline → **+20pp**, 15/30 problems vs 9/30)
+- `avg_score: -0.37` (vs -0.78 baseline → overlong penalty roughly halved)
+- `mean_positive_reward: 0.316` (vs 0.108 baseline → **2.9x**)
+- avg response 3528 tokens (vs 3989 baseline → −461)
+- correct-answer avg 2320 tokens (vs 3111 baseline → **−25%**)
+- min response 693 tokens (vs 1707 at baseline → model can now answer
+  short problems concisely instead of always rambling near the cap)
+
+The 4k-capped model at step 20 matches the 8k-baseline AIME score (15/30)
+while using ~half the budget. Strong RL signal on a held-out test set.
 
 **Take-aways:**
 - pass@16 trajectory: 0.375 (step 1) → 0.422 (step 10), peak 0.445 at step 6.
