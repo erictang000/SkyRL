@@ -409,7 +409,9 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 17: 0.539 / -1.166 / 0.154
 - 18: 0.672 / -0.908 / 0.208
 - 19: 0.641 / -0.888 / 0.211
-- 20: 0.719 / -0.668 / 0.275  ← all 3 new peaks. pass@16 +34.4pp vs step 1
+- 20: 0.719 / -0.668 / 0.275
+- 21: 0.688 / -0.780 / 0.253
+- 22: 0.727 / -0.582 / 0.291  ← all 3 new peaks. pass@16 +35.2pp vs step 1
 
 Mean pass@16 of last 7 (steps 11-17) = **0.508** vs first 5 (1-5) = 0.375.
 That's +13.3pp lift in mean batch reward — well above the 0.7% noise band
