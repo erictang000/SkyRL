@@ -202,4 +202,23 @@ corrupted by `_layerwise_process` / `process_weights_after_loading`.
 **Reward trajectory (step → pass@5 / raw_reward):**
 - 1: 0.969 / 0.940
 - 2: 0.977 / 0.952  (Δ +0.008 / +0.012)
+- 3: 0.969 / 0.937  (Δ -0.008 / -0.015)
+- 4: 0.977 / 0.952  (Δ +0.008 / +0.015)
+
+The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
+within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
+reward over 100 steps is realistic but it'll be a slow polish: mean might
+drift to ~0.97 and the variance band tighten. Definitely not going to grow
+0.94 → 0.99.
+
+**Per-step times settled** (after step 1's compilation overhead):
+- gen ~3.5 min
+- train ~1.5 min (was 2.9 min on step 1)
+- sync ~11 s
+- ⇒ ~5 min/step
+- 100 steps ≈ 8.3 h
+
+DAPO data dedup (background): done. 17,391 train rows + 30 aime rows ready
+at `~/data/dapo/{dapo-math-17k,aime-2024}-cleaned.parquet`. DAPO script also
+patched with `_SKYRL_USE_NEW_INFERENCE=0`.
 
