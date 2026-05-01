@@ -53,16 +53,34 @@ answer, so the gsm8k strict regex `#### NUMBER` never matches.
 
 Estimated wall clock at this rate: ~38h for 100 steps. Aborted.
 
-### gsm8k_run04 (2026-05-01 01:35 UTC) — running
+### gsm8k_run04 (2026-05-01 01:35–02:02 UTC) — KILLED, sample dump showed model emitting gibberish
 
-Switched off thinking and switched generator to non-batched mode (the only mode
-that supports `chat_template_kwargs` — batched mode hands tokenization to vLLM
-which doesn't surface the kwarg through SkyRL's path):
+Same step time (~12 min). Reward still 0. The example dump in the log showed
+the model producing total nonsense at T=1.0 with no top_p/top_k filter:
 
-- `generator.batched=false`
-- `generator.chat_template_kwargs="{enable_thinking: false}"`
+```
+(   (   ),  (   (   ),  (   (   ),  (something), (   (       (?),  >)?
+=>  (   ),  (   ),  (?),  Yong "совдут" (  noc   orthentent, ...
+//<ElementLGMologBlon>>**: heraus manche other language is repetitive...
+```
 
-Now expect ~200-token completions (just the answer, no `<think>` trace), so
-generation step is bounded by fewer tokens — should drop step time well below
-13min and let real reward signal land.
+That is, multilingual junk tokens, structured but incoherent, terminated by a
+properly-emitted `<|im_end|>`. Two things went wrong:
+
+1. **Sampling**: T=1.0 + top_p=1.0 + top_k=-1 lets long-tail garbage tokens
+   in. On a 30B MoE that's enough to derail the trajectory.
+2. **enable_thinking=False likely also hurts**: this model was trained for
+   thinking-on; the `<think></think>` prompt suffix probably puts the model
+   in a regime it didn't see in post-training.
+
+### gsm8k_run05 (2026-05-01 02:02 UTC) — running
+
+Re-enabled thinking (default), tighter sampling, smaller batch:
+- `temperature=0.7`, `top_p=0.9`
+- `max_generate_length=3000` (lets the thinking trace finish before answer)
+- `train_batch_size=256`, `policy_mini_batch_size=64`, `eval_batch_size=256`
+  (trims per-step gen workload; 100 steps now feasible in overnight window)
+- back to `batched=true` (no chat_template override needed since default
+  thinking-on is what the model wants)
+- `engine_init_kwargs={moe_backend: triton, max_model_len: 4096}` retained.
 
