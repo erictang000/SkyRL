@@ -399,7 +399,9 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 - 9: 0.375 / -1.448 / 0.093
 - 10: 0.422 / -1.430 / 0.095
 - 11: 0.484 / -1.371 / 0.101
-- 12: 0.539 / -1.226 / 0.127  ← all 3 new peaks again, pass@16 +16.4pp vs step 1
+- 12: 0.539 / -1.226 / 0.127  ← peak so far, pass@16 +16.4pp vs step 1
+- 13: 0.453 / -1.481 / 0.076
+- 14: 0.484 / -1.286 / 0.124
 
 **Eval @ step 10** (AIME-2024, n_samples=32, 4k cap):
 - `pass_at_32: 0.333` (vs 0.30 baseline → 1 more AIME problem solved)
