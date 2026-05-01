@@ -160,17 +160,24 @@ path: post-init-sync vLLM has subtly-wrong weights that derail at T>0 with
 long generation, even though logprob alignment within ±5e-2 of Megatron
 satisfies the unit test (greedy, 128 tokens).
 
-### gsm8k_run10 (2026-05-01 04:09 UTC) — running, legacy inference path
+### gsm8k_run10 (2026-05-01 04:09–04:12 UTC) — DIED, vllm 0.20 API mismatch
 
-Hypothesis: vLLM 0.20's chunked weight transfer (`update_weights_chunk`) goes
-through `initialize_layerwise_reload` → `process_weights_after_loading` →
-`_copy_and_restore_kernel_tensors`, which we already saw corrupts conv1d
-weights via the `conv_weights` view-buffer alias (fixed by adding to
-`SKIP_TENSORS`). Likely OTHER nemotron_h weights have similar
-view-buffer aliases that we haven't patched.
+`AsyncVLLMInferenceEngine.__init__` failed with
+`TypeError: OpenAIServingRender.__init__() got an unexpected keyword argument 'io_processor'`.
+The legacy path's `_create_engine` instantiates `OpenAIServingRender` with
+`io_processor=...`, but the resolved vLLM 0.20 build's `OpenAIServingRender`
+constructor doesn't accept it (older API on this branch's pinned version).
 
-Switched to the legacy path with `_SKYRL_USE_NEW_INFERENCE=0`, which uses
-CUDA IPC + direct `model.load_weights(weight_list)` — no `initialize_layerwise_reload`
-machinery, no kernel-tensor materialize/restore dance. Expect this to match
-the standalone test's behavior post-sync.
+Note: there are two vLLM installs in archive-v0; one has `io_processor`,
+one does not. The `--isolated` resolution apparently picks the older one
+for the legacy actor stack but the newer one for the new-inference HTTP
+stack (which is why run09 got further before failing on weight sync).
+
+### gsm8k_run11 (2026-05-01 04:13 UTC) — running, legacy + sync engine
+
+`async_engine=false` → uses `vllm.LLM(...)` directly via the sync engine
+class, which doesn't go through the OpenAI server stack and so dodges the
+`OpenAIServingRender` constructor mismatch. Combined with the legacy weight
+sync path, this should give us a working setup if the chunked-reload theory
+is right.
 
