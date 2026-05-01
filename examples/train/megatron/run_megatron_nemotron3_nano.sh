@@ -63,7 +63,8 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \
   generator.inference_engine.async_engine=true \
-  generator.batched=true \
+  generator.batched=false \
+  generator.chat_template_kwargs="{enable_thinking: false}" \
   environment.env_class=gsm8k \
   generator.n_samples_per_prompt=5 \
   generator.inference_engine.gpu_memory_utilization=0.6 \

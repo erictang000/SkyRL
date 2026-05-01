@@ -42,11 +42,27 @@ CLI parse error: SkyRL's `from_cli_overrides` rejects the Hydra-style `+` prefix
 explicitly. Used `engine_init_kwargs="{moe_backend: triton, max_model_len: 4096}"`
 inline-dict syntax instead — works because the field is `Dict[str, Any]`.
 
-### gsm8k_run03 (2026-05-01 01:07 UTC) — running, reward 0 at step 1
+### gsm8k_run03 (2026-05-01 01:07–01:35 UTC) — KILLED, restarted as run04
 
-Wandb: `nemotron3_nano/runs/4o2nbzpb`. First weight sync succeeded (9.9s).
-Step 1 generated 5×1024 = 5120 completions, but `reward/avg_pass_at_5: 0.0`,
-`reward/avg_raw_reward: 0.0`. Watching for step 2 to confirm whether this is
-a real format/scoring issue (gsm8k env uses strict `#### NUMBER` regex) or
-just a noisy first batch.
+First weight sync succeeded (9.9s); step 1 took ~13min and produced 0 reward
+across all 5120 completions. Root cause: the Nemotron-3-Nano chat template
+defaults to `enable_thinking=True`, prepending `<|im_start|>assistant\n<think>\n`
+to every prompt. With `max_generate_length=1024` the model stays inside the
+`<think>` block until the budget is exhausted — never gets to the final
+answer, so the gsm8k strict regex `#### NUMBER` never matches.
+
+Estimated wall clock at this rate: ~38h for 100 steps. Aborted.
+
+### gsm8k_run04 (2026-05-01 01:35 UTC) — running
+
+Switched off thinking and switched generator to non-batched mode (the only mode
+that supports `chat_template_kwargs` — batched mode hands tokenization to vLLM
+which doesn't surface the kwarg through SkyRL's path):
+
+- `generator.batched=false`
+- `generator.chat_template_kwargs="{enable_thinking: false}"`
+
+Now expect ~200-token completions (just the answer, no `<think>` trace), so
+generation step is bounded by fewer tokens — should drop step time well below
+13min and let real reward signal land.
 
