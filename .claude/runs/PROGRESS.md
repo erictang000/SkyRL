@@ -219,12 +219,20 @@ corrupted by `_layerwise_process` / `process_weights_after_loading`.
 - 9: 0.973 / 0.952
 - 10: 0.984 / 0.951
 - 11: 0.973 / 0.953
+- 12: 0.980 / 0.959
+- 13: 0.957 / 0.938
+- 14: 0.980 / 0.963
+- 15: 0.980 / 0.960
+- 16: 0.969 / 0.954
 
-**Eval @ step 10**: `avg_score: 0.951` (essentially same as step 5).
+**Eval validation curve** (held-out 1319 prompts):
+- step 5: 0.953
+- step 10: 0.951
+- step 15: 0.952
 
-So validation has plateaued at ~0.95 — the model is at ceiling. Going to
-let gsm8k run to ~step 20 to confirm trajectory, then cut over to DAPO
-(harder math task, more headroom for RL training to show real curves).
+Validation is bit-flat at 0.952±0.001 → model at ceiling on gsm8k. RL is
+moving rewards within noise but not lifting validation. Time to cut over
+to DAPO (harder task, more learning headroom).
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
