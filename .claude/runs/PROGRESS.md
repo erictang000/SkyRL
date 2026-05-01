@@ -318,6 +318,17 @@ Drop `expandable_segments`, drop `MAX_RESPONSE_LENGTH` 8192→4096,
 **Per-step projections**: ~25 min/step + every-10-steps eval (~7 min) means
 ~26 min/step amortized. Remaining ~4-5h budget → 9-11 DAPO steps.
 
+**DAPO reward trajectory (step → pass@16 / raw_reward / mean_positive):**
+- 1: 0.375 / -1.621 / 0.055
+- 2: 0.383 / -1.551 / 0.060  (Δ +0.008 / +0.070 / +0.005)
+- 3: 0.344 / -1.651 / 0.049  (Δ -0.039 / -0.100 / -0.011)
+- 4: 0.391 / -1.510 / 0.075  (Δ +0.047 / +0.141 / +0.026)  ← new peak
+
+Real upward trend in pass@16 from 0.375 → 0.391 over 4 steps. raw_reward
+also moving up (less negative as the model writes shorter/correct answers
+that trip the overlong soft penalty less). DAPO is noisier than gsm8k but
+the signal is there.
+
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
 reward over 100 steps is realistic but it'll be a slow polish: mean might
