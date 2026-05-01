@@ -254,6 +254,18 @@ from dominating wall time.
 Per-step expected to be 15-25 min (2048 generations × up to 8192 tokens).
 Hoping for 8-15 steps in remaining budget.
 
+**Init + eval@step0** (baseline, AIME-2024, n_samples=32):
+- 06:35 launch → 06:40 first sync (5min init) → 06:54 eval done (14min eval)
+- `eval/math_dapo/avg_score: -0.45` (negative due to overlong soft penalty)
+- `eval/math_dapo/pass_at_32: 0.50` ← **15/30 AIME-2024 problems solved**
+- `mean_positive_reward: 0.275`
+- avg response len 7321 tokens (most hit 8192 cap)
+
+A spot-check eval generation showed clean reasoning + `\boxed{540}` style
+answer on a complex complex-number AIME problem. Model is genuinely solving.
+
+Step 1 generation started 06:55:01.
+
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
 reward over 100 steps is realistic but it'll be a slow polish: mean might
