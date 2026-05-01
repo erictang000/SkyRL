@@ -4,6 +4,9 @@ set -x
 # layerwise-reload corruption that derails post-sync generation for nemotron_h.
 # See PROGRESS.md / gsm8k_run09 → run11 for the diagnosis.
 export _SKYRL_USE_NEW_INFERENCE=0
+# Reduce fragmentation so a 4 GiB allocation can land — the long-sequence
+# packed batches for DAPO push memory close to the limit (run01 OOMed).
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Colocated DAPO training+generation for Nemotron3-Nano-30B-A3B on DAPO with Megatron.
 # Should run on 1 node of 8xB2000
@@ -100,8 +103,8 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
-  trainer.micro_forward_batch_size_per_gpu=4 \
-  trainer.micro_train_batch_size_per_gpu=2 \
+  trainer.micro_forward_batch_size_per_gpu=2 \
+  trainer.micro_train_batch_size_per_gpu=1 \
   trainer.ckpt_interval=-1 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \

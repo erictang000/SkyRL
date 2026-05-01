@@ -264,7 +264,29 @@ Hoping for 8-15 steps in remaining budget.
 A spot-check eval generation showed clean reasoning + `\boxed{540}` style
 answer on a complex complex-number AIME problem. Model is genuinely solving.
 
-Step 1 generation started 06:55:01.
+Step 1 generation started 06:55:01. Step 1 reward landed at 07:23:40:
+- pass@16: 0.609
+- raw_reward: -1.03 (overlong penalty dominates)
+- mean_positive_reward: 0.235
+
+Then OOM during step 1 train (at 07:30):
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 4.21 GiB.
+GPU 0 has a total capacity of 178.35 GiB of which 4.10 GiB is free.
+```
+
+vLLM sleep mode left ~15 GiB resident. Megatron's packed micro batch
+(`micro_train_batch_size_per_gpu=2`, max seq 10240) didn't fit.
+
+### dapo_run02 (2026-05-01 07:31 UTC) — running
+
+Reduce activation footprint:
+- `micro_train_batch_size_per_gpu`: 2 → 1
+- `micro_forward_batch_size_per_gpu`: 4 → 2
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+
+If still OOM, will reduce `MAX_RESPONSE_LENGTH` (8192 → 4096) — most AIME
+problems fit in 4k.
 
 The model is essentially at ceiling on gsm8k (~95%). Reward is oscillating
 within ~1.5% bands — this is RL noise (1280 samples → 1σ ≈ 0.7%). Increasing
