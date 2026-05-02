@@ -14,6 +14,16 @@ Logs: `/mnt/nvme/etang/runs/dapo_8k_offload_run<NN>.log` (12T nvme — root only
 
 Wandb: project `dapo_nemotron3_nano`, run name `dapo_nemotron3_nano_30b_a3b_base_megatron_tp4_pp1_cp1_ep8_etp1_optim_offload_8k_max_response_length`.
 
+## Per-step time budget
+
+8k+offload step 1 was **48 min** (vs ~25 min at 4k). At this rate the 24h budget gets us:
+- step 1 done: 20:42 UTC 5/2
+- eval@10 expected ~04:42 UTC 5/3
+- step 20 expected ~12:42 UTC 5/3
+- eval@30 unlikely to fit (would land ~20:42 UTC 5/3 — past 24h budget)
+
+If gen speeds up after step 1's vLLM compile cache warms (4k showed gen drop from 28→15 min after step 1), per-step could compress to ~35-40 min and eval@30 becomes reachable. Will track from step 2.
+
 ## Hypotheses to test
 
 - Does optimizer offload + 8k actually fit? (prior 4k run with no offload + micro_train=1 fit fine; 8k previously OOM'd on step 1.)
@@ -46,5 +56,5 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 | step | pass@16 / pass@32 | raw_reward / avg_score | mean_pos_reward | gen (s) | train (s) | sync (s) | notes |
 |------|-------------------|------------------------|-----------------|---------|-----------|----------|-------|
 | 0 (eval) | pass@32 **0.533** (16/30) | avg_score -0.431 | 0.284 | — | — | 9.7 (init) | 8k cap, avg 7229 tokens, correct 4939. Beats 4k baseline 0.30 and run01's 0.50. Eval took 934s (15.6 min). |
-| 1 (train batch) | pass@16 **0.586** | -0.743 | 0.372 | 1635 (27.3 min) | _in progress_ | _pending_ | First 8k+offload step. Already +21pp pass@16 vs 4k step 1 (0.375); +57pp raw_reward (-1.62 → -0.74) thanks to less overlong penalty at 8k. mean_pos +6.7x. |
+| 1 (train batch) | pass@16 **0.586** | -0.743 | 0.372 | 1635 (27.3 min) | 1247 (20.8 min) | 9.4 | **Total step 1: 2900s = 48.3 min.** Train breakdown: fwd_logprobs 297s + compute_adv 0.3s + policy_train 950s. +21pp pass@16 vs 4k step 1; +57pp raw_reward thanks to less overlong penalty at 8k; mean_pos +6.7x. |
 
