@@ -35,6 +35,14 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 
 ### run02 (2026-05-02 19:26 UTC) — running
 
+- 19:26 launch → 19:30 build done (transformer-engine-torch + mamba-ssm)
+- 19:35 ray actor groups initialized, mesh ranks set (TP=4 × DP=2)
+- 19:37 init policy/ref/critic done. weight sync 9.7s
+- 19:37:34 **eval@step0 started**
+- Wandb: https://wandb.ai/sky-posttraining-uc-berkeley/dapo_nemotron3_nano/runs/7p8ir69t
+- GPU mem 138-139 GB / 183 GB per device (~75% — fits with 8k headroom)
+- Disk: root 102G/194G (62G HF cache for 30B BF16 model is the bulk; stable). nvme 37G/12T.
+
 | step | pass@16 | raw_reward | mean_pos_reward | gen (s) | train (s) | sync (s) | notes |
 |------|---------|------------|-----------------|---------|-----------|----------|-------|
 | 0 (eval) | — | — | — | — | — | — | _pending_ |
