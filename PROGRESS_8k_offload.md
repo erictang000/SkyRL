@@ -58,5 +58,5 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 | 0 (eval) | pass@32 **0.533** (16/30) | avg_score -0.431 | 0.284 | — | — | 9.7 (init) | 8k cap, avg 7229 tokens, correct 4939. Beats 4k baseline 0.30 and run01's 0.50. Eval took 934s (15.6 min). |
 | 1 (train batch) | pass@16 **0.586** | -0.743 | 0.372 | 1635 (27.3 min) | 1247 (20.8 min) | 9.4 | **Total step 1: 2900s = 48.3 min.** Train breakdown: fwd_logprobs 297s + compute_adv 0.3s + policy_train 950s. +21pp pass@16 vs 4k step 1; +57pp raw_reward thanks to less overlong penalty at 8k; mean_pos +6.7x. |
 | 2 (train batch) | pass@16 **0.656** | -0.800 | 0.348 | 1675 (27.9 min) | 1066 (17.8 min) | 9.8 | **Total step 2: 2759s = 46.0 min** (-2.3 min vs step 1). fwd_logprobs 237s (-60s) + policy_train 829s (-121s, ~13% torch-compile warmup). +7pp pass@16. |
-| 3 (train batch) | pass@16 **0.594** | -1.132 | 0.237 | 1718 (28.6 min) | _in progress_ | _pending_ | -6pp pass@16 vs step 2 — noise (4k baseline showed similar 0.38→0.34→0.39 zigzag at start). raw_reward worse (more overlong-filtered samples this batch). |
+| 3 (train batch) | pass@16 **0.594** | -1.132 | 0.237 | 1718 (28.6 min) | 1079 (18.0 min) | 9.7 | **Total step 3: 2817s = 47.0 min.** policy_train 837s. -6pp pass@16 vs step 2 — noise band. |
 
