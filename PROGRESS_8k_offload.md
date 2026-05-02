@@ -43,7 +43,7 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 - GPU mem 138-139 GB / 183 GB per device (~75% — fits with 8k headroom)
 - Disk: root 102G/194G (62G HF cache for 30B BF16 model is the bulk; stable). nvme 37G/12T.
 
-| step | pass@16 | raw_reward | mean_pos_reward | gen (s) | train (s) | sync (s) | notes |
-|------|---------|------------|-----------------|---------|-----------|----------|-------|
-| 0 (eval) | — | — | — | — | — | — | _pending_ |
+| step | pass@16 / pass@32 | raw_reward / avg_score | mean_pos_reward | gen (s) | train (s) | sync (s) | notes |
+|------|-------------------|------------------------|-----------------|---------|-----------|----------|-------|
+| 0 (eval) | pass@32 **0.533** (16/30) | avg_score -0.431 | 0.284 | — | — | 9.7 (init) | 8k cap, avg 7229 tokens, correct 4939. Beats 4k baseline 0.30 and run01's 0.50. Eval took 934s (15.6 min). |
 
