@@ -60,4 +60,5 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 | 2 (train batch) | pass@16 **0.656** | -0.800 | 0.348 | 1675 (27.9 min) | 1066 (17.8 min) | 9.8 | **Total step 2: 2759s = 46.0 min** (-2.3 min vs step 1). fwd_logprobs 237s (-60s) + policy_train 829s (-121s, ~13% torch-compile warmup). +7pp pass@16. |
 | 3 (train batch) | pass@16 **0.594** | -1.132 | 0.237 | 1718 (28.6 min) | 1079 (18.0 min) | 9.7 | **Total step 3: 2817s = 47.0 min.** policy_train 837s. -6pp pass@16 vs step 2 — noise band. |
 | 4 (train batch) | pass@16 **0.586** | -0.951 | 0.292 | 1679 (28.0 min) | 1076 (17.9 min) | 9.7 | **Total step 4: 2765s = 46.1 min.** Mean steps 1-4 pass@16 = 0.606 (vs 0.371 mean of 4k steps 1-4 = +23.5pp). Mean step time 46.9 min. |
+| 5 (train batch) | pass@16 **0.625** | -0.840 | 0.334 | 1650 (27.5 min) | _in progress_ | _pending_ | +4pp over step 4 — partial recovery, oscillating in 0.59-0.66 band. Trend over 5 steps still gently up. |
 
