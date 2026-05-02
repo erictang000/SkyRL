@@ -9,17 +9,19 @@ training outcomes:
    evals. Validation pass@1 stable at 0.952 — the Nemotron-3-Nano-30B-A3B
    instruct model is essentially at gsm8k ceiling, so RL movement is small
    (within noise). Train pass@5 oscillates 0.94–0.97.
-2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 34+ RL steps +
-   4 evals (still running). Train pass@16 0.375 (step 1) → **0.844**
+2. **`run_megatron_dapo_nemotron3_nano.sh` (DAPO/AIME)** — 40+ RL steps +
+   5 evals (still running). Train pass@16 0.375 (step 1) → **0.844**
    (step 32 peak, +46.9pp). raw_reward -1.62 → -0.31; mean_positive_reward
-   0.055 → 0.344 (~6x). Mean of last 5 (30-34) = 0.806 vs first 5
-   (1-5) = 0.375 — +43pp lift in batch reward.
-   **Held-out AIME pass@32 trajectory: 0.300 (step 0) → 0.333 (step 10) →
-   0.500 (step 20) → 0.567 (step 30).** +26.7pp absolute, +89% relative.
-   17/30 AIME-2024 problems solved at step 30 vs 9/30 at baseline; the
-   4k-capped post-RL model exceeds the 8k-baseline AIME score using half
-   the budget. mean_positive_reward 0.108 → 0.369 (3.4x); correct-answer
-   length 3111 → 2004 (−36%); avg_score -0.78 → -0.26.
+   0.055 → 0.344 (~6x). Train batch reward plateaued ~0.78–0.84 from
+   step 26 onward.
+   **Held-out AIME pass@32 trajectory: 0.300 → 0.333 → 0.500 → 0.567
+   → 0.433 (steps 0/10/20/30/40).** Peak at step 30 (17/30 problems
+   solved); regression by step 40 (back to 13/30). Train kept climbing
+   past step 30 but val didn't — this is an **overfit on dapo-math-17k**.
+   The right "ship" point would be step 30. Run is still going so we'll
+   see if val recovers, but the signal is clear: there's a real RL gain
+   over the first 30 steps (+26.7pp val pass@32), and a real overfit cost
+   beyond that.
 
 **Critical fixes** (committed; without these neither script trains):
 1. `_SKYRL_USE_NEW_INFERENCE=0` exported in both scripts. The new chunked
@@ -461,6 +463,23 @@ responses, lowering both the wrong-answer count and the overlong penalty.
 
 The 4k-capped model at step 30 *exceeds* the 8k-baseline AIME score (15/30
 @8k → 17/30 @4k) while using just half the budget. Strong RL on AIME.
+
+**Eval @ step 40** (AIME-2024, n_samples=32, 4k cap) — REGRESSION:
+- `pass_at_32: 0.433` (13/30, **down from 17/30 at step 30**)
+- `avg_score: -0.66` (down from -0.26)
+- `mean_positive_reward: 0.170` (down from 0.369, ~halved)
+- avg response 3736 tokens (UP from 3282 → model rambling more again)
+- correct-answer 2195 tokens (vs 2004)
+
+Train reward kept climbing past step 30 (peak 0.844 at step 32) but held-out
+AIME peaked at step 30 and reversed by step 40. Classic RL overfit —
+model is learning training-distribution specifics that don't transfer.
+The dapo-math-17k train set is ~17k problems but the AIME validation is
+just 30 unseen problems; RL has plenty of room to over-specialize.
+
+**Validation pass@32 trajectory: 0.300 → 0.333 → 0.500 → 0.567 → 0.433.**
+Peak at step 30 is the sweet spot. For a real run, would want to stop
+training around there or add stronger regularization.
 
 **Take-aways:**
 - pass@16 trajectory: 0.375 (step 1) → 0.422 (step 10), peak 0.445 at step 6.
