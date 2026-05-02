@@ -23,9 +23,17 @@ Wandb: project `dapo_nemotron3_nano`, run name `dapo_nemotron3_nano_30b_a3b_base
 
 ## Run log
 
-### run01 (2026-05-02 …)
+### Spot-instance setup notes (one-time)
 
-_in progress, will fill below_
+- nvme remounted fresh on this instance — moved `~/.cache/uv` → `/mnt/nvme/etang/uv-cache-real` (24G, was eating the 194G root); symlinked `~/exports` and `~/ckpts` to `/mnt/nvme/etang/{exports,ckpts}` so dumped_evals don't race against root fill.
+- **transformer-engine-torch source build needed `nccl.h`.** No precompiled wheel exists for this torch+cuda combo (cu12.9, torch 2.11). The `--isolated` build env's `-I/usr/local/cuda/include` lacks nccl headers (cuda 12.9 install doesn't bundle them; nccl ships separately via `nccl-gib` package at `/usr/local/gib/`). Fix: `sudo ln -sf /usr/local/gib/include/nccl.h /usr/local/cuda/include/nccl.h` + corresponding libnccl.so symlinks. Done once — persists in /usr/local/cuda which survives the spot lifetime as long as cuda doesn't get upgraded.
+- run01 died at this build step. run02 is the first real attempt.
+
+### run01 (2026-05-02 19:21 UTC) — DIED at build (nccl.h missing)
+
+See note above. Symlinked nccl into cuda dir, restarted as run02.
+
+### run02 (2026-05-02 19:26 UTC) — running
 
 | step | pass@16 | raw_reward | mean_pos_reward | gen (s) | train (s) | sync (s) | notes |
 |------|---------|------------|-----------------|---------|-----------|----------|-------|
