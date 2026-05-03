@@ -64,4 +64,5 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 | 6 (train batch) | pass@16 **0.547** | -0.968 | 0.297 | 1655 (27.6 min) | 1062 (17.7 min) | 9.3 | **Total step 6: 2734s = 45.6 min.** Mean steps 1-6: 0.599 (vs 4k mean 1-6 = 0.387, +21pp). Mean step time 46.4 min. |
 | 7 (train batch) | pass@16 **0.570** | -1.000 | 0.279 | 1690 (28.2 min) | 1078 (18.0 min) | 9.5 | **Total step 7: 2777s = 46.3 min.** Trend: 0.586, 0.656, 0.594, 0.586, 0.625, 0.547, 0.570 — pass@16 stuck around 0.59 mean. Need many more steps to see real RL gradient. |
 | 8 (train batch) | pass@16 **0.617** | -0.815 | 0.342 | 1645 (27.4 min) | 1035 (17.2 min) | 9.3 | **Total step 8: 2698s = 45.0 min — new fastest.** policy_train 803s. +5pp over step 7. Mean steps 1-8: 0.598. Mean step time 46.2 min. |
+| 9 (train batch) | pass@16 **0.648** | -0.701 | 0.386 | 1599 (26.7 min, fastest) | _in progress_ | _pending_ | New peak (since step 2). raw_reward best since step 1. mean_pos highest yet (0.386). Mean steps 1-9: 0.604. Eval@10 next. |
 
