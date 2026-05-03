@@ -61,5 +61,5 @@ See note above. Symlinked nccl into cuda dir, restarted as run02.
 | 3 (train batch) | pass@16 **0.594** | -1.132 | 0.237 | 1718 (28.6 min) | 1079 (18.0 min) | 9.7 | **Total step 3: 2817s = 47.0 min.** policy_train 837s. -6pp pass@16 vs step 2 — noise band. |
 | 4 (train batch) | pass@16 **0.586** | -0.951 | 0.292 | 1679 (28.0 min) | 1076 (17.9 min) | 9.7 | **Total step 4: 2765s = 46.1 min.** Mean steps 1-4 pass@16 = 0.606 (vs 0.371 mean of 4k steps 1-4 = +23.5pp). Mean step time 46.9 min. |
 | 5 (train batch) | pass@16 **0.625** | -0.840 | 0.334 | 1650 (27.5 min) | 1056 (17.6 min) | 9.8 | **Total step 5: 2715s = 45.3 min — fastest yet.** policy_train 810s. +4pp over step 4. Mean step time over 1-5: 46.5 min. |
-| 6 (train batch) | pass@16 **0.547** | -0.968 | 0.297 | 1655 (27.6 min) | _in progress_ | _pending_ | -8pp from step 5 — big oscillation but still in early-RL noise band. Mean steps 1-6: 0.599 (vs 4k mean 1-6 = 0.387, +21pp). |
+| 6 (train batch) | pass@16 **0.547** | -0.968 | 0.297 | 1655 (27.6 min) | 1062 (17.7 min) | 9.3 | **Total step 6: 2734s = 45.6 min.** Mean steps 1-6: 0.599 (vs 4k mean 1-6 = 0.387, +21pp). Mean step time 46.4 min. |
 
