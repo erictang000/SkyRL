@@ -1157,9 +1157,14 @@ class RemoteInferenceClient:
         async def _load_on_server(server_url: str):
             url = f"{server_url}/v1/load_lora_adapter"
             async with session.post(url, json=payload) as resp:
-                # vLLM returns 200 with text body on success, or JSON ErrorResponse on failure
+                # vLLM returns 200 with text body on success, or JSON ErrorResponse on failure.
+                # Tolerate non-JSON error bodies (e.g. plain-text 5xx from a proxy):
+                # fall back to the text body so raise_for_status still surfaces it.
                 if resp.status >= 400:
-                    body = await resp.json()
+                    try:
+                        body = await resp.json(content_type=None)
+                    except Exception:
+                        body = await resp.text()
                     raise_for_status(resp, body)
                 return server_url, {"status": resp.status, "body": await resp.text()}
 
@@ -1192,8 +1197,12 @@ class RemoteInferenceClient:
         async def _unload_on_server(server_url: str):
             url = f"{server_url}/v1/unload_lora_adapter"
             async with session.post(url, json=payload) as resp:
+                # See _load_on_server for the JSON/text fallback rationale.
                 if resp.status >= 400:
-                    body = await resp.json()
+                    try:
+                        body = await resp.json(content_type=None)
+                    except Exception:
+                        body = await resp.text()
                     raise_for_status(resp, body)
                 return server_url, {"status": resp.status, "body": await resp.text()}
 
