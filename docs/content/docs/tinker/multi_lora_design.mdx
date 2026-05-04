@@ -12,13 +12,12 @@ Today the SkyRL-Train backend exposed via the Tinker API is single-tenant: a sec
 
 The driver for changing this is Trajectory AI, who want to run Tinker workloads on their own hardware and need many tenants on a shared training pool. There is no Megatron multi-tenant SFT/RL framework today; only Prime-RL has first-class multi-tenancy and only on FSDP/CP/EP. A Megatron-backed solution is therefore both a user-requested feature and a meaningful differentiator.
 
-## v1 scope
+## Scope
 
-- **Training only**, exercised via the `tinker-cookbook` `sl_loop` SFT recipe.
-- One base model, multiple LoRA adapters.
-- Fixed `(rank, alpha, target_modules)` across all adapters. Mismatched configs on a second `create_model` are hard-rejected with a clear `ValueError`.
-- `sample()` and `save_sampler_checkpoint()` raise if more than one adapter is registered. Per-adapter sampling and per-adapter vLLM weight sync are explicitly deferred.
+- **Training and per-adapter sampling** on a single Tinker server, exercised via the `tinker-cookbook` `sl_loop` (SFT) and `rl_loop` (RL) recipes.
+- One base model, multiple LoRA adapters with fixed `(rank, alpha, target_modules)` across all adapters. Mismatched configs on a second `create_model` are hard-rejected with a clear `ValueError`.
 - The FFT (no-LoRA) path stays single-tenant — the relaxation is gated behind `lora_config.rank > 0`.
+- The RL path requires `merge_lora=False` on Megatron so vLLM serves the adapter (not pre-merged weights) and supports multiple LoRA adapters concurrently. PR #1579 contributes the inference-side scaffolding (`load_lora_adapter` / `unload_lora_adapter`, `max_loras`, `max_cpu_loras`, mandatory `model` per data-plane call); this design plumbs the Tinker `model_id` through end-to-end so each tenant's adapter is registered and addressed by its own name on vLLM.
 
 ## Strategy
 
@@ -121,10 +120,45 @@ Snapshotting `grad_data` into the slot on every swap fixes this. After A's fwd_b
 - Existing `tests/tinker/test_api.py` continues to pass (single-tenant path unchanged).
 - End-to-end smoke (manual): launch the Tinker server with `trainer.strategy=megatron`, run two `tinker_cookbook.recipes.sl_loop` clients with distinct `model_id`s in parallel against `base_url=http://localhost:8000`, verify both converge on their respective tasks and GPU memory stays bounded.
 
-## Out of scope (explicit non-goals for v1)
+## Per-adapter sampling and weight sync (RL path)
 
-- Per-adapter `sample()` / vLLM weight sync — `sample` raises if more than one adapter is registered.
+For RL, sampling has to be per-adapter: each tenant runs `forward_backward → optim_step → save_weights_for_sampler → sample` on its own model_id, and vLLM has to know which weights to use for which call.
+
+The plumbing is straightforward once the SFT scaffolding is in place:
+
+- **Adapter name = Tinker model_id.** The Tinker `model_id` is forwarded as the vLLM adapter name end-to-end. There is no separate naming layer.
+- **Per-tenant `lora_sync_path`.** When `model_id` is set, the worker writes its adapter into `os.path.join(cfg.trainer.policy.model.lora.lora_sync_path, model_id)/` so concurrent saves from different tenants don't collide. Single-tenant calls (`model_id=None`, the FFT path or pre-Tinker callers) keep the legacy shared path.
+- **`save_sampler_checkpoint(model_id)`** swaps the requested adapter live (via `WorkerDispatch.ensure_active_adapter`), then broadcasts to vLLM. The worker calls `RemoteInferenceClient.load_lora_adapter(model_id, lora_sync_path/model_id, load_inplace=True)` so re-syncs of the same adapter overwrite vLLM's slot in place (no fresh int id, no eviction churn).
+- **`sample(prepared_batch)`** now resolves the data-plane `model` per request from `prepared_batch.all_model_ids[i]` when LoRA is active, falling back to `resolve_policy_model_name(cfg)` only on the FFT / single-tenant path. The previous "raise if >1 adapter" guards are gone.
+
+### vLLM capacity contract
+
+vLLM exposes two LoRA capacity knobs:
+
+- `max_loras` — concurrent adapters in a single GPU batch.
+- `max_cpu_loras` — total LoRA capacity in vLLM's CPU LRU cache (defaults to `max_loras` when unset).
+
+Both are config fields on `SkyRLLoraConfig` (`config.py`, surfaced in `ppo_base_config.yaml`). For multi-tenant RL, `max_cpu_loras` MUST be set to at least the expected number of concurrent registered adapters; otherwise vLLM will silently evict an adapter from its CPU cache and the next `sample()` against that adapter will 404. The Tinker server doesn't auto-size this — operators set it explicitly when they expect N tenants. Detecting and reloading-from-disk on 404 is a future improvement.
+
+### Concurrency between training and sampling
+
+With `colocate_all=True`, vLLM is asleep during training and woken in `save_weights_for_sampler` for the broadcast + KV-cache wake. With multi-tenant RL the engine queue's destructive-barrier scheduling (`engine.py`) keeps each model_id's `forward_backward / optim_step / save_weights_for_sampler / sample` chain coherent. For non-colocated mode the same applies — `pause_generation / resume_generation` brackets the broadcast, and per-adapter sample requests fan out independently.
+
+## PR #1579 (foundation)
+
+The RL multi-tenancy work sits on top of [NovaSky-AI/SkyRL#1579](https://github.com/NovaSky-AI/SkyRL/pull/1579) (`hao-aaron:multi-lora`), which provides:
+
+- `RemoteInferenceClient.load_lora_adapter(name, path, load_inplace)` and `unload_lora_adapter(name)`.
+- `SKYRL_LORA_ADAPTER_NAME` constant + `resolve_policy_model_name(cfg)` for the single-tenant fallback.
+- Mandatory `model` field on every data-plane call (`generate / sample / chat_completion / completion / render_chat_completion`).
+- `max_loras` + `max_cpu_loras` config knobs plumbed through to vLLM CLI args.
+
+Our `multi_lora_rl` branch is based on PR #1579's HEAD with our SFT AdapterStore commits cherry-picked on top.
+
+## Out of scope (explicit non-goals)
+
 - Adapter-only checkpoint export — `save_checkpoint` still saves the whole base+LoRA state per swap.
 - Variable rank / alpha / target_modules across adapters.
 - Critic role multi-tenancy — Megatron critic is `NotImplementedError` today; no change.
 - `HybridDeviceOptimizer` path — TODO comment only.
+- Auto-reload of LoRA adapters evicted from vLLM's CPU LRU cache; for now `max_cpu_loras` must be set ≥ expected concurrent adapters.
