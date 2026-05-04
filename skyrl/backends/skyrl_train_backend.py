@@ -415,12 +415,14 @@ class SkyRLTrainBackend(AbstractBackend):
         self._inference_engines_initialized = True
 
     def _lora_signature_from(self, lora_config: types.LoraConfig) -> tuple:
-        targets = lora_config.target_modules
-        if isinstance(targets, str):
-            targets_tuple: tuple = (targets,)
-        else:
-            targets_tuple = tuple(targets)
-        return (int(lora_config.rank), int(lora_config.alpha), targets_tuple)
+        # Tinker's public LoraConfig only exposes rank + alpha (plus
+        # seed/train_attn/train_mlp/train_unembed, which the SkyRL Megatron
+        # path doesn't honor — target_modules is fixed server-side via
+        # cfg.trainer.policy.model.lora.target_modules). Equality across
+        # adapters therefore reduces to (rank, alpha); the worker-side
+        # AdapterStore additionally verifies parallel-state equality via
+        # its own LoraSignature.
+        return (int(lora_config.rank), int(lora_config.alpha))
 
     def create_model(self, model_id: str, lora_config: types.LoraConfig, model_role: str = "policy") -> None:
         if model_id in self._model_ids_to_role:
@@ -448,10 +450,10 @@ class SkyRLTrainBackend(AbstractBackend):
             if new_signature != self._base_lora_signature:
                 raise ValueError(
                     f"LoRA signature mismatch for model '{model_id}': "
-                    f"got (rank, alpha, target_modules)={new_signature}, "
+                    f"got (rank, alpha)={new_signature}, "
                     f"first adapter registered with {self._base_lora_signature}. "
-                    "Multi-LoRA requires identical (rank, alpha, target_modules) "
-                    "across all adapters in v1."
+                    "Multi-LoRA requires identical (rank, alpha) across all "
+                    "adapters in v1; target_modules is fixed server-side."
                 )
             self._dispatch.register_adapter("policy", model_id)
             self._model_ids_to_role[model_id] = model_role
