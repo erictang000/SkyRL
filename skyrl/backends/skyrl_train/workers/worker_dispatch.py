@@ -74,6 +74,63 @@ class WorkerDispatch:
         self._actor_groups[model] = actor_group
         self._gpu_state[model] = GPUState()
 
+    # ------------------------------------------------------------------
+    # Multi-LoRA: per-model adapter swap orchestration.
+    # ------------------------------------------------------------------
+
+    def ensure_active_adapter(self, role: str, model_id: Optional[str]) -> None:
+        """Make ``model_id`` the live LoRA adapter for ``role`` workers.
+
+        No-op when ``model_id is None`` (single-tenant / FFT path) or when
+        the workers don't have an AdapterStore (non-LoRA strategies).
+
+        Must be called *after* ``_ensure_on_gpu(role, ...)`` so the model
+        and optimizer storages are live before we tensor.copy_() into them.
+        """
+        if model_id is None or role not in self._actor_groups:
+            return
+        ray.get(
+            self._actor_groups[role].async_run_ray_method(
+                "pass_through", "swap_to_adapter", model_id
+            )
+        )
+
+    def prime_adapter_store(self, role: str, model_id: str) -> None:
+        """One-shot bootstrap on first create_model: prime the optimizer
+        state, register the pristine slot, and register the first adapter.
+
+        The model + optimizer must be on GPU when this is called (the
+        controller calls this immediately after _build_policy and before
+        any colocate_all offload).
+        """
+        if role not in self._actor_groups:
+            return
+        group = self._actor_groups[role]
+        ray.get(group.async_run_ray_method("pass_through", "prime_optimizer_state"))
+        ray.get(group.async_run_ray_method("pass_through", "register_pristine_adapter"))
+        ray.get(group.async_run_ray_method("pass_through", "register_adapter", model_id))
+
+    def register_adapter(self, role: str, model_id: str) -> None:
+        """Register a new adapter slot on every worker (subsequent
+        create_model). Pristine must already exist.
+        """
+        if role not in self._actor_groups:
+            return
+        ray.get(
+            self._actor_groups[role].async_run_ray_method(
+                "pass_through", "register_adapter", model_id
+            )
+        )
+
+    def delete_adapter(self, role: str, model_id: str) -> None:
+        if role not in self._actor_groups:
+            return
+        ray.get(
+            self._actor_groups[role].async_run_ray_method(
+                "pass_through", "delete_adapter", model_id
+            )
+        )
+
     def get_lcm_dp_size(self) -> int:
         """Get LCM of all models' dp_size."""
         import math
@@ -162,9 +219,12 @@ class WorkerDispatch:
             return
         self._gpu_state[model] = GPUState()
 
-    def forward(self, model: str, data: TrainingInputBatch) -> TrainingOutputBatch:
+    def forward(
+        self, model: str, data: TrainingInputBatch, model_id: Optional[str] = None
+    ) -> TrainingOutputBatch:
         """Run inference forward pass. Only loads model (not optimizer)."""
         self._ensure_on_gpu(model, need_optimizer=False, need_model=True)
+        self.ensure_active_adapter(model, model_id)
 
         refs = self._actor_groups[model].async_run_ray_method("mesh", "forward", data=data)
         results = ray.get(refs)
@@ -201,6 +261,7 @@ class WorkerDispatch:
         data: TrainingInputBatch,
         loss_fn: Optional[str] = None,
         loss_fn_config: Optional[Dict[str, Any]] = None,
+        model_id: Optional[str] = None,
     ) -> Dict[str, float]:
         """Run forward/backward pass. Needs model + optimizer.
 
@@ -212,11 +273,14 @@ class WorkerDispatch:
                      normalized before dispatch.
             loss_fn_config: Optional config overrides for the loss function
                            (e.g., {"eps_clip_low": 0.1} for the regular PPO loss)
+            model_id: Optional Tinker model_id; when set, the corresponding
+                     LoRA adapter is swapped in before the forward/backward.
 
         Returns:
             Dictionary of training metrics
         """
         self._ensure_on_gpu(model, need_optimizer=True, need_model=True)
+        self.ensure_active_adapter(model, model_id)
 
         # Only pass kwargs that are not None (critic worker doesn't accept loss_fn)
         kwargs = {}
@@ -249,6 +313,7 @@ class WorkerDispatch:
         chunk_refs: List[ObjectRef],
         loss_fn: Optional[str] = None,
         loss_fn_config: Optional[Dict[str, Any]] = None,
+        model_id: Optional[str] = None,
     ) -> Dict[str, float]:
         """
         Run forward/backward pass using pre-staged per-DP chunks.
@@ -264,6 +329,7 @@ class WorkerDispatch:
             Aggregated metrics dict from training
         """
         self._ensure_on_gpu(model, need_optimizer=True, need_model=True)
+        self.ensure_active_adapter(model, model_id)
 
         # Only pass kwargs that are not None (critic worker doesn't accept loss_fn)
         kwargs = {}
@@ -283,21 +349,28 @@ class WorkerDispatch:
         self._save_memory_snapshot(model, "forward_backward")
         return statuses[0]
 
-    def optim_step(self, model: str) -> Optional[float]:
-        """Run optimizer step. Model should already be on GPU from forward_backward."""
+    def optim_step(self, model: str, model_id: Optional[str] = None) -> Optional[float]:
+        """Run optimizer step. Model should already be on GPU from forward_backward.
+
+        ``model_id`` is honored for safety (the previous forward_backward
+        already swapped the right adapter in, but a stale call ordering
+        would otherwise step on the wrong adapter's optimizer state).
+        """
+        self.ensure_active_adapter(model, model_id)
         refs = self._actor_groups[model].async_run_ray_method("pass_through", "optim_step")
         grad_norms = ray.get(refs)
 
         self._save_memory_snapshot(model, "optim_step")
         return grad_norms[0]
 
-    def set_lr(self, model: str, learning_rate: float) -> None:
+    def set_lr(self, model: str, learning_rate: float, model_id: Optional[str] = None) -> None:
         """Set learning rate for model's optimizer.
 
         This directly updates the optimizer's param_groups on all workers,
         bypassing the scheduler. Useful for external learning rate schedules.
         """
         self._ensure_on_gpu(model, need_optimizer=True, need_model=False)
+        self.ensure_active_adapter(model, model_id)
         ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "set_lr", learning_rate=learning_rate))
 
     def set_algorithm_config(self, model: str, **kwargs) -> None:
@@ -311,9 +384,12 @@ class WorkerDispatch:
             self._actor_groups[model].async_run_ray_method("pass_through", "save_memory_snapshot", tag=f"{model}_{tag}")
         )
 
-    def save_checkpoint(self, model: str, ckpt_dir: str, tokenizer=None) -> None:
+    def save_checkpoint(
+        self, model: str, ckpt_dir: str, tokenizer=None, model_id: Optional[str] = None
+    ) -> None:
         """Save checkpoint for model."""
         self._ensure_on_gpu(model, need_optimizer=True, need_model=True)
+        self.ensure_active_adapter(model, model_id)
 
         ray.get(
             self._actor_groups[model].async_run_ray_method(
@@ -327,9 +403,11 @@ class WorkerDispatch:
         ckpt_dir: str,
         load_optimizer_states: bool = True,
         load_lr_scheduler_states: bool = True,
+        model_id: Optional[str] = None,
     ) -> None:
         """Load checkpoint for model."""
         self._ensure_on_gpu(model, need_optimizer=load_optimizer_states, need_model=True)
+        self.ensure_active_adapter(model, model_id)
 
         ray.get(
             self._actor_groups[model].async_run_ray_method(
