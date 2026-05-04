@@ -179,9 +179,7 @@ class AdapterStore:
                 for main_param in group:
                     main_g.append(_new_pinned_like(main_param))
                     state = _opt.optimizer.state.get(main_param, {})
-                    state_g.append(
-                        {k: _new_pinned_like(v) for k, v in state.items() if isinstance(v, torch.Tensor)}
-                    )
+                    state_g.append({k: _new_pinned_like(v) for k, v in state.items() if isinstance(v, torch.Tensor)})
                 opt_main.append(main_g)
                 opt_state.append(state_g)
             slot.cpu_main_param.append(opt_main)

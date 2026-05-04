@@ -18,11 +18,11 @@ In one terminal:
 ```bash
 cd /path/to/SkyRL
 
-uv run --extra tinker --extra skyrl_train -m skyrl.tinker.api \
+uv run --extra tinker --extra megatron -m skyrl.tinker.api \
     --host 0.0.0.0 \
     --port 8000 \
     --base-model Qwen/Qwen3-0.6B \
-    --backend skyrl_train \
+    --backend megatron \
     --backend-config '{
         "strategy": "megatron",
         "trainer.placement.policy_num_gpus_per_node": 1,

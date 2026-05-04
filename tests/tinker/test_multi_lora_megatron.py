@@ -36,9 +36,7 @@ try:  # pragma: no cover - import guard
 except Exception:
     cuda_available = False
 
-pytestmark = pytest.mark.skipif(
-    not cuda_available, reason="multi-LoRA Megatron tests require at least one CUDA GPU"
-)
+pytestmark = pytest.mark.skipif(not cuda_available, reason="multi-LoRA Megatron tests require at least one CUDA GPU")
 
 tinker = pytest.importorskip("tinker")
 from tinker import types as tinker_types  # noqa: E402
@@ -113,8 +111,8 @@ def _api_server(port: int, backend_config: dict | None = None):
 
 
 def _server_is_up(port: int) -> bool:
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         urllib.request.urlopen(f"http://0.0.0.0:{port}/api/v1/server_capabilities", timeout=2).read()
@@ -213,9 +211,7 @@ def test_delete_then_train_remaining(service_client):
         async with tinker._client.AsyncTinker(  # type: ignore[attr-defined]
             api_key=TINKER_API_KEY, base_url=f"http://0.0.0.0:{TEST_PORT}/"
         ) as client:
-            future = await client.models.unload(
-                request=tinker_types.UnloadModelRequest(model_id=model_id)
-            )
+            future = await client.models.unload(request=tinker_types.UnloadModelRequest(model_id=model_id))
             while True:
                 result = await client.futures.retrieve(
                     request=tinker_types.FutureRetrieveRequest(request_id=future.request_id)

@@ -89,11 +89,7 @@ class WorkerDispatch:
         """
         if model_id is None or role not in self._actor_groups:
             return
-        ray.get(
-            self._actor_groups[role].async_run_ray_method(
-                "pass_through", "swap_to_adapter", model_id
-            )
-        )
+        ray.get(self._actor_groups[role].async_run_ray_method("pass_through", "swap_to_adapter", model_id))
 
     def prime_adapter_store(self, role: str, model_id: str) -> None:
         """One-shot bootstrap on first create_model: prime the optimizer
@@ -116,20 +112,12 @@ class WorkerDispatch:
         """
         if role not in self._actor_groups:
             return
-        ray.get(
-            self._actor_groups[role].async_run_ray_method(
-                "pass_through", "register_adapter", model_id
-            )
-        )
+        ray.get(self._actor_groups[role].async_run_ray_method("pass_through", "register_adapter", model_id))
 
     def delete_adapter(self, role: str, model_id: str) -> None:
         if role not in self._actor_groups:
             return
-        ray.get(
-            self._actor_groups[role].async_run_ray_method(
-                "pass_through", "delete_adapter", model_id
-            )
-        )
+        ray.get(self._actor_groups[role].async_run_ray_method("pass_through", "delete_adapter", model_id))
 
     def get_lcm_dp_size(self) -> int:
         """Get LCM of all models' dp_size."""
@@ -219,9 +207,7 @@ class WorkerDispatch:
             return
         self._gpu_state[model] = GPUState()
 
-    def forward(
-        self, model: str, data: TrainingInputBatch, model_id: Optional[str] = None
-    ) -> TrainingOutputBatch:
+    def forward(self, model: str, data: TrainingInputBatch, model_id: Optional[str] = None) -> TrainingOutputBatch:
         """Run inference forward pass. Only loads model (not optimizer)."""
         self._ensure_on_gpu(model, need_optimizer=False, need_model=True)
         self.ensure_active_adapter(model, model_id)
@@ -384,9 +370,7 @@ class WorkerDispatch:
             self._actor_groups[model].async_run_ray_method("pass_through", "save_memory_snapshot", tag=f"{model}_{tag}")
         )
 
-    def save_checkpoint(
-        self, model: str, ckpt_dir: str, tokenizer=None, model_id: Optional[str] = None
-    ) -> None:
+    def save_checkpoint(self, model: str, ckpt_dir: str, tokenizer=None, model_id: Optional[str] = None) -> None:
         """Save checkpoint for model."""
         self._ensure_on_gpu(model, need_optimizer=True, need_model=True)
         self.ensure_active_adapter(model, model_id)
