@@ -938,18 +938,6 @@ class SkyRLTrainBackend(AbstractBackend):
         # 1. Ensure inference engines are initialized
         self._ensure_inference_engines()
 
-        # v1 multi-LoRA: sample() is single-tenant. The inference engine path
-        # is not yet adapter-aware, so refuse if more than one adapter exists.
-        if self._base_lora_signature is not None and len(self._model_ids_to_role) > 1:
-            error = types.ErrorResponse(
-                error=(
-                    "sample() is not supported with multiple LoRA adapters in v1. "
-                    "Delete other adapters before sampling."
-                ),
-                status="error",
-            )
-            return {req_id: error for req_id, _, _, _, _ in prepared_batch.request_batch_slices}
-
         # 2. Validate single model
         unique_models = set(prepared_batch.all_model_ids)
         if len(unique_models) != 1:
@@ -1018,12 +1006,15 @@ class SkyRLTrainBackend(AbstractBackend):
     ) -> dict[str, types.SampleOutput | types.ErrorResponse]:
         """Sample using RemoteInferenceClient, forwarding model input chunks directly."""
 
-        # Every sample() body must explicitly identify the target model/LoRA
-        # adapter — the client does not fall back to any default. Resolve
-        # what name the inference engine knows the policy by from config
-        # (LoRA adapter when LoRA weights are sync'd as an adapter, base
-        # model otherwise).
-        model_name = resolve_policy_model_name(self._cfg)
+        # Resolve the inference-engine model name per request. With multi-LoRA
+        # the adapter name on vLLM IS the Tinker model_id (registered by
+        # save_sampler_checkpoint via load_lora_adapter). Single-tenant /
+        # FFT path falls back to resolve_policy_model_name(cfg).
+        fallback_model_name = resolve_policy_model_name(self._cfg)
+        per_request_models = [
+            mid if (self._base_lora_signature is not None and mid in self._model_ids_to_role) else fallback_model_name
+            for mid in prepared_batch.all_model_ids
+        ]
 
         async def sample_all():
             tasks = []
@@ -1033,7 +1024,7 @@ class SkyRLTrainBackend(AbstractBackend):
 
                 request_payload = {
                     "json": {
-                        "model": model_name,
+                        "model": per_request_models[i],
                         "prompt": model_input.model_dump(),
                         "num_samples": 1,
                         "sampling_params": sampling_params.model_dump(),
@@ -1189,16 +1180,15 @@ class SkyRLTrainBackend(AbstractBackend):
         self._validate_model_state(model_id)
         if self._get_role(model_id) != "policy":
             raise ValueError("save_sampler_checkpoint is only supported for policy models")
-        if self._base_lora_signature is not None and len(self._model_ids_to_role) > 1:
-            raise ValueError(
-                "save_sampler_checkpoint is not supported with multiple LoRA adapters in v1. "
-                "Delete other adapters before pushing weights to the inference engine."
-            )
 
         # Lazily create inference engines on first sampling-related call
         self._ensure_inference_engines()
 
-        asyncio.run(self._dispatch.save_weights_for_sampler())
+        # Multi-LoRA: pass model_id so the dispatch swaps the right adapter in
+        # before broadcasting and the worker registers it on vLLM under that
+        # name. None for the FFT / single-tenant path uses legacy behavior.
+        sync_id = model_id if self._base_lora_signature is not None else None
+        asyncio.run(self._dispatch.save_weights_for_sampler(model_id=sync_id))
         logger.info(f"Synced weights for {model_id} to inference engines via NCCL")
 
         if persist:

@@ -1,5 +1,6 @@
 import io
-from typing import TYPE_CHECKING
+import os
+from typing import TYPE_CHECKING, Optional
 
 import ray
 import torch
@@ -240,10 +241,15 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
             weight_prefix=weight_prefix,
         )
 
-    async def _save_lora_adapters_and_sync(self, peft_model, lora_sync_path, inference_engine_client):
+    async def _save_lora_adapters_and_sync(
+        self,
+        peft_model,
+        lora_sync_path,
+        inference_engine_client,
+        lora_name: str = SKYRL_LORA_ADAPTER_NAME,
+    ):
         """Collect LoRA parameters, save and call inference engine to load."""
         import json
-        import os
         from dataclasses import asdict
 
         from safetensors.torch import save_file
@@ -274,7 +280,7 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
 
             if isinstance(inference_engine_client, RemoteInferenceClient):
                 await inference_engine_client.load_lora_adapter(
-                    SKYRL_LORA_ADAPTER_NAME, lora_sync_path, load_inplace=True
+                    lora_name, lora_sync_path, load_inplace=True
                 )
             else:
                 lora_request = LoraLoadRequest(lora_path=lora_sync_path)
@@ -282,7 +288,12 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
 
         torch.distributed.barrier()
 
-    async def broadcast_to_inference_engines(self, inference_engine_client, inference_engine_cfg):
+    async def broadcast_to_inference_engines(
+        self,
+        inference_engine_client,
+        inference_engine_cfg,
+        model_id: Optional[str] = None,
+    ):
         use_prefix_cache = inference_engine_cfg.enable_prefix_caching
         generator_dtype = str_to_torch_dtype(inference_engine_cfg.model_dtype)
         cache_reset_task = None
@@ -298,9 +309,16 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
         if self._is_lora:
             assert hasattr(peft_model, "peft_config"), "LoRA model should have peft_config"
 
-            # assume base model is already synced, sync LoRA adapters
-            lora_sync_path = self.cfg.policy.model.lora.lora_sync_path
-            await self._save_lora_adapters_and_sync(peft_model, lora_sync_path, inference_engine_client)
+            # Multi-tenant: per-adapter subdir + per-adapter vLLM name. Single
+            # tenant (model_id=None) keeps the legacy single-path behavior.
+            base_sync_path = self.cfg.policy.model.lora.lora_sync_path
+            lora_name = model_id if model_id is not None else SKYRL_LORA_ADAPTER_NAME
+            lora_sync_path = (
+                os.path.join(base_sync_path, model_id) if model_id is not None else base_sync_path
+            )
+            await self._save_lora_adapters_and_sync(
+                peft_model, lora_sync_path, inference_engine_client, lora_name=lora_name
+            )
         else:
             # Extract and send weights using the sender created at init time
             weight_iterator = self.weight_extractor.extract_weights(generator_dtype)

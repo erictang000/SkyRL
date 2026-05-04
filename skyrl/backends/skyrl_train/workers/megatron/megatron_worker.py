@@ -840,7 +840,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             training_dtype=torch.bfloat16 if self.cfg.bf16 else torch.float32,
         )
 
-    async def _save_lora_adapters_and_sync(self, lora_sync_path, inference_engine_client):
+    async def _save_lora_adapters_and_sync(
+        self, lora_sync_path, inference_engine_client, lora_name: str = SKYRL_LORA_ADAPTER_NAME
+    ):
         """Export LoRA adapter weights via Megatron-Bridge and tell the inference engine to load them.
 
         All ranks participate in the collective export (TP/PP/EP gathering is
@@ -884,7 +886,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
             if isinstance(inference_engine_client, RemoteInferenceClient):
                 await inference_engine_client.load_lora_adapter(
-                    SKYRL_LORA_ADAPTER_NAME, lora_sync_path, load_inplace=True
+                    lora_name, lora_sync_path, load_inplace=True
                 )
             else:
                 lora_request = LoraLoadRequest(lora_path=lora_sync_path)
@@ -893,7 +895,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         torch.distributed.barrier()
 
     async def broadcast_to_inference_engines(
-        self, inference_engine_client: "InferenceEngineInterface", inference_engine_cfg: "InferenceEngineConfig"
+        self,
+        inference_engine_client: "InferenceEngineInterface",
+        inference_engine_cfg: "InferenceEngineConfig",
+        model_id: Optional[str] = None,
     ):
         use_prefix_cache = inference_engine_cfg.enable_prefix_caching
         generator_dtype = str_to_torch_dtype(inference_engine_cfg.model_dtype)
@@ -905,8 +910,19 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         torch.cuda.empty_cache()
 
         if self._is_lora and not self.cfg.policy.megatron_config.lora_config.merge_lora:
-            lora_sync_path = self.cfg.policy.model.lora.lora_sync_path
-            await self._save_lora_adapters_and_sync(lora_sync_path, inference_engine_client)
+            # Multi-tenant: each adapter syncs into its own subdir of
+            # lora_sync_path and registers under its own name on vLLM. The
+            # `model_id` arg is the Tinker-provided name for the adapter
+            # currently swapped in (set up by AdapterStore.swap_to before
+            # this call). Single-tenant FSDP/Megatron pre-multi-LoRA still
+            # works: model_id is None, we fall back to the legacy single
+            # adapter name + shared path.
+            base_sync_path = self.cfg.policy.model.lora.lora_sync_path
+            lora_name = model_id if model_id is not None else SKYRL_LORA_ADAPTER_NAME
+            lora_sync_path = (
+                os.path.join(base_sync_path, model_id) if model_id is not None else base_sync_path
+            )
+            await self._save_lora_adapters_and_sync(lora_sync_path, inference_engine_client, lora_name=lora_name)
         else:
             # Extract and send weights using the sender created at init time
             weight_metadata = self.weight_extractor.get_weight_metadata(generator_dtype)
