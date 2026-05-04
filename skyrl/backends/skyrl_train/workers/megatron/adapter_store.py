@@ -112,6 +112,10 @@ class AdapterSlot:
     Layout:
       cpu_param_data[mc_idx] -> list[Tensor], one per buffer in
           (mc.buffers + mc.expert_parallel_buffers).
+      cpu_grad_data[mc_idx]  -> same shape as cpu_param_data; mirrors
+          buffer.grad_data so that grads accumulated by an interrupted
+          forward_backward aren't lost when another tenant runs in the
+          gap before this adapter's optim_step.
       cpu_main_param[opt_idx][g] -> list[Tensor], shapes matching
           opt.shard_fp32_from_float16_groups[g].
       cpu_opt_state[opt_idx][g][i] -> dict[str, Tensor], mirroring
@@ -120,6 +124,7 @@ class AdapterSlot:
     """
 
     cpu_param_data: List[List[torch.Tensor]] = field(default_factory=list)
+    cpu_grad_data: List[List[torch.Tensor]] = field(default_factory=list)
     cpu_main_param: List[List[List[torch.Tensor]]] = field(default_factory=list)
     cpu_opt_state: List[List[List[dict]]] = field(default_factory=list)
     step_count: int = 0
@@ -163,11 +168,16 @@ class AdapterStore:
 
     def _allocate_empty_slot(self, model_chunks, optimizer) -> AdapterSlot:
         slot = AdapterSlot()
-        # Param data: one pinned bf16 tensor per (mc, buffer).
+        # Param data + grad data: one pinned bf16 tensor each per (mc, buffer).
+        # Grads must travel with the slot — otherwise an interleaved tenant's
+        # forward_backward will clobber unconsumed grads via zero_grad_buffer
+        # at the top of forward_backward. See docs/.../multi_lora_design.mdx.
         for mc_idx, _buf_idx, buf in _iter_buffers(model_chunks):
             while len(slot.cpu_param_data) <= mc_idx:
                 slot.cpu_param_data.append([])
+                slot.cpu_grad_data.append([])
             slot.cpu_param_data[mc_idx].append(_new_pinned_like(buf.param_data))
+            slot.cpu_grad_data[mc_idx].append(_new_pinned_like(buf.grad_data))
         # Main params + optimizer state: per (opt_idx, group, param_idx).
         for _opt in _iter_opts(optimizer):
             opt_main: List[List[torch.Tensor]] = []
@@ -191,6 +201,7 @@ class AdapterStore:
         """Copy live GPU state into `slot` (CPU)."""
         for mc_idx, buf_idx, buf in _iter_buffers(model_chunks):
             slot.cpu_param_data[mc_idx][buf_idx].copy_(buf.param_data, non_blocking=True)
+            slot.cpu_grad_data[mc_idx][buf_idx].copy_(buf.grad_data, non_blocking=True)
         for opt_idx, _opt in enumerate(_iter_opts(optimizer)):
             groups = getattr(_opt, "shard_fp32_from_float16_groups", None) or []
             for g, group in enumerate(groups):
@@ -207,6 +218,7 @@ class AdapterStore:
         """Copy `slot` (CPU) into live GPU state."""
         for mc_idx, buf_idx, buf in _iter_buffers(model_chunks):
             buf.param_data.copy_(slot.cpu_param_data[mc_idx][buf_idx], non_blocking=True)
+            buf.grad_data.copy_(slot.cpu_grad_data[mc_idx][buf_idx], non_blocking=True)
         for opt_idx, _opt in enumerate(_iter_opts(optimizer)):
             groups = getattr(_opt, "shard_fp32_from_float16_groups", None) or []
             for g, group in enumerate(groups):
@@ -275,6 +287,9 @@ class AdapterStore:
         for mc_idx, mc_buffers in enumerate(src.cpu_param_data):
             for buf_idx, t in enumerate(mc_buffers):
                 dst.cpu_param_data[mc_idx][buf_idx].copy_(t)
+        for mc_idx, mc_grads in enumerate(src.cpu_grad_data):
+            for buf_idx, t in enumerate(mc_grads):
+                dst.cpu_grad_data[mc_idx][buf_idx].copy_(t)
         for opt_idx, opt_groups in enumerate(src.cpu_main_param):
             for g, group in enumerate(opt_groups):
                 for i, t in enumerate(group):
