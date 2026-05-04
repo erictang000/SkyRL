@@ -431,88 +431,6 @@ class WorkerDispatch:
         self._gpu_state[model].model_on_gpu = True
         self._gpu_state[model].optimizer_on_gpu = model != "ref"  # ref has no optimizer
 
-    def init_weight_sync_state(self, inference_engine_client) -> None:
-        """Initialize weight sync state for policy model."""
-        ray.get(
-            self._actor_groups["policy"].async_run_ray_method(
-                "pass_through",
-                "init_weight_sync_state",
-                inference_engine_client,
-                self.cfg.generator.inference_engine,
-            )
-        )
-
-    def broadcast_to_inference_engines(
-        self, inference_engine_client, model_id: Optional[str] = None
-    ) -> None:
-        """Broadcast policy weights to inference engines.
-
-        ``model_id`` is forwarded to the worker so that, on the LoRA path, the
-        adapter is saved into a per-tenant subdir of ``lora_sync_path`` and
-        registered on vLLM under that name. None preserves single-tenant
-        behavior (the legacy ``SKYRL_LORA_ADAPTER_NAME`` path).
-        """
-        ray.get(
-            self._actor_groups["policy"].async_run_ray_method(
-                "pass_through",
-                "broadcast_to_inference_engines",
-                inference_engine_client,
-                self.cfg.generator.inference_engine,
-                model_id=model_id,
-            )
-        )
-
-    def prepare_for_weight_sync(self) -> None:
-        """Prepare for weight sync: ensure policy model is on GPU, offload optimizer."""
-        if not self.colocate_all:
-            return
-        # Ensure policy model is on GPU (will offload others in colocation group)
-        self._ensure_on_gpu("policy", need_optimizer=False, need_model=True)
-        # Offload optimizer if it's on GPU
-        if self._gpu_state["policy"].optimizer_on_gpu:
-            self._offload("policy", offload_optimizer=True, offload_model=False)
-
-    def finish_weight_sync(self) -> None:
-        """Finish weight sync: offload model weights and optimizer state."""
-        if not self.colocate_all:
-            return
-        self._offload("policy", offload_optimizer=True, offload_model=True)
-
-    async def save_weights_for_sampler(self, model_id: Optional[str] = None) -> None:
-        """
-        Tinker API method to prepare updated parameters for sampling.
-
-        Syncs weights to inference engine for sampling. When ``model_id`` is
-        provided we ensure the corresponding LoRA adapter is the live one
-        before broadcasting, and tell the worker to register the adapter on
-        vLLM under ``model_id``.
-        """
-        if self._inference_engine_client is None:
-            raise RuntimeError(
-                "Cannot save_weights_for_sampler: no inference_engine_client configured. "
-                "Pass inference_engine_client to WorkerDispatch constructor or call set_inference_engine_client()."
-            )
-
-        # Sync weights to inference engine
-        self.prepare_for_weight_sync()
-        # Make the requested adapter live on every worker before broadcasting
-        # — otherwise we'd export some other tenant's LoRA weights to vLLM.
-        self.ensure_active_adapter("policy", model_id)
-        if self.colocate_all:
-            await self._inference_engine_client.wake_up(tags=["weights"])
-            self.broadcast_to_inference_engines(self._inference_engine_client, model_id=model_id)
-            self.finish_weight_sync()
-            await self._inference_engine_client.wake_up(tags=["kv_cache"])
-        else:
-            # Non-colocated: pause generation to prevent in-flight requests from
-            # reading partially-updated weights during the NCCL broadcast.
-            await self._inference_engine_client.pause_generation()
-            try:
-                self.broadcast_to_inference_engines(self._inference_engine_client, model_id=model_id)
-                self.finish_weight_sync()
-            finally:
-                await self._inference_engine_client.resume_generation()
-
     def set_inference_engine_client(self, inference_engine_client: InferenceEngineClient) -> None:
         """Set the inference engine client for weight sync.
 
@@ -537,3 +455,89 @@ class WorkerDispatch:
             node_ids = ray.get(group.async_run_ray_method("pass_through", "get_ray_node_id"))
             all_node_ids.extend(node_ids)
         return list(set(all_node_ids))
+
+    # ----------------------------------
+    # Weight sync methods
+    # ----------------------------------
+
+    def init_weight_sync_state(self, inference_engine_client) -> None:
+        """Initialize weight sync state for policy model."""
+        ray.get(
+            self._actor_groups["policy"].async_run_ray_method(
+                "pass_through",
+                "init_weight_sync_state",
+                inference_engine_client,
+                self.cfg.generator.inference_engine,
+            )
+        )
+
+    def _broadcast_to_inference_engines(
+        self, inference_engine_client, model_id: Optional[str] = None
+    ) -> None:
+        """Broadcast policy weights to inference engines. Helper for save_weights_for_sampler.
+
+        ``model_id`` is forwarded to the worker so that, on the LoRA path, the
+        adapter is saved into a per-tenant subdir of ``lora_sync_path`` and
+        registered on vLLM under that name. None preserves single-tenant
+        behavior (the legacy ``SKYRL_LORA_ADAPTER_NAME`` path).
+        """
+        ray.get(
+            self._actor_groups["policy"].async_run_ray_method(
+                "pass_through",
+                "broadcast_to_inference_engines",
+                inference_engine_client,
+                self.cfg.generator.inference_engine,
+                model_id=model_id,
+            )
+        )
+
+    def _prepare_for_weight_sync(self) -> None:
+        """Prepare for weight sync: ensure policy model is on GPU, offload optimizer. Helper for save_weights_for_sampler."""
+        if not self.colocate_all:
+            return
+        # Ensure policy model is on GPU (will offload others in colocation group)
+        self._ensure_on_gpu("policy", need_optimizer=False, need_model=True)
+        # Offload optimizer if it's on GPU
+        if self._gpu_state["policy"].optimizer_on_gpu:
+            self._offload("policy", offload_optimizer=True, offload_model=False)
+
+    def _finish_weight_sync(self) -> None:
+        """Finish weight sync: offload model weights and optimizer state. Helper for save_weights_for_sampler."""
+        if not self.colocate_all:
+            return
+        self._offload("policy", offload_optimizer=True, offload_model=True)
+
+    async def save_weights_for_sampler(self, model_id: Optional[str] = None) -> None:
+        """
+        Tinker API method to prepare updated parameters for sampling.
+
+        Syncs weights to inference engine for sampling. When ``model_id`` is
+        provided we ensure the corresponding LoRA adapter is the live one
+        before broadcasting, and tell the worker to register the adapter on
+        vLLM under ``model_id``.
+        """
+        if self._inference_engine_client is None:
+            raise RuntimeError(
+                "Cannot save_weights_for_sampler: no inference_engine_client configured. "
+                "Pass inference_engine_client to WorkerDispatch constructor or call set_inference_engine_client()."
+            )
+
+        # Sync weights to inference engine
+        self._prepare_for_weight_sync()
+        # Make the requested adapter live on every worker before broadcasting
+        # — otherwise we'd export some other tenant's LoRA weights to vLLM.
+        self.ensure_active_adapter("policy", model_id)
+        if self.colocate_all:
+            await self._inference_engine_client.wake_up(tags=["weights"])
+            self._broadcast_to_inference_engines(self._inference_engine_client, model_id=model_id)
+            self._finish_weight_sync()
+            await self._inference_engine_client.wake_up(tags=["kv_cache"])
+        else:
+            # Non-colocated: pause generation to prevent in-flight requests from
+            # reading partially-updated weights during the NCCL broadcast.
+            await self._inference_engine_client.pause_generation()
+            try:
+                self._broadcast_to_inference_engines(self._inference_engine_client, model_id=model_id)
+                self._finish_weight_sync()
+            finally:
+                await self._inference_engine_client.resume_generation()

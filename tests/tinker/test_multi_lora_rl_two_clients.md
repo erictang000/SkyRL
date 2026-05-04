@@ -31,7 +31,7 @@ uv run --extra tinker --extra megatron -m skyrl.tinker.api \
         "strategy": "megatron",
         "trainer.placement.policy_num_gpus_per_node": 1,
         "trainer.placement.policy_num_nodes": 1,
-        "trainer.placement.colocate_all": true,
+        "trainer.placement.colocate_all": false,
         "trainer.policy.megatron_config.tensor_model_parallel_size": 1,
         "trainer.policy.megatron_config.pipeline_model_parallel_size": 1,
         "trainer.policy.megatron_config.lora_config.merge_lora": false,

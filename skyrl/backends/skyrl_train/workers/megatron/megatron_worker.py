@@ -203,21 +203,39 @@ class MegatronWeightExtractor(WeightExtractor):
         if hasattr(self, "_weight_metadata_cache"):
             return self._weight_metadata_cache
 
+        self._ensure_buckets_initialized()
         names = []
         dtype_names = []
         shapes = []
         dtype_name = str(dtype).split(".")[-1]
-        device = torch.cuda.current_device()
-        for name, tensor in self.bridge.export_hf_weights(
-            self.actor_module,
-            show_progress=False,
-            conversion_tasks=None,
-        ):
-            tensor = tensor.to(device=device, dtype=dtype, non_blocking=True)
-            names.append(name)
-            dtype_names.append(dtype_name)
-            shapes.append(list(tensor.shape))
-            del tensor
+        # Collect parameter metadata in the same order
+        # as provided by `.extract_weights`.
+        if not self.enable_bucketing:
+            for name, tensor in self.bridge.export_hf_weights(
+                self.actor_module,
+                show_progress=False,
+                conversion_tasks=None,
+            ):
+                names.append(name)
+                dtype_names.append(dtype_name)
+                shapes.append(list(tensor.shape))
+                del tensor
+        else:
+            # Build fresh tasks each sync so mapping objects have clean
+            # PP-collective caches; reuse the pre-computed bucket structure.
+            fresh_tasks = self.bridge.get_conversion_tasks(self.actor_module)
+            for index_group in self.bucket_index_groups:
+                bucket_tasks = [fresh_tasks[i] for i in index_group]
+                for name, tensor in self.bridge.export_hf_weights(
+                    self.actor_module,
+                    show_progress=False,
+                    conversion_tasks=bucket_tasks,
+                ):
+                    names.append(name)
+                    shapes.append(list(tensor.shape))
+                    dtype_names.append(dtype_name)
+                    del tensor
+
         self._weight_metadata_cache = {"names": names, "dtype_names": dtype_names, "shapes": shapes}
         return self._weight_metadata_cache
 
@@ -519,6 +537,10 @@ class MegatronWorker:
             tokenizer=tokenizer,
         )
 
+    def _get_module_for_offload(self):
+        # The underlying offloadable module is `self.actor_module` instead of `self.model`.
+        return self.actor_module
+
 
 class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
     def __init__(self, **kwargs):
@@ -532,17 +554,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # Per-worker store of LoRA adapter snapshots. Allocated only for the
         # LoRA path; FFT runs single-tenant exactly as before.
         self.adapter_store: Optional[AdapterStore] = AdapterStore() if self._is_lora else None
-
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
-        self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(
-            self.actor_module, self.optimizer, pin_memory, non_blocking, offload_optimizer, offload_model
-        )
-
-    def backload_to_gpu(self, non_blocking=True, backload_optimizer=True, backload_model=True):
-        self.strategy.backload_to_gpu(
-            self.actor_module, self.optimizer, non_blocking, backload_optimizer, backload_model
-        )
 
     def init_worker_process_group(self):
         """
@@ -936,10 +947,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         torch.cuda.empty_cache()
         torch.distributed.barrier()
 
-    def get_weight_statistics(self):
-        """Compute lightweight statistics for model weights"""
-        raise NotImplementedError()
-
     def _set_pad_token_id(self, pad_token_id):
         # this already gets set in the init_model method
         pass
@@ -1020,13 +1027,6 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         self.model: MegatronModelWrapper = None
         self.actor_module: List[nn.Module] = None
 
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True, **kwargs):
-        self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(self.actor_module, None, pin_memory, non_blocking)
-
-    def backload_to_gpu(self, non_blocking=True, **kwargs):
-        self.strategy.backload_to_gpu(self.actor_module, None, non_blocking)
-
     def init_worker_process_group(self):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
@@ -1093,10 +1093,6 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
 
         # create worker model
         self.model = MegatronModelWrapper(config=self.cfg, actor_module=self.actor_module)
-
-    def get_weight_statistics(self):
-        """Compute lightweight statistics for model weights"""
-        raise NotImplementedError()
 
     def _set_pad_token_id(self, pad_token_id):
         # this already gets set in the init_model method

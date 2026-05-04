@@ -156,15 +156,6 @@ class FSDPWeightExtractor(WeightExtractor):
 
 
 class FSDPPolicyWorkerBase(PolicyWorkerBase):
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
-        self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(
-            self.model, self.optimizer, pin_memory, non_blocking, offload_optimizer, offload_model
-        )
-
-    def backload_to_gpu(self, non_blocking=True, backload_optimizer=True, backload_model=True):
-        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking, backload_optimizer, backload_model)
-
     def init_model(self, model_path, num_training_steps: int = None):
         assert self.cfg.strategy in ("fsdp", "fsdp2")
         strategy = FSDPStrategy(
@@ -333,10 +324,6 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
         torch.cuda.empty_cache()
         torch.distributed.barrier()
 
-    def get_weight_statistics(self):
-        """Compute lightweight statistics for model weights"""
-        raise NotImplementedError()
-
     def _set_pad_token_id(self, pad_token_id):
         # NOTE (sumanthrh): self.model -> HFModelWrapper; self.model.model -> AutoModelForCausalLM
         self.model.model.config.pad_token_id = pad_token_id
@@ -357,15 +344,6 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
 
 
 class FSDPCriticWorkerBase(CriticWorkerBase):
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
-        self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(
-            self.model, self.optimizer, pin_memory, non_blocking, offload_optimizer, offload_model
-        )
-
-    def backload_to_gpu(self, non_blocking=True, backload_optimizer=True, backload_model=True):
-        self.strategy.backload_to_gpu(self.model, self.optimizer, non_blocking, backload_optimizer, backload_model)
-
     def init_model(self, model_path, num_training_steps: int = None):
         assert self.cfg.strategy in ("fsdp", "fsdp2")
         strategy = FSDPStrategy(
@@ -433,13 +411,6 @@ class FSDPCriticWorkerBase(CriticWorkerBase):
 
 
 class FSDPRefWorkerBase(RefWorkerBase):
-    def offload_to_cpu(self, pin_memory=True, non_blocking=True, **kwargs):
-        self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
-        self.strategy.offload_to_cpu(self.model, None, pin_memory, non_blocking)
-
-    def backload_to_gpu(self, non_blocking=True, **kwargs):
-        self.strategy.backload_to_gpu(self.model, None, non_blocking)
-
     def init_model(self, model_path):
         assert self.cfg.strategy in ("fsdp", "fsdp2")
         strategy = FSDPStrategy(
