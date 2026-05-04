@@ -34,15 +34,16 @@ Megatron's `DistributedDataParallel` filters out frozen params before constructi
 
 Buffer-level `tensor.copy_()` therefore swaps adapter-only state. The base model stays GPU-resident and is shared across all tenants.
 
-## Three storages per LoRA param
+## Four storages per LoRA param
 
-For each LoRA `nn.Parameter` `p`, three independent storages must be swapped:
+For each LoRA `nn.Parameter` `p`, four independent storages must be swapped:
 
 1. The bf16 view in `mc.buffers[i].param_data` (or `mc.expert_parallel_buffers`).
-2. The fp32 main copy in `_opt.shard_fp32_from_float16_groups[g][i]` — independent storage, not a view.
-3. The Adam moments in `_opt.optimizer.state[main_param]`, keyed by the **fp32 main param**: `exp_avg`, `exp_avg_sq`.
+2. The bf16 grad view in `mc.buffers[i].grad_data` — must travel with the slot, otherwise an interleaved tenant's `forward_backward` will clobber unconsumed grads via `chunk.zero_grad_buffer()` at the top of every fwd_bwd before this adapter's own `optim_step` runs.
+3. The fp32 main copy in `_opt.shard_fp32_from_float16_groups[g][i]` — independent storage, not a view.
+4. The Adam moments in `_opt.optimizer.state[main_param]`, keyed by the **fp32 main param**: `exp_avg`, `exp_avg_sq`.
 
-Param-object identity is preserved across `param.data.copy_(...)`, so optimizer state-dict keys remain valid. Grads are not swapped — `optimizer.zero_grad()` runs after every step (`megatron_strategy.py:215`), so they're zero at swap time.
+Param-object identity is preserved across `param.data.copy_(...)`, so optimizer state-dict keys remain valid. The fp32 grad accumulator inside `DistributedOptimizer.step()` (reduce-scatter destination) is short-lived — it's allocated and consumed within `step()`, so it never persists across a swap and doesn't need its own slot storage.
 
 ## Pristine slot
 
@@ -66,7 +67,7 @@ Per worker, all under `torch.no_grad()`:
 
 1. `dist.barrier(dp_group)` — wait for the previous adapter's last collective to finish.
 2. Save current adapter into its slot:
-   - For each `mc` and each `buffer ∈ mc.buffers + mc.expert_parallel_buffers`: `slot.cpu_param_data[mc][i].copy_(buffer.param_data, non_blocking=True)`.
+   - For each `mc` and each `buffer ∈ mc.buffers + mc.expert_parallel_buffers`: copy `buffer.param_data` AND `buffer.grad_data` into `slot.cpu_param_data[mc][i]` / `slot.cpu_grad_data[mc][i]` (`non_blocking=True`).
    - For each `_opt ∈ _iter_opts(self.optimizer)` and each `(g, i)`: `slot.cpu_main_param[g][i].copy_(_opt.shard_fp32_from_float16_groups[g][i], non_blocking=True)`. Then `slot.cpu_exp_avg[g][i].copy_(state['exp_avg'], non_blocking=True)`, `slot.cpu_exp_avg_sq[g][i].copy_(state['exp_avg_sq'], non_blocking=True)`.
 3. `torch.cuda.current_stream().synchronize()` — D2H complete.
 4. Load target adapter — same loops in reverse, copying CPU → GPU into the same storages.
@@ -78,10 +79,29 @@ Per worker, all under `torch.no_grad()`:
 Per worker, pinned memory:
 
 - `cpu_param_data[mc][buf_idx]` — bf16, one tensor per `mc.buffers + mc.expert_parallel_buffers` entry, shape matches the bucket.
+- `cpu_grad_data[mc][buf_idx]` — bf16, parallel to `cpu_param_data`. Required for cross-tenant interleaving correctness (see "Why grads must travel with the slot" below).
 - `cpu_main_param[g][i]` — fp32, shape matches `shard_fp32_from_float16_groups[g][i]`.
 - `cpu_exp_avg[g][i]`, `cpu_exp_avg_sq[g][i]` — fp32, same shapes.
 
 Frozen base weights are not duplicated per adapter; they live in their own pinned storage already managed by `offload_megatron_model_to_cpu`.
+
+### Why grads must travel with the slot
+
+The Tinker engine batches pending `forward_backward`s across model_ids in 100 ms ticks (`engine.py:721`). Within one tick, `_split_model_pass_batch_by_model_id` (`skyrl_train_backend.py:152`) splits into per-model sub-batches and runs them sequentially. Each `forward_backward` starts with `chunk.zero_grad_buffer()` (`megatron_worker.py:702`).
+
+If we swapped only params + optimizer state, this sequence corrupts:
+
+```
+batched fwd_bwd = [A.fb, B.fb]
+  sub-batch A: swap_to("A"), zero_grad_buffer, accumulate A's grads into grad_data
+  sub-batch B: swap_to("B")  ← params + opt state swap; grads UNTOUCHED
+               zero_grad_buffer ← clobbers A's grads
+               accumulate B's grads into grad_data
+A.optim_step: swap_to("A")  ← restores A's params + opt state; grads = B's
+              optimizer.step()  ← applies B's grads to A's weights ✗
+```
+
+Snapshotting `grad_data` into the slot on every swap fixes this. After A's fwd_bwd, A's slot holds A's grads. swap_to(B) overwrites the live `grad_data` with B's saved grads (zero on the first visit), so B's `zero_grad_buffer` clears B's data, not A's. swap_to(A) before A's `optim_step` restores A's grads exactly. The fp32 grad accumulator that DistributedOptimizer materialises inside `step()` is short-lived (created and consumed within one call), so it doesn't need its own slot storage.
 
 ## Files to add / modify
 
