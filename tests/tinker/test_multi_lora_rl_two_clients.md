@@ -29,12 +29,16 @@ uv run --extra tinker --extra megatron -m skyrl.tinker.api \
     --backend megatron \
     --backend-config '{
         "strategy": "megatron",
-        "trainer.placement.policy_num_gpus_per_node": 1,
+        "trainer.placement.policy_num_gpus_per_node": 4,
         "trainer.placement.policy_num_nodes": 1,
         "trainer.placement.colocate_all": false,
         "trainer.policy.megatron_config.tensor_model_parallel_size": 1,
         "trainer.policy.megatron_config.pipeline_model_parallel_size": 1,
+        "trainer.micro_train_batch_size_per_gpu": 64,
+        "trainer.micro_forward_batch_size_per_gpu": 64,
         "trainer.policy.megatron_config.lora_config.merge_lora": false,
+        "generator.inference_engine.num_engines": 1,
+        "generator.inference_engine.tensor_parallel_size": 1,
         "trainer.policy.model.lora.max_loras": 4,
         "trainer.policy.model.lora.max_cpu_loras": 4
     }'
