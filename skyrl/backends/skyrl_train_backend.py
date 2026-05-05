@@ -877,18 +877,22 @@ class SkyRLTrainBackend(AbstractBackend):
         # 1. Ensure inference engines are initialized
         self._ensure_inference_engines()
 
-        # 2. Validate single model
+        # 2. Validate every model_id in the batch is a known policy. Multi-LoRA
+        # RL legitimately mixes adapters in one batched sample call (the engine
+        # batches across model_ids in find_batchable_sample); we route per
+        # request via the `model` field in _sample_with_remote_client below.
         unique_models = set(prepared_batch.all_model_ids)
-        if len(unique_models) != 1:
+        unknown = [mid for mid in unique_models if mid not in self._model_ids_to_role]
+        if unknown:
             error = types.ErrorResponse(
-                error=f"Expected exactly one model_id for sampling, got {unique_models}", status="error"
+                error=f"Sampling requested for unknown model_id(s): {sorted(unknown)}", status="error"
             )
             return {req_id: error for req_id, _, _, _, _ in prepared_batch.request_batch_slices}
-        model_id = next(iter(unique_models))
-        role = self._model_ids_to_role.get(model_id)
-        if role != "policy":
+        non_policy = [mid for mid in unique_models if self._model_ids_to_role.get(mid) != "policy"]
+        if non_policy:
             error = types.ErrorResponse(
-                error=f"Sampling is only supported for policy models, got '{model_id}'", status="error"
+                error=f"Sampling is only supported for policy models, got non-policy: {sorted(non_policy)}",
+                status="error",
             )
             return {req_id: error for req_id, _, _, _, _ in prepared_batch.request_batch_slices}
 
