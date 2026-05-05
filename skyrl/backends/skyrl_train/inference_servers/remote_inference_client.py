@@ -1154,38 +1154,26 @@ class RemoteInferenceClient:
         same name is already registered on the server, vLLM replaces it
         inplace, preserving its internal int id.
 
-        TODO(aaron): remove _unload_on_server and add back "load_inplace": True to payload after
-        vllm lora disk load bug is fixed.
-
         Args:
             lora_name: Name to register the adapter under on each server.
             lora_path: Path to the LoRA adapter on disk (must be accessible from servers).
-            load_inplace: When True (default), reloading a previously-loaded and cached
-                adapter with the same name replaces it with the on-disk lora.
+            load_inplace: When True (default), vLLM replaces an existing adapter
+                with the same name in place, preserving its int id. Without
+                this, the second call with the same name returns a 400
+                "adapter already loaded".
 
         Returns:
             Dict mapping server_url to response.
         """
-        # Both endpoints return plain text on success or JSON ErrorResponse on failure,
-        # so we use a session.post directly rather than _call_all_servers (which expects JSON).
-        # ``load_inplace`` is currently unused: until the upstream vLLM in-place reload bug
-        # is fixed (see TODO above) we always do explicit unload-then-load.
-        _ = load_inplace
+        # vLLM /v1/load_lora_adapter returns plain text on success and JSON
+        # ErrorResponse on failure, so we use a session.post directly rather
+        # than _call_all_servers (which expects JSON).
         session = await self._get_session()
 
-        async def _unload_on_server(server_url: str) -> None:
-            """Remove the cached LoRARequest server-side. 404 on the first sync is expected."""
-            url = f"{server_url}/v1/unload_lora_adapter"
-            async with session.post(url, json={"lora_name": lora_name}) as resp:
-                if resp.status == 404:
-                    return
-                if resp.status >= 400:
-                    body = await resp.json()
-                    raise_for_status(resp, body)
+        payload = {"lora_name": lora_name, "lora_path": lora_path, "load_inplace": load_inplace}
 
         async def _load_on_server(server_url: str):
             url = f"{server_url}/v1/load_lora_adapter"
-            payload = {"lora_name": lora_name, "lora_path": lora_path}
             async with session.post(url, json=payload) as resp:
                 # vLLM returns 200 with text body on success, or JSON ErrorResponse on failure.
                 # Tolerate non-JSON error bodies (e.g. plain-text 5xx from a proxy):
@@ -1198,7 +1186,6 @@ class RemoteInferenceClient:
                     raise_for_status(resp, body)
                 return server_url, {"status": resp.status, "body": await resp.text()}
 
-        await asyncio.gather(*[_unload_on_server(url) for url in self.server_urls])
         results = await asyncio.gather(*[_load_on_server(url) for url in self.server_urls])
 
         logger.info(f"Loaded LoRA adapter '{lora_name}' from {lora_path}")
