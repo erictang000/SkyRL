@@ -1,0 +1,12 @@
+{
+  "base_url": "http://localhost:8000",
+  "log_path": "/tmp/sl_loop_c.log",
+  "model_name": "Qwen/Qwen3-0.6B",
+  "batch_size": 128,
+  "learning_rate": 0.0001,
+  "max_length": 32768,
+  "train_on_what": "last_assistant_message",
+  "lora_rank": 32,
+  "save_every": 20,
+  "ttl_seconds": 604800
+}

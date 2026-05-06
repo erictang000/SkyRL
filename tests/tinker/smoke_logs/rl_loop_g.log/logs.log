@@ -1,0 +1,825 @@
+root:680 [INFO] Command line invocation: /home/etang/tinker-cookbook/tinker_cookbook/recipes/rl_loop.py base_url=http://localhost:8000 model_name=Qwen/Qwen3-0.6B lora_rank=32 log_path=/tmp/rl_loop_g.log
+tinker_cookbook.utils.ml_log:618 [INFO] Logging to: /tmp/rl_loop_g.log
+__main__:73 [INFO] Using renderer: qwen3
+__main__:76 [INFO] Loading dataset...
+tinker.lib.public_interfaces.service_client:75 [INFO] ServiceClient initialized for session session_43f00dc0
+tinker_cookbook.checkpoint_utils:395 [INFO] No checkpoints found at /tmp/rl_loop_g.log/checkpoints.jsonl
+tinker_cookbook.checkpoint_utils:426 [INFO] No checkpoints found with key state_path in /tmp/rl_loop_g.log
+tinker.lib.public_interfaces.service_client:159 [INFO] TrainingClient initialized for model model_33022fca
+__main__:121 [INFO] Training for 58 batches
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 0                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m0          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.017241   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.019043   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3047.044306[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m81.935303  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 1                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m1          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.034483   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.034668   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m2863.267714[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m79.756085  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 2                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m2          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.051724   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.080078   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3862.287017[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m84.182842  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 3                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m3          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.068966   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.257812   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m8041.708525[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m91.647291  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 4                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m4          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.086207   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.547363   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4885.541730[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m76.656733  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 5                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m5          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.103448   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.603027   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4959.070881[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m70.430493  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 6                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m6          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.120690   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.568848   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3898.757494[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.931934  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 7                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m7          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.137931   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.600586   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4328.296894[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m59.117071  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 8                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m8          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.155172   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.535156   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4568.654288[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m62.654777  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 9                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m9          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.172414   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.617676   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4046.557673[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.533596  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 10                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m10         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.189655   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.625977   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3957.613675[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m64.592402  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 11                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m11         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.206897   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.677734   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4522.047103[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.164687  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 12                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m12         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.224138   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.622559   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4453.164717[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.606588  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 13                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m13         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.241379   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.668457   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4064.819307[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.253005  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 14                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m14         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.258621   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.635742   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4596.063751[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m69.474511  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 15                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m15         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.275862   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.718750   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4935.121072[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.929768  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 16                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m16         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.293103   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.740723   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4247.624277[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.258889  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 17                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m17         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.310345   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.705566   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4071.461163[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.827817  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 18                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m18         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.327586   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.689941   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3900.221019[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.241114  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 19                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m19         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.344828   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.720703   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4153.697630[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.975040  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.checkpoint_utils:466 [INFO] Saved checkpoints: {'state_path': 'tinker://model_33022fca/weights/000020'}
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 20                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m20         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.362069   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.729980   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3834.269292[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.836580  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 21                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m21         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.379310   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.731934   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4056.313967[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.094682  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 22                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m22         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.396552   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.743652   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4249.544681[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.107702  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 23                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m23         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.413793   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.750977   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3919.666567[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.815610  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 24                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m24         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.431034   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.668457   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4038.148462[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.941240  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 25                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m25         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.448276   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.745117   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4261.364570[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.611496  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 26                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m26         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.465517   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.730469   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3908.385472[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.793354  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 27                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m27         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.482759   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.728516   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4198.391835[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m64.184751  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 28                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m28         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.500000   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.759766   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3855.957858[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.562127  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 29                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m29         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.517241   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.775391   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3629.153483[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m64.316827  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 30                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m30         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.534483   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.742188   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4626.587295[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.431585  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 31                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m31         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.551724   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.779785   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3172.986763[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m61.603456  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 32                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m32         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.568966   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.664551   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4532.925766[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m70.215890  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 33                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m33         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.586207   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.782227   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4165.589514[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.486906  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 34                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m34         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.603448   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.710449   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4447.996853[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m73.745564  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 35                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m35         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.620690   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.719238   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4060.280532[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.713121  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 36                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m36         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.637931   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.728027   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4412.181547[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m64.371590  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 37                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m37         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.655172   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.740723   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3785.710765[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.436951  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 38                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m38         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.672414   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.696289   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4860.556141[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m69.290205  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 39                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m39         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.689655   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.774902   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4201.451892[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.281941  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.checkpoint_utils:466 [INFO] Saved checkpoints: {'state_path': 'tinker://model_33022fca/weights/000040'}
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 40                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m40         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.706897   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.736816   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4512.850097[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.527777  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 41                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m41         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.724138   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.736816   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4640.554924[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.977870  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 42                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m42         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.741379   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.731445   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4721.049248[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m68.467704  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 43                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m43         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.758621   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.703613   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4301.910738[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.849135  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 44                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m44         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.775862   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.808105   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4144.882387[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.650478  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 45                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m45         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.793103   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.785645   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4613.070344[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.609451  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 46                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m46         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.810345   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.735840   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4161.312293[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.403885  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 47                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m47         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.827586   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.793945   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3778.356653[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m63.203141  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 48                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m48         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.844828   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.770508   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4912.503639[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.865016  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 49                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m49         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.862069   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.699707   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4550.238895[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.346623  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 50                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m50         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.879310   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.737793   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m5372.916154[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m64.003319  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 51                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m51         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.896552   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.731934   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4387.628517[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m64.909327  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 52                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m52         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.913793   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.691406   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4861.483930[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.043161  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 53                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m53         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.931034   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.809082   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3259.830210[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m62.288203  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 54                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m54         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.948276   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.718750   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4360.203894[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m66.404381  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 55                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m55         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.965517   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.782715   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4557.082619[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m65.916927  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 56                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m56         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.982759   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.790527   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3941.068891[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.037578  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_g.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                Step 57                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m57         [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m1.000000   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.739258   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4977.277569[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m67.706937  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.checkpoint_utils:466 [INFO] Saved checkpoints: {'state_path': 'tinker://model_33022fca/weights/final', 'sampler_path': 'tinker://model_33022fca/final'}
+__main__:257 [INFO] Training completed

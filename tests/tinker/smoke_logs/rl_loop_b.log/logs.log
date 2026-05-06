@@ -1,0 +1,106 @@
+root:680 [INFO] Command line invocation: /home/etang/tinker-cookbook/tinker_cookbook/recipes/rl_loop.py base_url=http://localhost:8000 model_name=Qwen/Qwen3-0.6B lora_rank=32 log_path=/tmp/rl_loop_b.log
+tinker_cookbook.utils.ml_log:618 [INFO] Logging to: /tmp/rl_loop_b.log
+__main__:73 [INFO] Using renderer: qwen3
+__main__:76 [INFO] Loading dataset...
+tinker.lib.public_interfaces.service_client:75 [INFO] ServiceClient initialized for session session_ff83e78a
+tinker_cookbook.checkpoint_utils:395 [INFO] No checkpoints found at /tmp/rl_loop_b.log/checkpoints.jsonl
+tinker_cookbook.checkpoint_utils:426 [INFO] No checkpoints found with key state_path in /tmp/rl_loop_b.log
+tinker.lib.public_interfaces.service_client:159 [INFO] TrainingClient initialized for model model_19dca9e4
+__main__:121 [INFO] Training for 58 batches
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_b.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 0                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m0          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.017241   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.016602   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m2784.973608[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m329.021244 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_b.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 1                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m1          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.034483   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.030273   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3172.651888[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m294.953841 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_b.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 2                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m2          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.051724   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.029297   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m2699.619881[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m407.538405 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_b.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 3                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m3          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.068966   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.054199   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m4655.835049[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m686.296854 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1860' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1772' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1815' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1820' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1758' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1756' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1773' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1790' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1771' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1778' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1768' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1805' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1767' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1812' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1766' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1802' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1808' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1816' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1813' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_ff83e78a
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1829' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1780' and expected type self.model_cls=<class 'tinker.SampleResponse'>
+tinker.lib.retry_handler:241 [ERROR] Request failed with non-retryable error: ValueError: Error retrieving result: Error code: 400 - {'detail': "Expected exactly one model_id for sampling, got {'model_8babd19c', 'model_19dca9e4'}"} with status code e.status_code=400 for self.request_id='1763' and expected type self.model_cls=<class 'tinker.SampleResponse'>

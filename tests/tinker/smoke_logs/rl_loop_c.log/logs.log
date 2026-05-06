@@ -1,0 +1,683 @@
+root:680 [INFO] Command line invocation: /home/etang/tinker-cookbook/tinker_cookbook/recipes/rl_loop.py base_url=http://localhost:8000 model_name=Qwen/Qwen3-0.6B lora_rank=32 log_path=/tmp/rl_loop_c.log
+tinker_cookbook.utils.ml_log:618 [INFO] Logging to: /tmp/rl_loop_c.log
+__main__:73 [INFO] Using renderer: qwen3
+__main__:76 [INFO] Loading dataset...
+tinker.lib.public_interfaces.service_client:75 [INFO] ServiceClient initialized for session session_060f07d1
+tinker_cookbook.checkpoint_utils:395 [INFO] No checkpoints found at /tmp/rl_loop_c.log/checkpoints.jsonl
+tinker_cookbook.checkpoint_utils:426 [INFO] No checkpoints found with key state_path in /tmp/rl_loop_c.log
+tinker.lib.public_interfaces.service_client:159 [INFO] TrainingClient initialized for model model_01d93e11
+__main__:121 [INFO] Training for 58 batches
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_060f07d1
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_060f07d1
+root:680 [INFO] Command line invocation: /home/etang/tinker-cookbook/tinker_cookbook/recipes/rl_loop.py base_url=http://localhost:8000 model_name=Qwen/Qwen3-0.6B lora_rank=32 log_path=/tmp/rl_loop_c.log
+tinker_cookbook.utils.ml_log:618 [INFO] Logging to: /tmp/rl_loop_c.log
+__main__:73 [INFO] Using renderer: qwen3
+__main__:76 [INFO] Loading dataset...
+tinker.lib.public_interfaces.service_client:75 [INFO] ServiceClient initialized for session session_d224d066
+tinker_cookbook.checkpoint_utils:395 [INFO] No checkpoints found at /tmp/rl_loop_c.log/checkpoints.jsonl
+tinker_cookbook.checkpoint_utils:426 [INFO] No checkpoints found with key state_path in /tmp/rl_loop_c.log
+tinker.lib.public_interfaces.service_client:159 [INFO] TrainingClient initialized for model model_c0ac2cf5
+__main__:121 [INFO] Training for 58 batches
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_d224d066
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_d224d066
+root:680 [INFO] Command line invocation: /home/etang/tinker-cookbook/tinker_cookbook/recipes/rl_loop.py base_url=http://localhost:8000 model_name=Qwen/Qwen3-0.6B lora_rank=32 log_path=/tmp/rl_loop_c.log
+tinker_cookbook.utils.ml_log:618 [INFO] Logging to: /tmp/rl_loop_c.log
+__main__:73 [INFO] Using renderer: qwen3
+__main__:76 [INFO] Loading dataset...
+tinker.lib.public_interfaces.service_client:75 [INFO] ServiceClient initialized for session session_7a047dd4
+tinker_cookbook.checkpoint_utils:395 [INFO] No checkpoints found at /tmp/rl_loop_c.log/checkpoints.jsonl
+tinker_cookbook.checkpoint_utils:426 [INFO] No checkpoints found with key state_path in /tmp/rl_loop_c.log
+tinker.lib.public_interfaces.service_client:159 [INFO] TrainingClient initialized for model model_18c1fcad
+__main__:121 [INFO] Training for 58 batches
+root:680 [INFO] Command line invocation: /home/etang/tinker-cookbook/tinker_cookbook/recipes/rl_loop.py base_url=http://localhost:8000 model_name=Qwen/Qwen3-0.6B lora_rank=32 log_path=/tmp/rl_loop_c.log
+tinker_cookbook.utils.ml_log:618 [INFO] Logging to: /tmp/rl_loop_c.log
+__main__:73 [INFO] Using renderer: qwen3
+__main__:76 [INFO] Loading dataset...
+tinker.lib.public_interfaces.service_client:75 [INFO] ServiceClient initialized for session session_cb2206f9
+tinker_cookbook.checkpoint_utils:395 [INFO] No checkpoints found at /tmp/rl_loop_c.log/checkpoints.jsonl
+tinker_cookbook.checkpoint_utils:426 [INFO] No checkpoints found with key state_path in /tmp/rl_loop_c.log
+tinker.lib.public_interfaces.service_client:159 [INFO] TrainingClient initialized for model model_4022cc73
+__main__:121 [INFO] Training for 58 batches
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 0                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m0          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.017241   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.019043   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m2515.858104[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m133.940457 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 1                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m1          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.034483   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.023438   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m2593.005592[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m80.892934  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 2                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m2          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.051724   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.033691   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m1459.361847[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m83.688621  [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 3                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m3          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.068966   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.069824   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m3230.374127[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m146.584503 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 4                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m4          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.086207   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.225098   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m8136.650171[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m157.939979 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 5                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m5          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.103448   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.364746   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m8247.074148[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m155.924101 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker_cookbook.utils.ml_log:206 [INFO] Wrote metrics to /tmp/rl_loop_c.log/metrics.jsonl
+tinker_cookbook.utils.ml_log:279 [INFO] 
+[3m                 Step 6                 [0m
+┏━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃[1;35m [0m[1;35mMetric                [0m[1;35m [0m┃[1;35m [0m[1;35mValue      [0m[1;35m [0m┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│[36m [0m[36moptim/lr              [0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mprogress/batch        [0m[36m [0m│[32m [0m[32m6          [0m[32m [0m│
+│[36m [0m[36mprogress/done_frac    [0m[36m [0m│[32m [0m[32m0.120690   [0m[32m [0m│
+│[36m [0m[36mreward/total          [0m[36m [0m│[32m [0m[32m0.416016   [0m[32m [0m│
+│[36m [0m[36mskyrl.ai/grad_norm    [0m[36m [0m│[32m [0m[32m8501.772521[0m[32m [0m│
+│[36m [0m[36mskyrl.ai/learning_rate[0m[36m [0m│[32m [0m[32m0.000040   [0m[32m [0m│
+│[36m [0m[36mtime/total            [0m[36m [0m│[32m [0m[32m150.344107 [0m[32m [0m│
+└────────────────────────┴─────────────┘
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 120.04752013500183 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 140.05585919200166 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 160.06073126800038 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:135 [WARNING] Failed to send telemetry batch
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 969, in request
+    response = await self._client.send(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 133, in _send_batch_with_retry
+    return await self._send_batch(batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 142, in _send_batch
+    return await client.telemetry.send(request=request, timeout=HTTP_TIMEOUT_SECONDS)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/resources/telemetry.py", line 68, in send
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 1232, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 987, in request
+    raise APITimeoutError(request=request) from err
+tinker.APITimeoutError: Request timed out.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 180.0704045420025 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 200.08335031200113 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 220.0932662330015 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 240.10563371600074 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 260.113305881001 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:135 [WARNING] Failed to send telemetry batch
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 969, in request
+    response = await self._client.send(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 133, in _send_batch_with_retry
+    return await self._send_batch(batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 142, in _send_batch
+    return await client.telemetry.send(request=request, timeout=HTTP_TIMEOUT_SECONDS)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/resources/telemetry.py", line 68, in send
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 1232, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 987, in request
+    raise APITimeoutError(request=request) from err
+tinker.APITimeoutError: Request timed out.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 280.11982140799955 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 300.12539942100193 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 320.1320038060003 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 340.1399088580001 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 360.1474978940023 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 380.15622666499985 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:135 [WARNING] Failed to send telemetry batch
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 969, in request
+    response = await self._client.send(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 133, in _send_batch_with_retry
+    return await self._send_batch(batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 142, in _send_batch
+    return await client.telemetry.send(request=request, timeout=HTTP_TIMEOUT_SECONDS)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/resources/telemetry.py", line 68, in send
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 1232, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 987, in request
+    raise APITimeoutError(request=request) from err
+tinker.APITimeoutError: Request timed out.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 400.1645123180024 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 420.1727330680005 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 440.1820644870022 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 460.1859169199997 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 480.1972260930015 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 500.20116487500127 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:135 [WARNING] Failed to send telemetry batch
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 969, in request
+    response = await self._client.send(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 133, in _send_batch_with_retry
+    return await self._send_batch(batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 142, in _send_batch
+    return await client.telemetry.send(request=request, timeout=HTTP_TIMEOUT_SECONDS)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/resources/telemetry.py", line 68, in send
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 1232, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 987, in request
+    raise APITimeoutError(request=request) from err
+tinker.APITimeoutError: Request timed out.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 520.2125360690006 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 540.2188946360002 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 560.2234918930008 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 580.2347657700011 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 600.2407169200014 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:135 [WARNING] Failed to send telemetry batch
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 969, in request
+    response = await self._client.send(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 133, in _send_batch_with_retry
+    return await self._send_batch(batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 142, in _send_batch
+    return await client.telemetry.send(request=request, timeout=HTTP_TIMEOUT_SECONDS)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/resources/telemetry.py", line 68, in send
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 1232, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 987, in request
+    raise APITimeoutError(request=request) from err
+tinker.APITimeoutError: Request timed out.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 620.2457274400003 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 640.2519691980015 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 660.2582203860002 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 680.2657900810009 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 700.2808281979997 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 720.289861448 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:135 [WARNING] Failed to send telemetry batch
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 136, in handle_async_request
+    raise exc
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_async/http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_backends/anyio.py", line 32, in read
+    with map_exceptions(exc_map):
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 969, in request
+    response = await self._client.send(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 133, in _send_batch_with_retry
+    return await self._send_batch(batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/lib/telemetry.py", line 142, in _send_batch
+    return await client.telemetry.send(request=request, timeout=HTTP_TIMEOUT_SECONDS)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/resources/telemetry.py", line 68, in send
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 1232, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/etang/tinker-cookbook/.venv/lib/python3.12/site-packages/tinker/_base_client.py", line 987, in request
+    raise APITimeoutError(request=request) from err
+tinker.APITimeoutError: Request timed out.
+tinker.lib.internal_client_holder:357 [WARNING] Session heartbeat failed for 740.2932220139992 seconds for session session_cb2206f9. Last exception: APITimeoutError: Request timed out..
+Your connection may be unreliable or Tinker is down. If this persists, the session will be terminated.
+tinker.lib.telemetry:204 [INFO] Exception logged for session ID: session_cb2206f9
