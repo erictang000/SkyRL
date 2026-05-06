@@ -1,0 +1,401 @@
+---
+title: "Non-colocated Sample Routing — Design"
+---
+
+# Non-colocated Sample Routing — Design
+
+This document describes the design for processing `sample()` requests in
+parallel with training when running the SkyRL Tinker server with the
+SkyRL-Train (FSDP / Megatron) backend in non-colocated mode (`colocate_all=False`).
+
+## Problem
+
+The Tinker engine's main loop (`skyrl/tinker/engine.py:721`) processes pending
+requests synchronously per 100 ms tick, in fixed order:
+
+```python
+self.process_batch_requests(forward_backward_requests, ...)
+self.process_batch_requests(forward_requests, ...)
+self.process_batch_requests(sample_requests, ...)
+self.process_single_requests(other_requests)
+```
+
+This is correct for the JAX backend (single model serves both training and
+sampling — they cannot run concurrently) and for SkyRL-Train colocated mode
+(vLLM is asleep during training, woken only inside `save_weights_for_sampler`
+→ broadcast → `sample`).
+
+For SkyRL-Train **non-colocated** mode the assumption breaks down:
+
+- Training (`forward_backward`, `optim_step`) runs on dedicated policy worker
+  GPUs.
+- vLLM runs on its own GPUs and is **always on** — generation can run at any
+  time.
+- The two interact only at `save_weights_for_sampler`, which broadcasts new
+  weights into vLLM bracketed by `pause_generation` / `resume_generation`.
+
+In this regime, serializing `sample` behind `forward_backward` wastes vLLM
+capacity. A `sample` request submitted at the start of a 30 s training step
+sits idle for that 30 s even though vLLM is free.
+
+For multi-tenant RL (multiple `rl_loop` clients on one Tinker server), the
+problem compounds: every `sample` from any tenant queues behind every other
+tenant's training step.
+
+## Existing infrastructure we can lean on
+
+The Tinker server already has a parallel-sample code path for genuinely
+external vLLM deployments (`engine_config.external_inference_url`):
+
+1. **API handler dispatches sample directly, off the engine queue**
+   (`api.py:1039-1064`). When `app.state.external_inference_client` is
+   non-null, `POST /api/v1/asample` creates a `FutureDB` row with
+   `RequestType.EXTERNAL`, then `asyncio.create_task(...)` to forward to vLLM
+   and return the future_id immediately. The engine never sees the request.
+
+2. **Engine excludes EXTERNAL from its scheduler** (`engine.py:431`):
+   `find_single_requests` filters
+   `where(FutureDB.request_type != types.RequestType.EXTERNAL)`. EXTERNAL
+   futures live entirely in the API process's asyncio loop.
+
+3. **`ExternalInferenceClient.call_and_store_result`** (in
+   `skyrl/tinker/extra/external_inference.py`) writes the result back into
+   `FutureDB` directly when the call returns. The
+   `/api/v1/retrieve_future` polling loop is oblivious to who the writer is.
+
+So the cross-process plumbing for parallel sample is already in place. The
+gap is that it's wired only for an external vLLM URL configured at server
+start. We need to point it at the vLLM that the SkyRL-Train backend stands
+up internally.
+
+## Proposed design
+
+Route SkyRL-Train sample requests through the existing EXTERNAL path,
+adapted to talk to the engine-managed vLLM instead of a user-supplied
+external URL.
+
+### Flow
+
+```
+                    ┌─ POST /api/v1/asample ─────────────────────────┐
+        client ─────┤                                                │
+                    │  api.py:                                       │
+                    │    create FutureDB(type=EXTERNAL)              │
+                    │    asyncio.create_task(client.call_and_store)  │
+                    │    return future_id (immediately)              │
+                    └────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+                    ┌─ BackendForwardingInferenceClient ─────────────┐
+                    │  POST {vllm_proxy_url}/v1/completions          │
+                    │    model=model_id   (LoRA registered by engine)│
+                    │  on completion: write FutureDB.result_data     │
+                    └────────────────────────────────────────────────┘
+
+   (parallel)
+                    ┌─ engine subprocess ────────────────────────────┐
+                    │  process_pending_requests loop:                │
+                    │    forward_backward / optim_step /             │
+                    │    save_weights_for_sampler / ...              │
+                    │  (NO sample work here)                         │
+                    │                                                │
+                    │  vLLM lifecycle owned here. Adapter loaded     │
+                    │  during save_weights_for_sampler via           │
+                    │  RemoteInferenceClient.load_lora_adapter.      │
+                    └────────────────────────────────────────────────┘
+```
+
+The engine still processes `forward_backward`, `optim_step`,
+`save_weights_for_sampler`, `save_weights`, `load_weights`, and the rest of
+the request types in its serial loop. Only `sample` (and only when
+non-colocated) is hoisted into the API process's async loop.
+
+### Synchronization invariants
+
+These are already enforced by the existing API and SDK; calling them out so
+the EXTERNAL refactor preserves them.
+
+**(I1) Sample for checkpoint X requires that save-X has completed.** The
+Tinker SDK serializes `save_weights_for_sampler(name=X)` and
+`sample(checkpoint_id=X)` per training client — the second future depends
+on the first. On the server, the API handler at `api.py:1037` calls
+`validate_checkpoint(...)` before creating the sample future; checkpoints
+are only marked ready inside the engine after the broadcast completes
+(`engine._checkpoint_status_context` in `process_save_weights_for_sampler`).
+Sample-for-X cannot reach the EXTERNAL fan-out before save-X finalises in
+the engine. ✓
+
+**(I2) In-flight sample during a re-broadcast for the same model.** Worker
+side, `WorkerDispatch.save_weights_for_sampler` brackets the broadcast with
+`inference_engine_client.pause_generation()` /
+`resume_generation()`. vLLM's KEEP-mode pause freezes in-flight requests in
+its scheduler; they resume after `resume_generation`. No client-side
+coordination needed. ✓
+
+**(I3) Result writes don't conflict with engine writes.** EXTERNAL sample
+results are written by the API process; all other request results are
+written by the engine. Different `FutureDB` rows, no overlap. SQLite WAL
+(already enabled by `enable_sqlite_wal`) handles concurrent readers.
+
+**(I4) The colocated path is unchanged.** When `colocate_all=True`, the API
+must NOT install the forwarding client — vLLM is asleep during training and
+the engine's synchronous `sample` path is still what wakes it, broadcasts,
+and samples. The lifespan code gates strictly on
+`colocate_all == False && backend == "skyrl_train"`.
+
+### Files to add / modify
+
+#### New: `skyrl/tinker/extra/backend_forwarding_inference.py`
+
+Adapter from the EXTERNAL contract to the SkyRL-Train-managed vLLM. ~80 LOC.
+
+```python
+class BackendForwardingInferenceClient:
+    """Forwards EXTERNAL sample requests to the SkyRL-Train-managed vLLM.
+
+    Differs from ExternalInferenceClient:
+      - Reads the vLLM proxy URL from EngineStateDB (written by the engine
+        after _create_new_inference_client) rather than EngineConfig.
+      - Uses model=<model_id> for LoRA sampling (the engine already loaded
+        the adapter under that name in save_weights_for_sampler via
+        RemoteInferenceClient.load_lora_adapter).
+      - No checkpoint extraction step — the worker's
+        _save_lora_adapters_and_sync wrote the adapter to lora_sync_path
+        and registered it with vLLM directly.
+    """
+
+    def __init__(self, engine_config: EngineConfig, db_engine):
+        self.engine_config = engine_config
+        self.db_engine = db_engine
+        self._cached_proxy_url: str | None = None
+        self._concurrency = asyncio.Semaphore(
+            getattr(engine_config, "max_concurrent_samples", 64)
+        )
+
+    async def _resolve_proxy_url(self) -> str:
+        # Read from EngineStateDB; cache; refresh on 5xx.
+        ...
+
+    async def call_and_store_result(self, request_id, sample_req,
+                                    model_id, checkpoint_id, *, base_model=None):
+        async with self._concurrency:
+            try:
+                proxy_url = await self._resolve_proxy_url()
+                # POST {proxy_url}/v1/completions with model=model_id (or
+                # base_model when present). Reuse the rendering logic from
+                # ExternalInferenceClient._forward_to_engine.
+                result = await self._forward(...)
+                result_data, status = result.model_dump(), RequestStatus.COMPLETED
+            except Exception as e:
+                result_data, status = {"error": str(e), "status": "failed"}, RequestStatus.FAILED
+            await self._write_result(request_id, result_data, status)
+```
+
+#### New DB row: `EngineStateDB`
+
+A single-row table holding inference-side handoff state from engine →
+API. New file `skyrl/tinker/db_models.py` addition:
+
+```python
+class EngineStateDB(SQLModel, table=True):
+    __tablename__ = "engine_state"
+
+    # Always 1; SQLModel needs a primary key.
+    singleton_id: int = Field(default=1, primary_key=True)
+
+    inference_proxy_url: str | None = None
+    """Proxy URL of the engine-managed vLLM, populated after
+    SkyRLTrainBackend._create_new_inference_client. None when no vLLM has
+    been stood up yet (FFT path, colocated, or pre-first-create_model)."""
+
+    inference_server_urls: list[str] = Field(default_factory=list, sa_type=JSON)
+    """Backend vLLM URLs (data-parallel servers). Optional;
+    BackendForwardingInferenceClient only needs proxy_url for /v1/completions."""
+
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=DateTime(timezone=True),
+    )
+```
+
+The engine writes this row inside `_create_new_inference_client` after
+`build_new_inference_client(...)` returns (so the proxy_url is known). The
+API reads it lazily on first sample.
+
+#### Modify: `skyrl/backends/skyrl_train_backend.py`
+
+In `_create_new_inference_client`:
+
+```python
+client, server_setup = build_new_inference_client(
+    self._cfg,
+    self._tokenizer,
+    placement_group=self._colocate_pg if is_colocated else None,
+)
+self._inference_router = server_setup.router
+self._server_groups = server_setup.server_groups
+self._inference_engine_client = client
+
+# NEW: publish vLLM URLs for the API process's BackendForwardingInferenceClient.
+self._publish_engine_state(server_setup)
+```
+
+`_publish_engine_state` writes `EngineStateDB.singleton_id=1` with the
+current `proxy_url` and `server_urls`. Idempotent upsert. On
+`delete_model`-driven `ray.shutdown()`, clear the row (proxy_url=None) so
+the API knows there's no vLLM to talk to.
+
+#### Modify: `skyrl/tinker/api.py` — lifespan
+
+```python
+backend_name = app.state.engine_config.backend
+backend_cfg = app.state.engine_config.backend_config or {}
+is_colocated = bool(backend_cfg.get("trainer.placement.colocate_all", True))
+
+if app.state.engine_config.external_inference_url:
+    app.state.external_inference_client = ExternalInferenceClient(
+        app.state.engine_config, app.state.db_engine,
+    )
+    logger.info(f"External engine configured: {app.state.engine_config.external_inference_url}")
+elif backend_name == "skyrl_train" and not is_colocated:
+    app.state.external_inference_client = BackendForwardingInferenceClient(
+        app.state.engine_config, app.state.db_engine,
+    )
+    logger.info("Engine-managed vLLM forwarding enabled (non-colocated SkyRL-Train)")
+else:
+    app.state.external_inference_client = None
+    logger.info("Using internal engine for inference")
+```
+
+Note: `backend_name` for the SkyRL-Train Megatron path is the string the
+operator passes to `--backend` (currently `"megatron"` or `"fsdp"` per
+`skyrl/tinker/engine.py:177-183`). The check should match those names —
+either by allowlist (`backend_name in ("megatron", "fsdp")`) or by reading
+the resolved backend class. Easiest: allowlist.
+
+Also: the colocate detection from `backend_config` is fragile (assumes the
+key exists). Better: have the engine write `is_colocated` into
+`EngineStateDB` alongside the URL, and have the API read it after first
+write. Until then, default to colocated (current behavior preserved).
+
+#### No changes required to engine.py
+
+The engine's `find_single_requests` already excludes EXTERNAL. The engine
+processes `save_weights_for_sampler` synchronously as today, which is what
+populates the LoRA adapter on vLLM under `model=<model_id>` so subsequent
+sample requests find it.
+
+### Backpressure
+
+Two places to bound concurrency:
+
+1. **Per-client semaphore** inside `BackendForwardingInferenceClient` (the
+   `self._concurrency` above). Default: 64. Configurable via a new
+   `EngineConfig.max_concurrent_samples`.
+2. **vLLM-side `max_num_seqs`** is the ultimate cap; vLLM queues beyond
+   that internally.
+
+The semaphore matters mostly for shielding the FastAPI event loop from
+fan-out from many tenants — once vLLM is saturated the additional
+backpressure is mostly ergonomic (avoid arbitrarily many in-flight HTTP
+requests from one process).
+
+### Failure modes
+
+- **`EngineStateDB.inference_proxy_url is None` when sample arrives.** The
+  engine hasn't built vLLM yet (no `create_model` happened, or last delete
+  triggered teardown). Mark the future failed with a clear message
+  ("inference engine not ready"); the SDK will surface this back to the
+  client.
+- **vLLM-side 404 for `model=<model_id>`.** Adapter wasn't loaded (most
+  likely the client never called `save_weights_for_sampler`, or
+  `max_cpu_loras` is too low and vLLM evicted it). Fail the future with the
+  4xx body verbatim. Documented in
+  [`multi_lora_design.mdx`](./multi_lora_design.mdx#vllm-capacity-contract).
+- **Engine restarts vLLM under us.** The engine's
+  `delete_model`-on-last-adapter path does `ray.shutdown()`. Next
+  `create_model` rebuilds. The
+  `EngineStateDB` row is updated by `_publish_engine_state` on rebuild.
+  `BackendForwardingInferenceClient` should refresh its cached proxy_url
+  on connection errors and retry once.
+- **API process crash / restart.** In-flight `asyncio.create_task`s are
+  lost; their `FutureDB` rows remain `pending`. The
+  existing 5-minute `retrieve_future` timeout reaps them as failures. Same
+  failure mode as the existing external-vLLM path.
+- **EngineStateDB row out of sync with running vLLM.** Mostly mitigated by
+  the engine writing the row inside `_create_new_inference_client` (single
+  source of truth). If the engine crashes after writing but before vLLM
+  comes up, the API will get connection refused → fail the future. The
+  user will retry.
+
+### Testing
+
+- **Unit:** `BackendForwardingInferenceClient.call_and_store_result` against
+  a `FastAPI` stub vLLM (mirroring
+  `tests/backends/skyrl_train/inference_servers/test_remote_inference_client.py`).
+  Verifies model-name plumbing, error handling, semaphore.
+- **Integration (GPU-gated):** extend
+  `tests/tinker/test_multi_lora_rl_two_clients.md` — add a step
+  comparing wall-clock for two `rl_loop` clients sampling vs. a baseline
+  with this routing disabled. The expected delta is "training step time
+  doesn't appear in sample latency."
+- **Negative:** when `external_inference_client is None` (colocated case),
+  sample requests still flow through the engine. Existing test_api.py
+  coverage should pass unchanged.
+
+### Trade-offs vs. dual-loop-in-engine
+
+We considered three alternatives. Why this design wins:
+
+| Alternative | Why we're not picking it |
+|---|---|
+| **Futures + single engine loop.** `process_sample` becomes non-blocking; engine main loop polls in-flight tasks at the top of each tick. | The 100 ms tick is still a hard latency floor for completion. A 30 s `forward_backward` blocks all sample-completion handling for 30 s. Fixing that means making the engine's main loop async — at which point we're 80 % of the way to a full async refactor for less benefit. |
+| **Separate sample loop inside the engine subprocess.** Spawn a second asyncio task in the engine that handles SAMPLE requests; the main loop handles everything else. | Strictly weaker isolation than process-level: a long Ray-side `ray.get` in the main loop releases the GIL but still constrains the engine's overall throughput. SQLite write contention is fine but introduces a per-loop ownership rule we'd need to maintain. |
+| **Full async refactor of `process_pending_requests`.** Each request type as its own async task with per-model locks. | Big diff; backend methods are sync (Ray `ray.get`) and would need executor wrappers. Premature for what we need (parallel sample-vs-training), without a clear next-step requirement that justifies it. |
+
+Routing through EXTERNAL inherits process-level isolation for free
+(API and engine are separate OS processes; one cannot block the other),
+keeps the engine code untouched, and reuses already-validated machinery.
+
+## Implementation order
+
+1. `EngineStateDB` + migration (auto-create via `SQLModel.metadata.create_all`
+   in lifespan, same as other tables).
+2. `_publish_engine_state` in `SkyRLTrainBackend` (called after
+   `_create_new_inference_client` and on `delete_model` teardown).
+3. `BackendForwardingInferenceClient` + unit tests.
+4. Lifespan wiring in `api.py` + colocate detection.
+5. Update RL smoke runbook to verify parallelism with a simple wall-clock
+   comparison. Document the operator-side requirements
+   (`max_concurrent_samples`, `max_cpu_loras`).
+6. Optional follow-up: have the engine also write `is_colocated` to
+   `EngineStateDB` so the API can resolve it without parsing
+   `backend_config`.
+
+## Out of scope (explicit non-goals)
+
+- **Parallelising training requests across model_ids.** This design
+  parallelises sample only. Multi-tenant `forward_backward` /
+  `optim_step` still serialise through the engine's main loop. Adding
+  per-model parallelism on the training side requires a different design
+  (per-model worker pools or per-model dispatch queues) and isn't
+  needed for the multi-LoRA RL workloads we're targeting.
+- **Auto-recovery from vLLM eviction.** If `max_cpu_loras` is set too
+  low and vLLM evicts an adapter mid-run, the next sample 404s and the
+  future fails. Re-loading from disk on demand is a follow-up — for now
+  the operator sizes `max_cpu_loras` ≥ expected concurrent adapters.
+- **Colocated mode acceleration.** Colocated mode keeps the synchronous
+  engine flow as today. There is no parallelism to exploit there (vLLM is
+  asleep during training).
+- **Sample retries.** `BackendForwardingInferenceClient` does at most one
+  proxy_url refresh + retry on connection errors. Application-level retry
+  is the SDK's job (and is already implemented in `tinker/retry_handler`).
+
+## References
+
+- Multi-LoRA design: [`multi_lora_design.mdx`](./multi_lora_design.mdx).
+- PR #1579 (foundation): [NovaSky-AI/SkyRL#1579](https://github.com/NovaSky-AI/SkyRL/pull/1579).
+- Existing external path: `skyrl/tinker/extra/external_inference.py`,
+  `skyrl/tinker/api.py:1057-1062`,
+  `skyrl/tinker/engine.py:431` (EXTERNAL exclusion).
+- RL smoke runbook: [`test_multi_lora_rl_two_clients.md`](../../../tests/tinker/test_multi_lora_rl_two_clients.md).
