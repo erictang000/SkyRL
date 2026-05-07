@@ -15,6 +15,10 @@ Test plan (per docs/content/docs/tinker/multi_lora_design.mdx#verification):
   6. create_model("C", rank=different) → expect a structured ValueError.
   7. sample() with two adapters → expect a structured error.
   8. delete_model("A"), then forward_backward on B → still works.
+
+
+Run with
+uv run --extra tinker --extra megatron --with pytest --with pytest-timeout python -m pytest -s tests/tinker/test_multi_lora_megatron.py
 """
 
 from __future__ import annotations
@@ -47,8 +51,8 @@ BASE_MODEL = "trl-internal-testing/tiny-Qwen3ForCausalLM"
 TINKER_API_KEY = "tml-dummy"
 TEST_PORT = 8011
 
-# Tiny config: 1 GPU, no TP/PP, single DP rank. Adjust as needed for your
-# CI hardware. With a tiny model + LoRA rank 8, this fits comfortably in
+# Tiny config: 1 GPU, no TP/PP, single DP rank.
+# With a tiny model + LoRA rank 8, this fits comfortably in
 # any modern GPU.
 BACKEND_CONFIG = {
     "strategy": "megatron",
@@ -198,6 +202,66 @@ def test_sample_with_two_adapters_errors(service_client):
         # save_weights_and_get_sampling_client routes through
         # save_sampler_checkpoint, which v1 refuses with >1 adapter.
         a.save_weights_and_get_sampling_client(name="should_fail")
+
+
+def test_seq_vs_alt_per_adapter_step_isolation(service_client):
+    """Min repro of the SEQ-vs-ALT divergence flagged in
+    ~/skyrl-seq-vs-alt-repro (against Qwen3-4B on a real pod).
+
+    Two fresh adapters, identical pristine state, identical data. We do an
+    ALT-style sequence (A.step0, B.step0, A.step1, B.step1) and assert that
+    A's pre-update loss == B's pre-update loss at every step (within FP
+    tolerance). Both adapters were pristine when their first step ran, and
+    both received the same parameters after their respective updates, so
+    their losses must match — unless a step counter, scheduler position, or
+    other Adam-bias-correction state leaks across adapters via shared
+    optimizer state.
+
+    The Qwen3-4B repro shows a 0.09-0.45 nat divergence; we use a tighter
+    1e-2 bound here because the tiny model's losses are smaller and the
+    AdapterStore snapshot/restore should keep state['step'] per-adapter.
+    """
+    client_a = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=8)
+    client_b = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=8)
+    tok = client_a.get_tokenizer()
+    data = [_make_datum(tok, "Question: 1+1?\nAnswer:", " 2")]
+
+    def fb_step(c):
+        out = c.forward_backward(data, "cross_entropy").result()
+        loss = sum(sum(o["elementwise_loss"].data) for o in out.loss_fn_outputs)
+        c.optim_step(tinker_types.AdamParams(learning_rate=1e-3)).result()
+        return loss
+
+    # ALT pattern: A.step0, B.step0, A.step1, B.step1
+    a0 = fb_step(client_a)
+    b0 = fb_step(client_b)
+    a1 = fb_step(client_a)
+    b1 = fb_step(client_b)
+    print(
+        f"\n[seq_vs_alt] step 0: A={a0!r} B={b0!r} |Δ|={abs(a0 - b0):.6e}\n"
+        f"[seq_vs_alt] step 1: A={a1!r} B={b1!r} |Δ|={abs(a1 - b1):.6e}"
+    )
+
+    # Step 0: both adapters were pristine + saw identical data.
+    assert abs(a0 - b0) < 1e-3, f"step 0 loss differs: A={a0!r} B={b0!r} (Δ={abs(a0 - b0):.6f})"
+
+    # Step 1: both adapters had exactly one optim_step from pristine on
+    # identical data. If the per-adapter step counter is correctly
+    # snapshotted/restored by AdapterStore, both updates use Adam at t=2
+    # (after the one-step priming), so their post-update states match and
+    # their step-1 losses match.
+    #
+    # If a global step counter advanced (one for A's step 0, one for B's
+    # step 0), B's first real update saw t=3 vs A's t=2, producing a
+    # measurably different update.
+    delta = abs(a1 - b1)
+    assert delta < 1e-2, (
+        f"step 1 loss diverges between adapters: A={a1!r} B={b1!r} (|Δ|={delta:.4f}). "
+        f"Symmetric prediction of a shared global step counter "
+        f"(LR scheduler position or Adam bias-correction step) advancing on every "
+        f"optim_step instead of being held per-adapter — see "
+        f"~/skyrl-seq-vs-alt-repro/README.md."
+    )
 
 
 def test_delete_then_train_remaining(service_client):
