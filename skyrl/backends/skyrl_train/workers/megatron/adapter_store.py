@@ -5,8 +5,6 @@ slot used to seed newly-created adapters. At any moment exactly one adapter is
 "live" in the worker's `actor_module` + `DistributedOptimizer`; swap_to() moves
 LoRA bucket params and DistributedOptimizer fp32-main / Adam state between live
 GPU storage and the per-adapter CPU slot via tensor.copy_().
-
-See docs/content/docs/tinker/multi_lora_design.mdx for the full design.
 """
 
 from __future__ import annotations
@@ -127,6 +125,12 @@ class AdapterSlot:
     cpu_grad_data: List[List[torch.Tensor]] = field(default_factory=list)
     cpu_main_param: List[List[List[torch.Tensor]]] = field(default_factory=list)
     cpu_opt_state: List[List[List[dict]]] = field(default_factory=list)
+    # Per-param-group state from optimizer.param_groups[g]. TE FusedAdam (used
+    # by Megatron's DistributedOptimizer) tracks `step` here at the group
+    # level, not per-param. Without snapshotting this, the step counter
+    # advances globally across adapters and breaks Adam bias correction —
+    # see the SEQ-vs-ALT repro at ~/skyrl-seq-vs-alt-repro.
+    cpu_param_group_state: List[List[dict]] = field(default_factory=list)
     step_count: int = 0
 
 
@@ -166,6 +170,14 @@ class AdapterStore:
     # Slot allocation helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_scalar_state(v: Any) -> bool:
+        """True for scalar values we want to round-trip in optimizer state.
+        Skips the 'params' list and any other non-scalar object."""
+        return isinstance(v, (int, float, bool)) or (
+            isinstance(v, torch.Tensor) and v.numel() <= 1
+        )
+
     def _allocate_empty_slot(self, model_chunks, optimizer) -> AdapterSlot:
         slot = AdapterSlot()
         # Param data + grad data: one pinned bf16 tensor each per (mc, buffer).
@@ -189,11 +201,31 @@ class AdapterStore:
                 for main_param in group:
                     main_g.append(_new_pinned_like(main_param))
                     state = _opt.optimizer.state.get(main_param, {})
-                    state_g.append({k: _new_pinned_like(v) for k, v in state.items() if isinstance(v, torch.Tensor)})
+                    # Tensor entries get pinned-CPU mirrors; non-tensor scalar
+                    # entries (e.g. PyTorch Adam's `state['step']` Python int)
+                    # are stored by value and re-applied on restore. Without
+                    # this, the global Adam step counter leaks across adapters
+                    # and breaks bias correction — see SEQ-vs-ALT repro.
+                    state_g.append(
+                        {
+                            k: _new_pinned_like(v) if isinstance(v, torch.Tensor) else v
+                            for k, v in state.items()
+                        }
+                    )
                 opt_main.append(main_g)
                 opt_state.append(state_g)
             slot.cpu_main_param.append(opt_main)
             slot.cpu_opt_state.append(opt_state)
+            # Per-param-group scalar state (notably TE FusedAdam's `step`).
+            # We don't snapshot the `params` list or any non-scalar field;
+            # static config (lr/betas/eps/weight_decay) is left to whatever
+            # the live optimizer carries. Only dynamic counters round-trip.
+            group_state: List[dict] = []
+            for pg in _opt.optimizer.param_groups:
+                group_state.append(
+                    {k: v for k, v in pg.items() if self._is_scalar_state(v)}
+                )
+            slot.cpu_param_group_state.append(group_state)
         return slot
 
     @torch.no_grad()
@@ -210,8 +242,18 @@ class AdapterStore:
                     state = _opt.optimizer.state.get(main_param, {})
                     cpu_state = slot.cpu_opt_state[opt_idx][g][i]
                     for k, v in state.items():
-                        if isinstance(v, torch.Tensor) and k in cpu_state:
-                            cpu_state[k].copy_(v, non_blocking=True)
+                        if isinstance(v, torch.Tensor):
+                            if k in cpu_state and isinstance(cpu_state[k], torch.Tensor):
+                                cpu_state[k].copy_(v, non_blocking=True)
+                        else:
+                            # Python scalar (e.g. Adam's int `step`); copy by value.
+                            cpu_state[k] = v
+            # Per-param-group scalar state (TE FusedAdam tracks `step` here).
+            for pg_idx, pg in enumerate(_opt.optimizer.param_groups):
+                slot_pg = slot.cpu_param_group_state[opt_idx][pg_idx]
+                for k, v in pg.items():
+                    if self._is_scalar_state(v):
+                        slot_pg[k] = v
 
     @torch.no_grad()
     def _restore(self, slot: AdapterSlot, model_chunks, optimizer) -> None:
@@ -226,9 +268,30 @@ class AdapterStore:
                     main_param.copy_(slot.cpu_main_param[opt_idx][g][i], non_blocking=True)
                     state = _opt.optimizer.state.get(main_param, {})
                     cpu_state = slot.cpu_opt_state[opt_idx][g][i]
-                    for k, v in state.items():
-                        if isinstance(v, torch.Tensor) and k in cpu_state:
-                            v.copy_(cpu_state[k], non_blocking=True)
+                    # Restore both tensor and non-tensor entries: tensors get
+                    # copy_() into existing GPU storage; Python scalars (e.g.
+                    # Adam's int `step`) get assigned back into the live
+                    # optimizer.state dict so the next .step() bias-corrects
+                    # using this adapter's own step count, not a global one.
+                    for k, slot_v in cpu_state.items():
+                        if isinstance(slot_v, torch.Tensor):
+                            live_v = state.get(k)
+                            if isinstance(live_v, torch.Tensor):
+                                live_v.copy_(slot_v, non_blocking=True)
+                        else:
+                            state[k] = slot_v
+            # Restore per-param-group scalars (TE FusedAdam's `step`, etc.).
+            for pg_idx, pg in enumerate(_opt.optimizer.param_groups):
+                slot_pg = slot.cpu_param_group_state[opt_idx][pg_idx]
+                for k, slot_v in slot_pg.items():
+                    if isinstance(slot_v, torch.Tensor):
+                        live_v = pg.get(k)
+                        if isinstance(live_v, torch.Tensor):
+                            live_v.copy_(slot_v, non_blocking=True)
+                        else:
+                            pg[k] = slot_v.clone()
+                    else:
+                        pg[k] = slot_v
 
     # ------------------------------------------------------------------
     # Public API used by the worker
@@ -297,9 +360,22 @@ class AdapterStore:
         for opt_idx, opt_groups in enumerate(src.cpu_opt_state):
             for g, group in enumerate(opt_groups):
                 for i, state in enumerate(group):
+                    dst_state = dst.cpu_opt_state[opt_idx][g][i]
                     for k, v in state.items():
-                        if k in dst.cpu_opt_state[opt_idx][g][i]:
-                            dst.cpu_opt_state[opt_idx][g][i][k].copy_(v)
+                        if isinstance(v, torch.Tensor):
+                            if k in dst_state and isinstance(dst_state[k], torch.Tensor):
+                                dst_state[k].copy_(v)
+                        else:
+                            dst_state[k] = v
+        # Per-param-group scalar state (TE FusedAdam's step lives here).
+        for opt_idx, src_groups in enumerate(src.cpu_param_group_state):
+            for pg_idx, src_pg in enumerate(src_groups):
+                dst_pg = dst.cpu_param_group_state[opt_idx][pg_idx]
+                for k, v in src_pg.items():
+                    if isinstance(v, torch.Tensor):
+                        dst_pg[k] = v.clone()
+                    else:
+                        dst_pg[k] = v
 
     @torch.no_grad()
     def delete(self, model_id: str) -> None:
