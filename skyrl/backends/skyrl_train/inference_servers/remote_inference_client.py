@@ -114,23 +114,6 @@ def _extract_session_id_and_body(
     return session_id, clean_body
 
 
-def _require_model(body: Dict[str, Any], method_name: str) -> str:
-    """Return ``body["model"]``, raising ``ValueError`` if missing or empty.
-
-    The client deliberately does not fall back to any default — every caller
-    must explicitly identify the target base model or LoRA adapter so multi-
-    LoRA routing is unambiguous.
-    """
-    model = body.get("model")
-    if not model:
-        raise ValueError(
-            f"RemoteInferenceClient.{method_name}: request body must include a "
-            f"non-empty 'model' field identifying the target base model or "
-            f"LoRA adapter."
-        )
-    return model
-
-
 class PauseMode(Enum):
     """
     Pause mode for inference servers.
@@ -230,12 +213,7 @@ class RemoteInferenceClient:
     """True when the trainer syncs LoRA adapters (rather than full/merged weights). When True,
     `sleep()` is forced to level=1: level=2 discards the base model from VRAM with no CPU backup,
     and LoRA-only broadcasts cannot repopulate it. Must be kept in sync with the same gate vLLM
-    uses for `enable_lora` (see `_uses_lora_weight_sync` in inference_servers/utils.py).
-
-    Note: the legacy ``active_lora_name`` field was removed by PR #1579 — multi-LoRA addresses
-    each adapter by the name passed in the ``model`` field of every data-plane call rather than
-    via a single client-wide default. Workers register adapters via ``load_lora_adapter(name, ...)``.
-    """
+    uses for `enable_lora` (see `_uses_lora_weight_sync` in inference_servers/utils.py)."""
 
     tokenizer: Optional[Any] = None
     """Optional HF tokenizer for local tokenize/detokenize (avoids HTTP round-trips)."""
@@ -348,10 +326,30 @@ class RemoteInferenceClient:
     # Data Plane
     # ---------------------------
 
+    def _resolve_model(self, model: Optional[str], method_name: str) -> str:
+        """Pick the target model name for a data-plane call.
+
+        - If ``model`` is non-empty, use it as-is.
+        - Otherwise, when LoRA is in use (``uses_lora_weight_sync=True``) raise
+          ``ValueError`` — the caller must name the adapter explicitly because
+          falling back to the base model would silently bypass LoRA.
+        - Otherwise return ``self.model_name`` (the base model the server was
+          started with).
+        """
+        if model:
+            return model
+        if self.uses_lora_weight_sync:
+            raise ValueError(
+                f"RemoteInferenceClient.{method_name}: `model` is required when LoRA "
+                f"is enabled (uses_lora_weight_sync=True). Pass the LoRA adapter name "
+                f"explicitly so the request doesn't silently target the base model."
+            )
+        return self.model_name
+
     async def generate(
         self,
         input_batch: InferenceEngineInput,
-        model: str,
+        model: Optional[str] = None,
     ) -> InferenceEngineOutput:
         """
         Generate completions via /v1/completions.
@@ -367,14 +365,14 @@ class RemoteInferenceClient:
 
         Args:
             input_batch: Contains prompt_token_ids, sampling_params, and optional session_ids.
-            model: Required model identifier — the base model name or a loaded
-                LoRA adapter name. Callers must always supply this; the client
-                does not fall back to any default. Use ``self.model_name`` if
-                you want the client's configured default.
+            model: Optional model identifier — the base model name or a loaded
+                LoRA adapter name. When omitted, defaults to ``self.model_name``
+                if LoRA is not in use; raises ``ValueError`` if it is.
 
         Returns:
             InferenceEngineOutput with responses, response_ids, and stop_reasons.
         """
+        model = self._resolve_model(model, "generate")
 
         prompt_token_ids = input_batch.get("prompt_token_ids")
         if prompt_token_ids is None:
@@ -596,14 +594,16 @@ class RemoteInferenceClient:
 
         Args:
             request_payload: SampleRequestPayload with {"json": <request-body>}.
-                Expected keys in json: model, prompt, num_samples, sampling_params,
+                Expected keys in json: prompt, num_samples, sampling_params,
                 session_id, include_prompt_logprobs (bool), topk_prompt_logprobs (int).
+                ``model`` is optional and resolved via ``_resolve_model``.
 
         Returns:
             SampleResponse with type="sample", sequences list, prompt_logprobs, and topk_prompt_logprobs.
         """
         session_id, body = _extract_session_id_and_body(request_payload)
-        model = _require_model(body, "sample")
+        model = self._resolve_model(body.get("model"), "sample")
+        body["model"] = model
 
         prompt = body.get("prompt", {})
         num_samples = body.get("num_samples", 1)
@@ -718,16 +718,16 @@ class RemoteInferenceClient:
         Args:
             request_payload: Dict with {"json": <request-body>, "headers": <headers-dict>}.
                 The request body must be an OpenAI-compatible chat completion
-                request and is required to include a ``model`` field
-                identifying the base model or a loaded LoRA adapter; the
-                client does not fall back to any default. ``session_id`` can
-                be included in the body for consistent routing.
+                request. ``model`` is optional and resolved via
+                ``_resolve_model``; if omitted the body is mutated to inject the
+                resolved value before forwarding to vLLM. ``session_id`` can be
+                included in the body for consistent routing.
 
         Returns:
             OpenAI-compatible chat completion response.
         """
         session_id, body = _extract_session_id_and_body(request_payload)
-        _require_model(body, "chat_completion")
+        body["model"] = self._resolve_model(body.get("model"), "chat_completion")
 
         headers = {"Content-Type": "application/json"}
         if session_id:
@@ -750,14 +750,16 @@ class RemoteInferenceClient:
 
         Args:
             request_payload: Dict with {"json": <request-body>}.
-                The request body should be OpenAI-compatible chat completion request.
-                session_id can be included in json for consistent routing.
+                The request body should be OpenAI-compatible chat completion
+                request. ``model`` is optional and resolved via
+                ``_resolve_model``. session_id can be included in json for
+                consistent routing.
 
         Returns:
             Rendered chat completion response (template-applied prompt and token IDs).
         """
         session_id, body = _extract_session_id_and_body(request_payload)
-        _require_model(body, "render_chat_completion")
+        body["model"] = self._resolve_model(body.get("model"), "render_chat_completion")
 
         headers = {"Content-Type": "application/json"}
         if session_id:
@@ -780,14 +782,16 @@ class RemoteInferenceClient:
 
         Args:
             request_payload: Dict with {"json": <request-body>, "headers": <headers-dict>}.
-                The request body should be OpenAI-compatible completion request.
-                session_id can be included in json for consistent routing.
+                The request body should be OpenAI-compatible completion
+                request. ``model`` is optional and resolved via
+                ``_resolve_model``. session_id can be included in json for
+                consistent routing.
 
         Returns:
             OpenAI-compatible completion response.
         """
         session_id, body = _extract_session_id_and_body(request_payload)
-        _require_model(body, "completion")
+        body["model"] = self._resolve_model(body.get("model"), "completion")
 
         headers = {"Content-Type": "application/json"}
         if session_id:
@@ -1143,62 +1147,44 @@ class RemoteInferenceClient:
         self,
         lora_name: str,
         lora_path: str,
-        load_inplace: bool = True,
     ) -> Dict[str, Any]:
         """
-        Load (or reload) a LoRA adapter on all backend servers via /v1/load_lora_adapter.
+        Load (or reload) a LoRA adapter on all backend servers via the SkyRL
+        custom /skyrl/v1/load_lora_adapter endpoint.
 
         After loading, generation/chat/completion requests can target this LoRA
-        by passing ``model=lora_name`` (or by setting it as the client's
-        ``model_name``). When ``load_inplace=True`` and an adapter with the
-        same name is already registered on the server, vLLM replaces it
-        inplace, preserving its internal int id.
+        by passing ``model=lora_name``.
 
-        TODO(aaron): remove _unload_on_server and add back "load_inplace": True to payload after
-        vllm lora disk load bug is fixed.
+        TODO(aaron): switch back to vLLM's /v1/load_lora_adapter once the
+        upstream fix in https://github.com/vllm-project/vllm/pull/41482 lands
+        in a vLLM release we depend on.
+
+        The custom endpoint (defined in vllm_server_actor.py) wraps add_lora
+        with load_inplace=True (so the engine reloads the freshly-written
+        safetensors) and then resets the cached LoRARequest's load_inplace=False
+        (so subsequent generates don't reload from disk on every step). This
+        avoids two vLLM 0.19.0 bugs that surface under colocate_all + tp=1 +
+        num_engines>=2 — see vllm_server_actor.py:_skyrl_load_lora_adapter for
+        the detailed explanation.
 
         Args:
             lora_name: Name to register the adapter under on each server.
             lora_path: Path to the LoRA adapter on disk (must be accessible from servers).
-            load_inplace: When True (default), reloading a previously-loaded and cached
-                adapter with the same name replaces it with the on-disk lora.
 
         Returns:
             Dict mapping server_url to response.
         """
-        # Both endpoints return plain text on success or JSON ErrorResponse on failure,
-        # so we use a session.post directly rather than _call_all_servers (which expects JSON).
-        # ``load_inplace`` is currently unused: until the upstream vLLM in-place reload bug
-        # is fixed (see TODO above) we always do explicit unload-then-load.
-        _ = load_inplace
         session = await self._get_session()
 
-        async def _unload_on_server(server_url: str) -> None:
-            """Remove the cached LoRARequest server-side. 404 on the first sync is expected."""
-            url = f"{server_url}/v1/unload_lora_adapter"
-            async with session.post(url, json={"lora_name": lora_name}) as resp:
-                if resp.status == 404:
-                    return
+        async def _load_on_server(server_url: str):
+            url = f"{server_url}/skyrl/v1/load_lora_adapter"
+            payload = {"lora_name": lora_name, "lora_path": lora_path}
+            async with session.post(url, json=payload) as resp:
                 if resp.status >= 400:
                     body = await resp.json()
                     raise_for_status(resp, body)
-
-        async def _load_on_server(server_url: str):
-            url = f"{server_url}/v1/load_lora_adapter"
-            payload = {"lora_name": lora_name, "lora_path": lora_path}
-            async with session.post(url, json=payload) as resp:
-                # vLLM returns 200 with text body on success, or JSON ErrorResponse on failure.
-                # Tolerate non-JSON error bodies (e.g. plain-text 5xx from a proxy):
-                # fall back to the text body so raise_for_status still surfaces it.
-                if resp.status >= 400:
-                    try:
-                        body = await resp.json(content_type=None)
-                    except Exception:
-                        body = await resp.text()
-                    raise_for_status(resp, body)
                 return server_url, {"status": resp.status, "body": await resp.text()}
 
-        await asyncio.gather(*[_unload_on_server(url) for url in self.server_urls])
         results = await asyncio.gather(*[_load_on_server(url) for url in self.server_urls])
 
         logger.info(f"Loaded LoRA adapter '{lora_name}' from {lora_path}")
@@ -1228,12 +1214,8 @@ class RemoteInferenceClient:
         async def _unload_on_server(server_url: str):
             url = f"{server_url}/v1/unload_lora_adapter"
             async with session.post(url, json=payload) as resp:
-                # See _load_on_server for the JSON/text fallback rationale.
                 if resp.status >= 400:
-                    try:
-                        body = await resp.json(content_type=None)
-                    except Exception:
-                        body = await resp.text()
+                    body = await resp.json()
                     raise_for_status(resp, body)
                 return server_url, {"status": resp.status, "body": await resp.text()}
 

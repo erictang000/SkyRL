@@ -236,25 +236,15 @@ def create_mock_vllm_server(server_id: int) -> FastAPI:
     async def update_weights(request: Request):
         return {"status": "ok", "server_id": server_id}
 
-    @app.post("/v1/load_lora_adapter")
+    @app.post("/skyrl/v1/load_lora_adapter")
     async def load_lora_adapter(request: Request):
         body = await request.json()
         lora_name = body.get("lora_name")
         lora_path = body.get("lora_path")
-        load_inplace = body.get("load_inplace", True)
         if lora_name is None or lora_path is None:
             return JSONResponse(
                 status_code=400,
                 content={"object": "error", "message": "missing lora_name/lora_path", "type": "BadRequest"},
-            )
-        if lora_name in app.state.lora_registry and not load_inplace:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "object": "error",
-                    "message": f"adapter '{lora_name}' already loaded",
-                    "type": "BadRequest",
-                },
             )
         app.state.lora_registry[lora_name] = lora_path
         return PlainTextResponse(f"Success: LoRA adapter '{lora_name}' added successfully on server {server_id}.")
@@ -370,7 +360,7 @@ class TestDataPlane:
             "prompt_token_ids": [[1, 2, 3], [4, 5, 6]],
             "sampling_params": {"max_tokens": 100},
         }
-        result = await client.generate(input_batch, model=client.model_name)
+        result = await client.generate(input_batch)
 
         assert "responses" in result
         assert "stop_reasons" in result
@@ -386,7 +376,7 @@ class TestDataPlane:
             "prompt_token_ids": [[1, 2, 3]],
             "session_ids": ["test-session"],
         }
-        result = await client.generate(input_batch, model=client.model_name)
+        result = await client.generate(input_batch)
         assert len(result["responses"]) == 1
 
     @pytest.mark.asyncio
@@ -838,7 +828,7 @@ class TestMultiModalGeneration:
             "sampling_params": {"max_tokens": 50},
             "mm_features": [mm_features],
         }
-        result = await client.generate(input_batch, model=client.model_name)
+        result = await client.generate(input_batch)
 
         assert len(result["responses"]) == 1
         assert len(result["response_ids"]) == 1
@@ -912,22 +902,13 @@ class TestLoRAControlPlane:
     @pytest.mark.asyncio
     async def test_load_lora_adapter_inplace_reload(self, client, mock_servers):
         await client.load_lora_adapter("lora-X", "/tmp/path/v1")
-        await client.load_lora_adapter("lora-X", "/tmp/path/v2", load_inplace=True)
+        await client.load_lora_adapter("lora-X", "/tmp/path/v2")
 
         registries = await _get_lora_registries(mock_servers["server_urls"])
         for reg in registries:
             assert reg.get("lora-X") == "/tmp/path/v2"
 
         await client.unload_lora_adapter("lora-X")
-
-    @pytest.mark.asyncio
-    async def test_load_lora_adapter_inplace_false_raises_on_conflict(self, client):
-        await client.load_lora_adapter("lora-conflict", "/tmp/path/orig")
-        try:
-            with pytest.raises(aiohttp.ClientResponseError):
-                await client.load_lora_adapter("lora-conflict", "/tmp/path/other", load_inplace=False)
-        finally:
-            await client.unload_lora_adapter("lora-conflict")
 
     @pytest.mark.asyncio
     async def test_unload_lora_adapter_fans_out(self, client, mock_servers):
@@ -960,13 +941,18 @@ class TestLoRAControlPlane:
 
 
 class TestExplicitModelRequired:
-    """Every data-plane call must explicitly identify the target model.
+    """Data-plane ``model`` resolution rules.
 
-    ``generate`` takes ``model`` as a required keyword argument; the body-style
-    methods (``sample``, ``chat_completion``, ``completion``,
-    ``render_chat_completion``) require it inside the request body. There is
-    no fallback to ``client.model_name`` on the data plane — that field is
-    only used internally for ``tokenize``/``detokenize``.
+    Every data-plane method (``generate``, ``sample``, ``chat_completion``,
+    ``completion``, ``render_chat_completion``) follows the same rule:
+
+    - If a non-empty ``model`` is supplied (kwarg for ``generate``, body field
+      for the others) it is threaded through to the server as-is.
+    - If no model is supplied and LoRA is **not** in use
+      (``uses_lora_weight_sync=False``), the call falls back to
+      ``client.model_name``.
+    - If no model is supplied and LoRA **is** in use, the call raises
+      ``ValueError`` so requests don't silently target the base model.
     """
 
     @pytest.mark.asyncio
@@ -990,7 +976,7 @@ class TestExplicitModelRequired:
             await client.teardown()
 
     @pytest.mark.asyncio
-    async def test_generate_requires_model_kwarg(self, mock_servers):
+    async def test_generate_defaults_to_base_when_no_lora(self, mock_servers):
         client = RemoteInferenceClient(
             proxy_url=mock_servers["proxy_url"],
             server_urls=mock_servers["server_urls"],
@@ -1002,9 +988,28 @@ class TestExplicitModelRequired:
                 "prompt_token_ids": [[1, 2, 3]],
                 "sampling_params": {"max_tokens": 50},
             }
-            with pytest.raises(TypeError):
-                # ``model`` is required (positional/keyword-only) on the new client.
-                await client.generate(input_batch)  # type: ignore[call-arg]
+            await client.generate(input_batch)
+            captured = await _get_last_models(mock_servers["server_urls"])
+            assert captured[0]["generate"] == "base-model"
+        finally:
+            await client.teardown()
+
+    @pytest.mark.asyncio
+    async def test_generate_raises_when_lora_and_no_model(self, mock_servers):
+        client = RemoteInferenceClient(
+            proxy_url=mock_servers["proxy_url"],
+            server_urls=mock_servers["server_urls"],
+            model_name="base-model",
+            uses_lora_weight_sync=True,
+            data_parallel_size=1,
+        )
+        try:
+            input_batch = {
+                "prompt_token_ids": [[1, 2, 3]],
+                "sampling_params": {"max_tokens": 50},
+            }
+            with pytest.raises(ValueError, match="LoRA is enabled"):
+                await client.generate(input_batch)
         finally:
             await client.teardown()
 
@@ -1031,7 +1036,7 @@ class TestExplicitModelRequired:
             await client.teardown()
 
     @pytest.mark.asyncio
-    async def test_chat_completion_missing_model_raises(self, mock_servers):
+    async def test_chat_completion_defaults_to_base_when_no_lora(self, mock_servers):
         client = RemoteInferenceClient(
             proxy_url=mock_servers["proxy_url"],
             server_urls=mock_servers["server_urls"],
@@ -1043,7 +1048,27 @@ class TestExplicitModelRequired:
                 "json": {"messages": [{"role": "user", "content": "hi"}]},
                 "headers": {},
             }
-            with pytest.raises(ValueError, match="must include a non-empty 'model' field"):
+            await client.chat_completion(request_payload)
+            captured = await _get_last_models(mock_servers["server_urls"])
+            assert captured[0]["chat"] == "base-model"
+        finally:
+            await client.teardown()
+
+    @pytest.mark.asyncio
+    async def test_chat_completion_raises_when_lora_and_no_model(self, mock_servers):
+        client = RemoteInferenceClient(
+            proxy_url=mock_servers["proxy_url"],
+            server_urls=mock_servers["server_urls"],
+            model_name="base-model",
+            uses_lora_weight_sync=True,
+            data_parallel_size=1,
+        )
+        try:
+            request_payload = {
+                "json": {"messages": [{"role": "user", "content": "hi"}]},
+                "headers": {},
+            }
+            with pytest.raises(ValueError, match="LoRA is enabled"):
                 await client.chat_completion(request_payload)
         finally:
             await client.teardown()
@@ -1068,7 +1093,7 @@ class TestExplicitModelRequired:
             await client.teardown()
 
     @pytest.mark.asyncio
-    async def test_completion_missing_model_raises(self, mock_servers):
+    async def test_completion_defaults_to_base_when_no_lora(self, mock_servers):
         client = RemoteInferenceClient(
             proxy_url=mock_servers["proxy_url"],
             server_urls=mock_servers["server_urls"],
@@ -1077,7 +1102,24 @@ class TestExplicitModelRequired:
         )
         try:
             request_payload = {"json": {"prompt": "hello"}, "headers": {}}
-            with pytest.raises(ValueError, match="must include a non-empty 'model' field"):
+            await client.completion(request_payload)
+            captured = await _get_last_models(mock_servers["server_urls"])
+            assert captured[0]["completion"] == "base-model"
+        finally:
+            await client.teardown()
+
+    @pytest.mark.asyncio
+    async def test_completion_raises_when_lora_and_no_model(self, mock_servers):
+        client = RemoteInferenceClient(
+            proxy_url=mock_servers["proxy_url"],
+            server_urls=mock_servers["server_urls"],
+            model_name="base-model",
+            uses_lora_weight_sync=True,
+            data_parallel_size=1,
+        )
+        try:
+            request_payload = {"json": {"prompt": "hello"}, "headers": {}}
+            with pytest.raises(ValueError, match="LoRA is enabled"):
                 await client.completion(request_payload)
         finally:
             await client.teardown()
@@ -1105,7 +1147,7 @@ class TestExplicitModelRequired:
             await client.teardown()
 
     @pytest.mark.asyncio
-    async def test_render_chat_completion_missing_model_raises(self, mock_servers):
+    async def test_render_chat_completion_defaults_to_base_when_no_lora(self, mock_servers):
         client = RemoteInferenceClient(
             proxy_url=mock_servers["proxy_url"],
             server_urls=mock_servers["server_urls"],
@@ -1114,7 +1156,25 @@ class TestExplicitModelRequired:
         )
         try:
             request_payload = {"json": {"messages": [{"role": "user", "content": "hi"}]}}
-            with pytest.raises(ValueError, match="must include a non-empty 'model' field"):
+            result = await client.render_chat_completion(request_payload)
+            assert result["model"] == "base-model"
+            captured = await _get_last_models(mock_servers["server_urls"])
+            assert captured[0]["render"] == "base-model"
+        finally:
+            await client.teardown()
+
+    @pytest.mark.asyncio
+    async def test_render_chat_completion_raises_when_lora_and_no_model(self, mock_servers):
+        client = RemoteInferenceClient(
+            proxy_url=mock_servers["proxy_url"],
+            server_urls=mock_servers["server_urls"],
+            model_name="base-model",
+            uses_lora_weight_sync=True,
+            data_parallel_size=1,
+        )
+        try:
+            request_payload = {"json": {"messages": [{"role": "user", "content": "hi"}]}}
+            with pytest.raises(ValueError, match="LoRA is enabled"):
                 await client.render_chat_completion(request_payload)
         finally:
             await client.teardown()
@@ -1143,7 +1203,7 @@ class TestExplicitModelRequired:
             await client.teardown()
 
     @pytest.mark.asyncio
-    async def test_sample_missing_model_raises(self, mock_servers):
+    async def test_sample_defaults_to_base_when_no_lora(self, mock_servers):
         client = RemoteInferenceClient(
             proxy_url=mock_servers["proxy_url"],
             server_urls=mock_servers["server_urls"],
@@ -1158,7 +1218,30 @@ class TestExplicitModelRequired:
                     "sampling_params": {"temperature": 0.7, "max_tokens": 16},
                 }
             }
-            with pytest.raises(ValueError, match="must include a non-empty 'model' field"):
+            await client.sample(request_payload)
+            captured = await _get_last_models(mock_servers["server_urls"])
+            assert captured[0]["generate"] == "base-model"
+        finally:
+            await client.teardown()
+
+    @pytest.mark.asyncio
+    async def test_sample_raises_when_lora_and_no_model(self, mock_servers):
+        client = RemoteInferenceClient(
+            proxy_url=mock_servers["proxy_url"],
+            server_urls=mock_servers["server_urls"],
+            model_name="base-model",
+            uses_lora_weight_sync=True,
+            data_parallel_size=1,
+        )
+        try:
+            request_payload = {
+                "json": {
+                    "prompt": {"chunks": [{"tokens": [1, 2, 3]}]},
+                    "num_samples": 1,
+                    "sampling_params": {"temperature": 0.7, "max_tokens": 16},
+                }
+            }
+            with pytest.raises(ValueError, match="LoRA is enabled"):
                 await client.sample(request_payload)
         finally:
             await client.teardown()
