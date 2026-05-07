@@ -203,7 +203,6 @@ async def test_sample_with_multimodal_image(module_scoped_ray_init_fixture):
 
         request_payload = {
             "json": {
-                "model": MODEL_QWEN3_VL,
                 "prompt": prompt,
                 "num_samples": 1,
                 "sampling_params": {"temperature": 0.0, "max_tokens": 20},
@@ -410,7 +409,7 @@ async def test_generate_with_multimodal_features_red_square(module_scoped_ray_in
             "sampling_params": {"max_tokens": 64, "temperature": 0.0},
             "mm_features": [features],
         }
-        gen_result = await client.generate(input_batch, model=client.model_name)
+        gen_result = await client.generate(input_batch)
 
         # Structural assertions
         assert len(gen_result["responses"]) == 1
