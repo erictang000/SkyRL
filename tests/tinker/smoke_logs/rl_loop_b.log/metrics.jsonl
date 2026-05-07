@@ -1,4 +1,0 @@
-{"step": 0, "progress/batch": 0, "optim/lr": 4e-05, "progress/done_frac": 0.017241379310344827, "skyrl.ai/grad_norm": 2784.973608492547, "skyrl.ai/learning_rate": 4e-05, "time/total": 329.02124428749084, "reward/total": 0.0166015625}
-{"step": 1, "progress/batch": 1, "optim/lr": 4e-05, "progress/done_frac": 0.034482758620689655, "skyrl.ai/grad_norm": 3172.6518876170453, "skyrl.ai/learning_rate": 4e-05, "time/total": 294.9538412094116, "reward/total": 0.0302734375}
-{"step": 2, "progress/batch": 2, "optim/lr": 4e-05, "progress/done_frac": 0.05172413793103448, "skyrl.ai/grad_norm": 2699.6198806498664, "skyrl.ai/learning_rate": 4e-05, "time/total": 407.53840494155884, "reward/total": 0.029296875}
-{"step": 3, "progress/batch": 3, "optim/lr": 4e-05, "progress/done_frac": 0.06896551724137931, "skyrl.ai/grad_norm": 4655.835048624468, "skyrl.ai/learning_rate": 4e-05, "time/total": 686.2968535423279, "reward/total": 0.05419921875}

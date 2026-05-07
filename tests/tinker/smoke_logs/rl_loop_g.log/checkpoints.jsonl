@@ -1,3 +1,0 @@
-{"name": "000020", "batch": 20, "state_path": "tinker://model_33022fca/weights/000020"}
-{"name": "000040", "batch": 40, "state_path": "tinker://model_33022fca/weights/000040"}
-{"name": "final", "batch": 58, "state_path": "tinker://model_33022fca/weights/final", "sampler_path": "tinker://model_33022fca/final"}
