@@ -48,7 +48,7 @@ from skyrl.backends.skyrl_train.weight_sync import (
 from skyrl.backends.skyrl_train.workers.megatron.adapter_store import (
     AdapterStore,
     LoraSignature,
-    _iter_opts,
+    iter_opts,
 )
 from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
     MegatronModelWrapper,
@@ -964,7 +964,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         if not self._is_lora:
             raise RuntimeError("prime_optimizer_state is only used on the LoRA path")
-        for _opt in _iter_opts(self.optimizer):
+        for _opt in iter_opts(self.optimizer):
             init_fn = getattr(_opt, "_init_optimizer_states_with_dummy_values", None)
             if init_fn is not None:
                 init_fn()
@@ -1014,7 +1014,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         return {
             "enabled": True,
             "current_id": self.adapter_store.current_id,
-            "registered": list(self.adapter_store._slots.keys()),
+            "registered": self.adapter_store.registered_ids(),
             "num_adapters": self.adapter_store.num_adapters(),
         }
 

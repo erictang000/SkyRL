@@ -91,21 +91,6 @@ class WorkerDispatch:
             return
         ray.get(self._actor_groups[role].async_run_ray_method("pass_through", "swap_to_adapter", model_id))
 
-    def prime_adapter_store(self, role: str, model_id: str) -> None:
-        """One-shot bootstrap on first create_model: prime the optimizer
-        state, register the pristine slot, and register the first adapter.
-
-        The model + optimizer must be on GPU when this is called (the
-        controller calls this immediately after _build_policy and before
-        any colocate_all offload).
-        """
-        if role not in self._actor_groups:
-            return
-        group = self._actor_groups[role]
-        ray.get(group.async_run_ray_method("pass_through", "prime_optimizer_state"))
-        ray.get(group.async_run_ray_method("pass_through", "register_pristine_adapter"))
-        ray.get(group.async_run_ray_method("pass_through", "register_adapter", model_id))
-
     def register_adapter(self, role: str, model_id: str) -> None:
         """Register a new adapter slot on every worker (subsequent
         create_model). Pristine must already exist.
@@ -336,11 +321,9 @@ class WorkerDispatch:
         return statuses[0]
 
     def optim_step(self, model: str, model_id: Optional[str] = None) -> Optional[float]:
-        """Run optimizer step. Model should already be on GPU from forward_backward.
+        """Run optimizer step. For single-tenant training, the model should already be on GPU from forward_backward.
 
-        ``model_id`` is honored for safety (the previous forward_backward
-        already swapped the right adapter in, but a stale call ordering
-        would otherwise step on the wrong adapter's optimizer state).
+        For multi-tenant LoRA training, ``model_id`` is used to ensure the correct adapter is used.
         """
         self.ensure_active_adapter(model, model_id)
         refs = self._actor_groups[model].async_run_ray_method("pass_through", "optim_step")

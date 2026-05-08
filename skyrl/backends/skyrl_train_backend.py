@@ -250,11 +250,11 @@ class SkyRLTrainBackend(AbstractBackend):
         )
         ray.get(policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id))
 
-        # Multi-LoRA bootstrap: prime DistributedOptimizer state and snapshot
-        # the freshly-initialised LoRA into a per-worker pristine slot, then
-        # register the first adapter under `model_id`. Must happen while the
-        # model + optimizer are still GPU-resident (i.e. before the offload).
         if is_lora:
+            # For multi-tenant LoRA training: prime DistributedOptimizer state and snapshot
+            # the freshly-initialised LoRA into a per-worker pristine slot, then
+            # register the first adapter under `model_id`. Must happen while the
+            # model + optimizer are still GPU-resident (i.e. before the offload).
             ray.get(policy_model.async_run_ray_method("pass_through", "prime_optimizer_state"))
             ray.get(policy_model.async_run_ray_method("pass_through", "register_pristine_adapter"))
             ray.get(policy_model.async_run_ray_method("pass_through", "register_adapter", model_id))
@@ -355,10 +355,8 @@ class SkyRLTrainBackend(AbstractBackend):
 
     def _lora_signature_from(self, lora_config: types.LoraConfig) -> tuple:
         # Tinker's public LoraConfig only exposes rank + alpha (plus
-        # seed/train_attn/train_mlp/train_unembed, which the SkyRL Megatron
-        # path doesn't honor — target_modules is fixed server-side via
-        # cfg.trainer.policy.model.lora.target_modules). Equality across
-        # adapters therefore reduces to (rank, alpha); the worker-side
+        # seed/train_attn/train_mlp/train_unembed) - pending support https://github.com/NovaSky-AI/SkyRL/issues/1632.
+        # Equality across adapters therefore reduces to (rank, alpha); the worker-side
         # AdapterStore additionally verifies parallel-state equality via
         # its own LoraSignature.
         return (int(lora_config.rank), int(lora_config.alpha))
@@ -391,8 +389,8 @@ class SkyRLTrainBackend(AbstractBackend):
                     f"LoRA signature mismatch for model '{model_id}': "
                     f"got (rank, alpha)={new_signature}, "
                     f"first adapter registered with {self._base_lora_signature}. "
-                    "Multi-LoRA requires identical (rank, alpha) across all "
-                    "adapters in v1; target_modules is fixed server-side."
+                    "Multi-LoRA with the SkyRLTrainBackend requires identical (rank, alpha) across all "
+                    "adapters; target_modules is fixed server-side."
                 )
             self._dispatch.register_adapter("policy", model_id)
             self._model_ids_to_role[model_id] = model_role
