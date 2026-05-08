@@ -336,11 +336,9 @@ class WorkerDispatch:
         return statuses[0]
 
     def optim_step(self, model: str, model_id: Optional[str] = None) -> Optional[float]:
-        """Run optimizer step. Model should already be on GPU from forward_backward.
+        """Run optimizer step. For single-tenant training, the model should already be on GPU from forward_backward.
 
-        ``model_id`` is honored for safety (the previous forward_backward
-        already swapped the right adapter in, but a stale call ordering
-        would otherwise step on the wrong adapter's optimizer state).
+        For multi-tenant LoRA training, ``model_id`` is used to ensure the correct adapter is used.
         """
         self.ensure_active_adapter(model, model_id)
         refs = self._actor_groups[model].async_run_ray_method("pass_through", "optim_step")

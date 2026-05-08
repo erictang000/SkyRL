@@ -249,7 +249,6 @@ class SkyRLTrainBackend(AbstractBackend):
         )
         ray.get(policy_model.async_run_ray_method("pass_through", "_set_pad_token_id", self._tokenizer.pad_token_id))
 
-       
         if is_lora:
             # For multi-tenant LoRA training: prime DistributedOptimizer state and snapshot
             # the freshly-initialised LoRA into a per-worker pristine slot, then
@@ -355,7 +354,7 @@ class SkyRLTrainBackend(AbstractBackend):
 
     def _lora_signature_from(self, lora_config: types.LoraConfig) -> tuple:
         # Tinker's public LoraConfig only exposes rank + alpha (plus
-        # seed/train_attn/train_mlp/train_unembed) - pending support https://github.com/NovaSky-AI/SkyRL/issues/1632. 
+        # seed/train_attn/train_mlp/train_unembed) - pending support https://github.com/NovaSky-AI/SkyRL/issues/1632.
         # Equality across adapters therefore reduces to (rank, alpha); the worker-side
         # AdapterStore additionally verifies parallel-state equality via
         # its own LoraSignature.
