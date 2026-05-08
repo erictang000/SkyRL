@@ -128,10 +128,8 @@ class AdapterSlot:
     # Per-param-group state from optimizer.param_groups[g]. TE FusedAdam (used
     # by Megatron's DistributedOptimizer) tracks `step` here at the group
     # level, not per-param. Without snapshotting this, the step counter
-    # advances globally across adapters and breaks Adam bias correction —
-    # see the SEQ-vs-ALT repro at ~/skyrl-seq-vs-alt-repro.
+    # advances globally across adapters and breaks Adam bias correction.
     cpu_param_group_state: List[List[dict]] = field(default_factory=list)
-    step_count: int = 0
 
 
 class AdapterStore:
@@ -174,9 +172,7 @@ class AdapterStore:
     def _is_scalar_state(v: Any) -> bool:
         """True for scalar values we want to round-trip in optimizer state.
         Skips the 'params' list and any other non-scalar object."""
-        return isinstance(v, (int, float, bool)) or (
-            isinstance(v, torch.Tensor) and v.numel() <= 1
-        )
+        return isinstance(v, (int, float, bool)) or (isinstance(v, torch.Tensor) and v.numel() <= 1)
 
     def _allocate_empty_slot(self, model_chunks, optimizer) -> AdapterSlot:
         slot = AdapterSlot()
@@ -204,13 +200,10 @@ class AdapterStore:
                     # Tensor entries get pinned-CPU mirrors; non-tensor scalar
                     # entries (e.g. PyTorch Adam's `state['step']` Python int)
                     # are stored by value and re-applied on restore. Without
-                    # this, the global Adam step counter leaks across adapters
-                    # and breaks bias correction — see SEQ-vs-ALT repro.
+                    # this, the global Adam step counter would leak across
+                    # adapters and break bias correction.
                     state_g.append(
-                        {
-                            k: _new_pinned_like(v) if isinstance(v, torch.Tensor) else v
-                            for k, v in state.items()
-                        }
+                        {k: _new_pinned_like(v) if isinstance(v, torch.Tensor) else v for k, v in state.items()}
                     )
                 opt_main.append(main_g)
                 opt_state.append(state_g)
@@ -222,9 +215,7 @@ class AdapterStore:
             # the live optimizer carries. Only dynamic counters round-trip.
             group_state: List[dict] = []
             for pg in _opt.optimizer.param_groups:
-                group_state.append(
-                    {k: v for k, v in pg.items() if self._is_scalar_state(v)}
-                )
+                group_state.append({k: v for k, v in pg.items() if self._is_scalar_state(v)})
             slot.cpu_param_group_state.append(group_state)
         return slot
 

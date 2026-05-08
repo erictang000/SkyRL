@@ -204,22 +204,15 @@ def test_sample_with_two_adapters_errors(service_client):
         a.save_weights_and_get_sampling_client(name="should_fail")
 
 
-def test_seq_vs_alt_per_adapter_step_isolation(service_client):
-    """Min repro of the SEQ-vs-ALT divergence flagged in
-    ~/skyrl-seq-vs-alt-repro (against Qwen3-4B on a real pod).
-
-    Two fresh adapters, identical pristine state, identical data. We do an
-    ALT-style sequence (A.step0, B.step0, A.step1, B.step1) and assert that
-    A's pre-update loss == B's pre-update loss at every step (within FP
-    tolerance). Both adapters were pristine when their first step ran, and
-    both received the same parameters after their respective updates, so
-    their losses must match — unless a step counter, scheduler position, or
-    other Adam-bias-correction state leaks across adapters via shared
-    optimizer state.
-
-    The Qwen3-4B repro shows a 0.09-0.45 nat divergence; we use a tighter
-    1e-2 bound here because the tiny model's losses are smaller and the
-    AdapterStore snapshot/restore should keep state['step'] per-adapter.
+def test_per_adapter_step_isolation(service_client):
+    """Two fresh adapters, identical pristine state, identical data. We
+    interleave their fwd_bwd + optim_step calls (A.step0, B.step0, A.step1,
+    B.step1) and assert that A's pre-update loss == B's pre-update loss
+    bit-exact at every step. Both adapters were pristine when their first
+    step ran, and both received the same parameters after their respective
+    updates, so their losses must match — unless a step counter, scheduler
+    position, or other Adam-bias-correction state leaks across adapters via
+    shared optimizer state.
     """
     client_a = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=8)
     client_b = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=8)
@@ -238,8 +231,8 @@ def test_seq_vs_alt_per_adapter_step_isolation(service_client):
     a1 = fb_step(client_a)
     b1 = fb_step(client_b)
     print(
-        f"\n[seq_vs_alt] step 0: A={a0!r} B={b0!r} |Δ|={abs(a0 - b0):.6e}\n"
-        f"[seq_vs_alt] step 1: A={a1!r} B={b1!r} |Δ|={abs(a1 - b1):.6e}"
+        f"\n[step_isolation] step 0: A={a0!r} B={b0!r} |Δ|={abs(a0 - b0):.6e}\n"
+        f"[step_isolation] step 1: A={a1!r} B={b1!r} |Δ|={abs(a1 - b1):.6e}"
     )
 
     # Step 0: both adapters were pristine + saw identical data → bit-exact.
@@ -248,20 +241,13 @@ def test_seq_vs_alt_per_adapter_step_isolation(service_client):
     # Step 1: both adapters had exactly one optim_step from pristine on
     # identical data. With AdapterStore correctly snapshotting both per-
     # param state and per-param-group state (TE FusedAdam tracks the
-    # bias-correction step counter at the group level — see
-    # NovaSky-AI/SkyRL multi_lora @ aca96d0c), both updates use t=2 and
-    # the post-update parameters are bit-identical. Bit-exact loss
-    # follows.
-    #
-    # Pre-fix on the tiny test model this delta was 1.7e-4 (small but
-    # non-zero — the bug WAS present, just below FP-noise on a tiny
-    # output distribution). On Qwen3-4B + PPO it was 0.117 nats. The
-    # bit-exact assertion catches both regressions.
+    # bias-correction step counter at the group level), both updates use
+    # t=2 and the post-update parameters are bit-identical.
     assert a1 == b1, (
         f"step 1 loss diverges between adapters: A={a1!r} B={b1!r} (|Δ|={abs(a1 - b1):.6e}). "
         f"Symmetric prediction of a shared global step counter (TE FusedAdam's "
         f"`param_groups[g]['step']`) advancing on every optim_step instead of being "
-        f"held per-adapter — see ~/skyrl-seq-vs-alt-repro/README.md."
+        f"held per-adapter."
     )
 
 
