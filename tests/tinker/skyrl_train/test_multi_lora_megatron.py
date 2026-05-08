@@ -18,7 +18,7 @@ Test plan (per docs/content/docs/tinker/multi_lora_design.mdx#verification):
 
 
 Run with
-uv run --extra tinker --extra megatron --with pytest --with pytest-timeout python -m pytest -s tests/tinker/test_multi_lora_megatron.py
+uv run --extra tinker --extra megatron --with pytest --with pytest-timeout python -m pytest -s tests/tinker/skyrl_train/test_multi_lora_megatron.py
 """
 
 from __future__ import annotations
