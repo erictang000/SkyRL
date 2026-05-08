@@ -65,7 +65,7 @@ BACKEND_CONFIG = {
 
 
 @contextmanager
-def _api_server(port: int, backend_config: dict | None = None):
+def _api_server(port: int, backend_config: dict | None = None, base_model: str = BASE_MODEL):
     with tempfile.TemporaryDirectory() as tmp_dir:
         log_path = os.path.join(tmp_dir, "server.log")
         db_path = os.path.join(tmp_dir, "server.db")
@@ -84,7 +84,7 @@ def _api_server(port: int, backend_config: dict | None = None):
             "--port",
             str(port),
             "--base-model",
-            BASE_MODEL,
+            base_model,
             "--backend",
             "megatron",
             "--backend-config",
@@ -146,6 +146,26 @@ def server():
 @pytest.fixture
 def service_client(server):
     return tinker.ServiceClient(base_url=f"http://0.0.0.0:{TEST_PORT}/", api_key=TINKER_API_KEY)
+
+
+# ---- Qwen3-0.6B fixtures (separate server, runs once per session) ----
+QWEN3_0_6B = "Qwen/Qwen3-0.6B"
+QWEN3_0_6B_PORT = 8012
+
+
+@pytest.fixture(scope="module")
+def qwen3_0_6b_server():
+    """Larger-model server for tests where the tiny model's loss surface is
+    too small to surface real bugs. Qwen3-0.6B fits comfortably on a single
+    L4 (24 GB): ~1.2 GB bf16 weights + ~1 GB LoRA optimizer state + ~1.2 GB
+    vLLM."""
+    with _api_server(QWEN3_0_6B_PORT, base_model=QWEN3_0_6B) as proc:
+        yield proc
+
+
+@pytest.fixture
+def qwen3_0_6b_service_client(qwen3_0_6b_server):
+    return tinker.ServiceClient(base_url=f"http://0.0.0.0:{QWEN3_0_6B_PORT}/", api_key=TINKER_API_KEY)
 
 
 def test_two_adapters_train_independently(service_client):
@@ -242,25 +262,114 @@ def test_seq_vs_alt_per_adapter_step_isolation(service_client):
         f"[seq_vs_alt] step 1: A={a1!r} B={b1!r} |Δ|={abs(a1 - b1):.6e}"
     )
 
-    # Step 0: both adapters were pristine + saw identical data.
-    assert abs(a0 - b0) < 1e-3, f"step 0 loss differs: A={a0!r} B={b0!r} (Δ={abs(a0 - b0):.6f})"
+    # Step 0: both adapters were pristine + saw identical data → bit-exact.
+    assert a0 == b0, f"step 0 loss differs: A={a0!r} B={b0!r} (Δ={abs(a0 - b0):.6e})"
 
     # Step 1: both adapters had exactly one optim_step from pristine on
-    # identical data. If the per-adapter step counter is correctly
-    # snapshotted/restored by AdapterStore, both updates use Adam at t=2
-    # (after the one-step priming), so their post-update states match and
-    # their step-1 losses match.
+    # identical data. With AdapterStore correctly snapshotting both per-
+    # param state and per-param-group state (TE FusedAdam tracks the
+    # bias-correction step counter at the group level — see
+    # NovaSky-AI/SkyRL multi_lora @ aca96d0c), both updates use t=2 and
+    # the post-update parameters are bit-identical. Bit-exact loss
+    # follows.
     #
-    # If a global step counter advanced (one for A's step 0, one for B's
-    # step 0), B's first real update saw t=3 vs A's t=2, producing a
-    # measurably different update.
-    delta = abs(a1 - b1)
-    assert delta < 1e-2, (
-        f"step 1 loss diverges between adapters: A={a1!r} B={b1!r} (|Δ|={delta:.4f}). "
-        f"Symmetric prediction of a shared global step counter "
-        f"(LR scheduler position or Adam bias-correction step) advancing on every "
-        f"optim_step instead of being held per-adapter — see "
-        f"~/skyrl-seq-vs-alt-repro/README.md."
+    # Pre-fix on the tiny test model this delta was 1.7e-4 (small but
+    # non-zero — the bug WAS present, just below FP-noise on a tiny
+    # output distribution). On Qwen3-4B + PPO it was 0.117 nats. The
+    # bit-exact assertion catches both regressions.
+    assert a1 == b1, (
+        f"step 1 loss diverges between adapters: A={a1!r} B={b1!r} (|Δ|={abs(a1 - b1):.6e}). "
+        f"Symmetric prediction of a shared global step counter (TE FusedAdam's "
+        f"`param_groups[g]['step']`) advancing on every optim_step instead of being "
+        f"held per-adapter — see ~/skyrl-seq-vs-alt-repro/README.md."
+    )
+
+
+def test_seq_vs_alt_qwen3_0_6b_cross_scenario(qwen3_0_6b_service_client):
+    """Larger-model SEQ-vs-ALT regression test, mirroring the upstream
+    repro at ~/skyrl-seq-vs-alt-repro (which uses Qwen3-4B + PPO).
+
+    The bug: TE FusedAdam tracks bias-correction `step` at the
+    `optimizer.param_groups[g]['step']` level, not in the per-param state
+    dict. Before NovaSky-AI/SkyRL multi_lora @ aca96d0c, AdapterStore only
+    snapshotted per-param state, so this counter advanced globally across
+    adapters — giving each new adapter the wrong bias correction
+    proportional to how many optim_steps had fired since policy build.
+
+    Why we need this test alongside the tiny-model one: on
+    trl-internal-testing/tiny-Qwen3ForCausalLM the divergence pre-fix was
+    only 1.7e-4 (well within FP noise). On Qwen3-4B + PPO it was 0.45
+    nats. Qwen3-0.6B + cross_entropy is the smallest configuration that
+    reliably surfaces the bug at a non-trivial magnitude (~0.05-0.2 nats
+    pre-fix) while still fitting on a single L4 GPU.
+
+    The two killer signals from the upstream repro:
+    1. Within scenario: A's loss == B's loss at every step (both
+       adapters were pristine + saw identical data, ran identical
+       optim_step sequence per adapter — modulo when in the global
+       schedule that happened).
+    2. Cross scenario: A_ALT step N == A_SEQ step N (A's per-adapter
+       trajectory must NOT depend on whether B trained in between).
+
+    With the AdapterStore param-group fix in place, all four runs
+    (A_ALT, B_ALT, A_SEQ, B_SEQ) at every step land on the same loss
+    bit-for-bit.
+    """
+    sc = qwen3_0_6b_service_client
+
+    # ---- ALT scenario ----
+    a_alt = sc.create_lora_training_client(base_model=QWEN3_0_6B, rank=8)
+    b_alt = sc.create_lora_training_client(base_model=QWEN3_0_6B, rank=8)
+    tok = a_alt.get_tokenizer()
+    data = [_make_datum(tok, "Question: 1+1?\nAnswer:", " 2")]
+
+    def fb_step(c, lr=1e-4):
+        out = c.forward_backward(data, "cross_entropy").result()
+        loss = sum(sum(o["elementwise_loss"].data) for o in out.loss_fn_outputs)
+        c.optim_step(tinker_types.AdamParams(learning_rate=lr)).result()
+        return loss
+
+    # ALT order: A.0, B.0, A.1, B.1
+    alt_a0 = fb_step(a_alt)
+    alt_b0 = fb_step(b_alt)
+    alt_a1 = fb_step(a_alt)
+    alt_b1 = fb_step(b_alt)
+
+    # ---- SEQ scenario: fresh adapters, sequential order ----
+    a_seq = sc.create_lora_training_client(base_model=QWEN3_0_6B, rank=8)
+    b_seq = sc.create_lora_training_client(base_model=QWEN3_0_6B, rank=8)
+
+    # SEQ order: A.0, A.1, B.0, B.1
+    seq_a0 = fb_step(a_seq)
+    seq_a1 = fb_step(a_seq)
+    seq_b0 = fb_step(b_seq)
+    seq_b1 = fb_step(b_seq)
+
+    print(
+        f"\n[seq_vs_alt_qwen3_0_6b] ALT 0: A={alt_a0!r} B={alt_b0!r}\n"
+        f"[seq_vs_alt_qwen3_0_6b] ALT 1: A={alt_a1!r} B={alt_b1!r}\n"
+        f"[seq_vs_alt_qwen3_0_6b] SEQ 0: A={seq_a0!r} B={seq_b0!r}\n"
+        f"[seq_vs_alt_qwen3_0_6b] SEQ 1: A={seq_a1!r} B={seq_b1!r}\n"
+    )
+
+    # Within-scenario isolation: A and B saw the same data and were both
+    # pristine when their respective fb_step(N) ran.
+    assert alt_a0 == alt_b0, f"ALT step 0 cross-adapter: A={alt_a0!r} B={alt_b0!r}"
+    assert alt_a1 == alt_b1, f"ALT step 1 cross-adapter: A={alt_a1!r} B={alt_b1!r}"
+    assert seq_a0 == seq_b0, f"SEQ step 0 cross-adapter: A={seq_a0!r} B={seq_b0!r}"
+    assert seq_a1 == seq_b1, f"SEQ step 1 cross-adapter: A={seq_a1!r} B={seq_b1!r}"
+
+    # Cross-scenario A independence: A's trajectory must NOT depend on
+    # whether B trained in between A.0 and A.1 (ALT) or didn't (SEQ).
+    assert alt_a0 == seq_a0, (
+        f"A_ALT step 0 ({alt_a0!r}) != A_SEQ step 0 ({seq_a0!r}); "
+        f"both pristine + identical data — pristine snapshot must be deterministic."
+    )
+    assert alt_a1 == seq_a1, (
+        f"A_ALT step 1 ({alt_a1!r}) != A_SEQ step 1 ({seq_a1!r}); "
+        f"|Δ|={abs(alt_a1 - seq_a1):.4f} nats. Symmetric prediction of TE FusedAdam's "
+        f"`param_groups[g]['step']` advancing globally across adapters instead of being "
+        f"held per-adapter — see ~/skyrl-seq-vs-alt-repro/README.md."
     )
 
 
