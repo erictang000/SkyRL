@@ -91,21 +91,6 @@ class WorkerDispatch:
             return
         ray.get(self._actor_groups[role].async_run_ray_method("pass_through", "swap_to_adapter", model_id))
 
-    def prime_adapter_store(self, role: str, model_id: str) -> None:
-        """One-shot bootstrap on first create_model: prime the optimizer
-        state, register the pristine slot, and register the first adapter.
-
-        The model + optimizer must be on GPU when this is called (the
-        controller calls this immediately after _build_policy and before
-        any colocate_all offload).
-        """
-        if role not in self._actor_groups:
-            return
-        group = self._actor_groups[role]
-        ray.get(group.async_run_ray_method("pass_through", "prime_optimizer_state"))
-        ray.get(group.async_run_ray_method("pass_through", "register_pristine_adapter"))
-        ray.get(group.async_run_ray_method("pass_through", "register_adapter", model_id))
-
     def register_adapter(self, role: str, model_id: str) -> None:
         """Register a new adapter slot on every worker (subsequent
         create_model). Pristine must already exist.

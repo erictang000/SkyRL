@@ -19,7 +19,7 @@ from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.optimizer import ChainedOptimizer
 
 
-def _iter_opts(opt) -> List[Any]:
+def iter_opts(opt) -> List[Any]:
     """Yield underlying Megatron optimizers, unwrapping ChainedOptimizer."""
     if isinstance(opt, ChainedOptimizer):
         return list(opt.chained_optimizers)
@@ -164,6 +164,10 @@ class AdapterStore:
     def num_adapters(self) -> int:
         return len(self._slots)
 
+    def registered_ids(self) -> List[str]:
+        """List the model_ids of every registered adapter (excluding pristine)."""
+        return list(self._slots.keys())
+
     # ------------------------------------------------------------------
     # Slot allocation helpers
     # ------------------------------------------------------------------
@@ -187,7 +191,7 @@ class AdapterStore:
             slot.cpu_param_data[mc_idx].append(_new_pinned_like(buf.param_data))
             slot.cpu_grad_data[mc_idx].append(_new_pinned_like(buf.grad_data))
         # Main params + optimizer state: per (opt_idx, group, param_idx).
-        for _opt in _iter_opts(optimizer):
+        for _opt in iter_opts(optimizer):
             opt_main: List[List[torch.Tensor]] = []
             opt_state: List[List[dict]] = []
             groups = getattr(_opt, "shard_fp32_from_float16_groups", None) or []
@@ -225,7 +229,7 @@ class AdapterStore:
         for mc_idx, buf_idx, buf in _iter_buffers(model_chunks):
             slot.cpu_param_data[mc_idx][buf_idx].copy_(buf.param_data, non_blocking=True)
             slot.cpu_grad_data[mc_idx][buf_idx].copy_(buf.grad_data, non_blocking=True)
-        for opt_idx, _opt in enumerate(_iter_opts(optimizer)):
+        for opt_idx, _opt in enumerate(iter_opts(optimizer)):
             groups = getattr(_opt, "shard_fp32_from_float16_groups", None) or []
             for g, group in enumerate(groups):
                 for i, main_param in enumerate(group):
@@ -252,7 +256,7 @@ class AdapterStore:
         for mc_idx, buf_idx, buf in _iter_buffers(model_chunks):
             buf.param_data.copy_(slot.cpu_param_data[mc_idx][buf_idx], non_blocking=True)
             buf.grad_data.copy_(slot.cpu_grad_data[mc_idx][buf_idx], non_blocking=True)
-        for opt_idx, _opt in enumerate(_iter_opts(optimizer)):
+        for opt_idx, _opt in enumerate(iter_opts(optimizer)):
             groups = getattr(_opt, "shard_fp32_from_float16_groups", None) or []
             for g, group in enumerate(groups):
                 for i, main_param in enumerate(group):
@@ -421,10 +425,3 @@ class AdapterStore:
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier(group=dp_group)
-
-    def clear(self) -> None:
-        """Drop all slots (used at full-shutdown reset)."""
-        self._slots.clear()
-        self._pristine = None
-        self._current_id = None
-        self._signature = None

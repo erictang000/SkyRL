@@ -2,23 +2,24 @@
 
 GPU-gated: skipped automatically when no CUDA device is visible to the test
 process. The server starts a real Megatron policy worker, which means tests
-in this module need at least one GPU and the `skyrl_train` extras installed.
+in this module need at least one GPU and the ``tinker`` + ``megatron`` extras
+installed.
 
-Test plan (per docs/content/docs/tinker/multi_lora_design.mdx#verification):
-  1. create_model("A") with rank=8.
-  2. forward_backward + optim_step a couple of times on A; record A's weights.
-  3. create_model("B", same rank/alpha/targets). Assert B's exported weights
-     match a freshly-initialised LoRA (kaiming-A + zero-B in bf16).
-  4. forward_backward + optim_step on B with a different LR.
-  5. Switch back to A: assert exported weights match the post-step values
-     recorded in step 2 (bit-for-bit if possible, otherwise within tight tol).
-  6. create_model("C", rank=different) → expect a structured ValueError.
-  7. sample() with two adapters → expect a structured error.
-  8. delete_model("A"), then forward_backward on B → still works.
+Coverage:
+  - test_two_adapters_train_independently: A's optimizer state survives a
+    swap-out, B-training, swap-in cycle (loss continues to improve on A).
+  - test_rank_mismatch_rejected: a second create_model with different rank
+    is hard-rejected at the controller-level signature gate.
+  - test_sample_with_two_adapters_errors: v1 single-tenant guard on
+    save_sampler_checkpoint fires when more than one LoRA is registered.
+  - test_per_adapter_step_isolation: A's and B's pre-update losses are
+    bit-exact when they were both pristine + saw identical data.
+  - test_delete_then_train_remaining: deleting one of two adapters does
+    not tear down the Ray runtime; the other adapter continues to train.
 
-
-Run with
-uv run --extra tinker --extra megatron --with pytest --with pytest-timeout python -m pytest -s tests/tinker/skyrl_train/test_multi_lora_megatron.py
+Run with:
+  uv run --extra tinker --extra megatron --with pytest --with pytest-timeout \\
+    pytest -s tests/tinker/skyrl_train/test_multi_lora_megatron.py
 """
 
 from __future__ import annotations
@@ -105,7 +106,7 @@ def _api_server(port: int, backend_config: dict | None = None):
                     with open(log_path) as f:
                         print(f"=== Server failed to start ===\n{f.read()}")
                     pytest.fail("Tinker API server did not come up in time")
-                yield proc, log_path
+                yield proc
             finally:
                 proc.terminate()
                 try:
@@ -152,11 +153,12 @@ def test_two_adapters_train_independently(service_client):
     """Two LoRA adapters share the same base model; training one must not
     contaminate the other's weights.
 
-    SFT-scope test (multi_lora branch): we don't push weights to vLLM here
-    because save_weights_for_sampler is deliberately gated to single-adapter
-    in v1. We verify isolation by asserting A's loss continues to improve
-    after we've swapped to B and back — that's only possible if A's
-    optimizer state survived the swap-out + B-training + swap-in cycle.
+    We don't push weights to vLLM here because save_weights_for_sampler is
+    deliberately gated to single-adapter in v1 (see
+    test_sample_with_two_adapters_errors). Isolation is verified by
+    asserting A's loss continues to improve after we've swapped to B and
+    back — that's only possible if A's optimizer state survived the
+    swap-out + B-training + swap-in cycle.
     """
     client_a = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=8)
     client_b = service_client.create_lora_training_client(base_model=BASE_MODEL, rank=8)
