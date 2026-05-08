@@ -1,14 +1,13 @@
-name: SkyRL-Train-GPU-Multi-LoRA-Megatron
+name: Tinker-SkyRL-Train-Backend-GPU
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'ci/anyscale_gpu_ci_multi_lora_megatron.yaml'
-      - 'ci/gpu_ci_run_multi_lora_megatron.sh'
-      - 'skyrl/backends/skyrl_train/workers/megatron/adapter_store.py'
-      - 'skyrl/backends/skyrl_train/workers/megatron/megatron_worker.py'
+      - 'ci/anyscale_tinker_skyrl_train_backend_gpu.yaml'
+      - 'ci/gpu_ci_run_tinker_skyrl_train_backend.sh'
+      - 'skyrl/backends/skyrl_train/workers/megatron/**'
       - 'skyrl/backends/skyrl_train/workers/worker_dispatch.py'
       - 'skyrl/backends/skyrl_train_backend.py'
       - 'skyrl/tinker/**'
@@ -16,7 +15,7 @@ on:
       - 'pyproject.toml'
       - '!docs/**'
       - '!examples/**'
-      - '.github/workflows/gpu_skyrl_train_multi_lora_megatron.yaml'
+      - '.github/workflows/tinker_skyrl_train_backend_gpu.yaml'
   pull_request_target:
     types: [labeled]
   workflow_dispatch:
@@ -28,14 +27,14 @@ permissions:
 
 jobs:
 
-  skyrl_train_tests_multi_lora_megatron:
+  tinker_skyrl_train_backend_gpu_tests:
     if: >
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       (
         github.event_name == 'pull_request_target' &&
         !github.event.pull_request.draft &&
-        contains(github.event.pull_request.labels.*.name, 'run_train_multi_lora_megatron_gpu_ci') &&
+        contains(github.event.pull_request.labels.*.name, 'run_tinker_skyrl_train_backend_gpu_ci') &&
         (
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.author_association == 'OWNER' ||
@@ -69,5 +68,5 @@ jobs:
           ANYSCALE_CLI_TOKEN: ${{ secrets.ANYSCALE_CLI_TOKEN }}
           ANYSCALE_HOST: https://console.anyscale.com
         run: |
-          anyscale job submit -f ci/anyscale_gpu_ci_multi_lora_megatron.yaml --timeout 5000
-          anyscale job wait --cloud sky-anyscale-aws-us-east-1 --name skyrl-train-gpu-ci-multi-lora-megatron --timeout 5000
+          anyscale job submit -f ci/anyscale_tinker_skyrl_train_backend_gpu.yaml --timeout 5000
+          anyscale job wait --cloud sky-anyscale-aws-us-east-1 --name tinker-skyrl-train-backend-gpu --timeout 5000
