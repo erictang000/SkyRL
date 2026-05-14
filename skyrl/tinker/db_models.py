@@ -152,4 +152,10 @@ class EngineStateDB(SQLModel, table=True):
     # stood up yet (no create_model, FFT path, or last delete tore down).
     inference_proxy_url: str | None = None
 
+    # Individual worker URLs behind the proxy. Used by the API's forwarding
+    # client to reach control-plane endpoints (e.g. /skyrl/v1/wait_lora_unpaused)
+    # that the vllm-router doesn't forward. None when no vLLM has been stood
+    # up yet, or when the backend doesn't have a control-plane (e.g. JAX).
+    inference_server_urls: list[str] | None = Field(default=None, sa_type=JSON)
+
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_type=DateTime(timezone=True))

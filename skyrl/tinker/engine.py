@@ -271,16 +271,20 @@ class TinkerEngine:
         """Pass-through to backend metrics for backwards compatibility."""
         return self.backend.metrics
 
-    def _write_inference_state_to_db(self, proxy_url: str | None) -> None:
+    def _write_inference_state_to_db(self, proxy_url: str | None, server_urls: list[str] | None) -> None:
         """Upsert the singleton EngineStateDB row.
 
         Wired into the backend via set_inference_state_publisher so the API
         process can resolve the engine-managed vLLM URL on the async sample
-        routing path. ``proxy_url=None`` clears the row (post-teardown).
+        routing path. ``server_urls`` carries the individual worker URLs for
+        control-plane endpoints (e.g. /skyrl/v1/wait_lora_unpaused) that the
+        vllm-router doesn't forward; ``None`` when the backend doesn't expose
+        a control plane (e.g. JAX). Both ``None`` clears the row (post-teardown).
         """
         with Session(self.db_engine) as session:
             row = session.get(EngineStateDB, 1) or EngineStateDB(singleton_id=1)
             row.inference_proxy_url = proxy_url
+            row.inference_server_urls = server_urls
             row.updated_at = datetime.now(timezone.utc)
             session.add(row)
             session.commit()
