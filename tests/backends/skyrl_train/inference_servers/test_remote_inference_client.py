@@ -251,6 +251,14 @@ def create_mock_vllm_server(server_id: int) -> FastAPI:
         app.state.abort_lora_call_count += 1
         return {"status": "ok", "aborted": [], "count": 0, "server_id": server_id}
 
+    @app.post("/skyrl/v1/resume_lora_requests")
+    async def resume_lora_requests(request: Request):
+        body = await request.json()
+        lora_name = body.get("lora_name")
+        if not lora_name:
+            return JSONResponse(status_code=400, content={"error": "'lora_name' required"})
+        return {"status": "ok", "server_id": server_id}
+
     @app.post("/test/script_generate")
     async def script_generate(request: Request):
         """Test helper: pre-load scripted responses for /inference/v1/generate."""
