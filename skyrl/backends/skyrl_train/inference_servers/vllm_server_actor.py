@@ -3,6 +3,7 @@ vLLM Server Actor - Ray actor running a vLLM OpenAI-compatible API server.
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -369,6 +370,79 @@ class VLLMServerActor(ServerActorProtocol):
         engine = self._engine
         cli_args = self._cli_args
 
+        # TRANSIENT: per-LoRA pause state (``dict[str, asyncio.Event]``) shared
+        # across the abort/resume/wait endpoints below and the /v1/completions
+        # submission gate. Mirrors the in-process ``_lora_pause_events`` dict
+        # on RemoteInferenceClient so out-of-process callers (e.g. the Tinker
+        # SkyRLTrainInferenceForwardingClient) can observe the same pause
+        # window. Delete with ``_abort_lora_requests`` when vLLM ships native
+        # per-LoRA pause.
+        app.state.paused_loras = {}
+
+        def _get_pause_event(lora_name: str) -> asyncio.Event:
+            ev = app.state.paused_loras.get(lora_name)
+            if ev is None:
+                ev = asyncio.Event()
+                ev.set()  # SET = open (not paused)
+                app.state.paused_loras[lora_name] = ev
+            return ev
+
+        # Submission gate: pending /v1/completions and /v1/chat/completions for
+        # a currently-paused LoRA block until resume. Without this, a fresh
+        # request submitted between abort_lora_requests and load_lora_adapter
+        # could observe torn adapter weights.
+        #
+        # Implemented as pure ASGI middleware (not @app.middleware("http"))
+        # because the BaseHTTPMiddleware shim buffers streaming responses,
+        # which would regress vLLM's SSE completions path.
+        _paused_loras = app.state.paused_loras
+        _gated_paths = {"/v1/completions", "/v1/chat/completions"}
+
+        class _LoraPauseSubmissionGate:
+            def __init__(self, inner_app):
+                self.inner_app = inner_app
+
+            async def __call__(self, scope, receive, send):
+                if scope.get("type") != "http" or scope.get("path") not in _gated_paths:
+                    await self.inner_app(scope, receive, send)
+                    return
+
+                # Buffer the request body so we can peek at ``model`` and replay.
+                chunks: list[bytes] = []
+                more_body = True
+                while more_body:
+                    msg = await receive()
+                    chunks.append(msg.get("body", b""))
+                    more_body = msg.get("more_body", False)
+                body = b"".join(chunks)
+
+                model: Optional[str] = None
+                if body:
+                    try:
+                        parsed = json.loads(body)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        model = parsed.get("model")
+
+                if model:
+                    ev = _paused_loras.get(model)
+                    if ev is not None and not ev.is_set():
+                        await ev.wait()
+
+                replayed = False
+
+                async def _replay():
+                    nonlocal replayed
+                    if not replayed:
+                        replayed = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    return {"type": "http.disconnect"}
+
+                await self.inner_app(scope, _replay, send)
+
+        app.add_middleware(_LoraPauseSubmissionGate)
+
         # Weight sync uses vLLM native endpoints (/init_weight_transfer_engine,
         # /update_weights, /get_world_size) registered by the RLHF router when
         # VLLM_SERVER_DEV_MODE=1.
@@ -430,17 +504,54 @@ class VLLMServerActor(ServerActorProtocol):
             Iterates ``engine.output_processor.request_states`` (keyed by internal
             request IDs) and aborts those whose ``lora_name`` matches. Other
             adapters' requests are untouched.
+
+            Also flips the per-LoRA pause flag (clears the event) so the
+            submission-gate middleware blocks any *fresh* /v1/completions for
+            this LoRA until ``/skyrl/v1/resume_lora_requests`` is called.
             """
             body = await request.json()
             lora_name = body.get("lora_name")
             if not lora_name:
                 raise HTTPException(status_code=400, detail="'lora_name' required")
+            _get_pause_event(lora_name).clear()
             op = engine.output_processor
             # request_states is keyed by *internal* IDs; pass internal=True to abort().
             ids = [rid for rid, st in op.request_states.items() if st.lora_name == lora_name]
             if ids:
                 await engine.abort(ids, internal=True)
             return {"status": "ok", "aborted": ids, "count": len(ids)}
+
+        # TRANSIENT: counterpart to /skyrl/v1/abort_lora_requests. Delete with
+        # that endpoint when vLLM ships native per-LoRA pause.
+        @app.post("/skyrl/v1/resume_lora_requests")
+        async def _resume_lora_requests(request: Request):
+            """Clear a LoRA's pause flag so blocked /v1/completions can proceed."""
+            body = await request.json()
+            lora_name = body.get("lora_name")
+            if not lora_name:
+                raise HTTPException(status_code=400, detail="'lora_name' required")
+            _get_pause_event(lora_name).set()
+            return {"status": "ok"}
+
+        # TRANSIENT: long-poll endpoint that out-of-process clients (e.g. the
+        # Tinker SkyRLTrainInferenceForwardingClient) use to wait for resume
+        # before retrying an aborted sample. Returns ``{"paused": false}`` once
+        # the LoRA is unpaused, or ``{"paused": true}`` after ``timeout_s``
+        # so the caller can loop and re-poll. Delete with the abort/resume
+        # endpoints when vLLM ships native per-LoRA pause.
+        @app.post("/skyrl/v1/wait_lora_unpaused")
+        async def _wait_lora_unpaused(request: Request):
+            body = await request.json()
+            lora_name = body.get("lora_name")
+            if not lora_name:
+                raise HTTPException(status_code=400, detail="'lora_name' required")
+            timeout_s = body.get("timeout_s", 60.0)
+            ev = _get_pause_event(lora_name)
+            try:
+                await asyncio.wait_for(ev.wait(), timeout=float(timeout_s))
+                return {"paused": False}
+            except asyncio.TimeoutError:
+                return {"paused": True}
 
         # NOTE (sumanthrh): We use a custom generate endpoint /skyrl/v1/generate because the native
         # endpoint /inference/v1/generate does not support returning routed expert IDs.

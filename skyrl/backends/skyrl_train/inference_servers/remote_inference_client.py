@@ -1161,11 +1161,27 @@ class RemoteInferenceClient:
         )
 
     async def resume_generation(self, lora_name: Optional[str] = None) -> Dict[str, Any]:
-        """Resume generation. ``lora_name`` must match the prior pause call."""
+        """Resume generation. ``lora_name`` must match the prior pause call.
+
+        For the per-LoRA branch, releases both the local in-process gate (so
+        in-process ``sample_with_retry`` callers can resubmit immediately) and
+        the server-side gate via ``/skyrl/v1/resume_lora_requests`` (so the
+        submission gate on each worker stops blocking fresh /v1/completions
+        and out-of-process callers polling ``/skyrl/v1/wait_lora_unpaused``
+        unblock). The local set happens first so in-process retries don't
+        wait on the HTTP round-trip; brief inconsistency between the two
+        gates is fine — the retry loop just spins one extra iteration.
+
+        TRANSIENT: the ``lora_name`` branch (and the HTTP call) should be
+        deleted when vLLM ships native per-LoRA pause.
+        """
         if lora_name is None:
             return await self.resume()
         self._get_lora_pause_event(lora_name).set()
-        return {"status": "ok"}
+        return await self._call_all_servers(
+            "/skyrl/v1/resume_lora_requests",
+            json={"lora_name": lora_name},
+        )
 
     async def sleep(self, level: int = 2, tags: Optional[List[str]] = None) -> Dict[str, Any]:
         """
