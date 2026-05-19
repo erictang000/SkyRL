@@ -6,23 +6,25 @@ set -x
 
 # NOTE: Make sure to tune the configurations for the setup you wish to test.
 
-DATA_DIR="$HOME/data/gsm8k"
+DATA_DIR="/mnt/cluster_storage/data/gsm8k"
 TRAIN_FILE="$DATA_DIR/train.parquet"
 TEST_FILE="$DATA_DIR/validation.parquet"
 
-NUM_NODES=1
+NUM_NODES=2
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=4
-INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=2
+NUM_INFERENCE_ENGINES=2
+INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
 
 MEGATRON_TP=4
-MEGATRON_PP=2
+MEGATRON_PP=1
 MEGATRON_CP=1
+MEGATRON_EP=8
+MEGATRON_ETP=1
 
 MAX_PROMPT_LENGTH=2048
 MAX_RESPONSE_LENGTH=8192
 
-MODEL_NAME="Qwen/Qwen3-4B"
+MODEL_NAME="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
 uv run --isolated --extra megatron -m examples.train_scripts.full_context.main_full_ctx \
   data.train_data="['$TRAIN_FILE']" \
@@ -31,6 +33,7 @@ uv run --isolated --extra megatron -m examples.train_scripts.full_context.main_f
   trainer.policy.model.path=$MODEL_NAME \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
+  trainer.placement.policy_num_nodes=$NUM_NODES \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS_PER_NODE \
   generator.inference_engine.num_engines=$NUM_INFERENCE_ENGINES \
@@ -38,15 +41,19 @@ uv run --isolated --extra megatron -m examples.train_scripts.full_context.main_f
   trainer.policy.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.policy.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
   trainer.policy.megatron_config.context_parallel_size=$MEGATRON_CP \
+  trainer.policy.megatron_config.expert_model_parallel_size=$MEGATRON_EP \
+  trainer.policy.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
   trainer.ref.megatron_config.tensor_model_parallel_size=$MEGATRON_TP \
   trainer.ref.megatron_config.context_parallel_size=$MEGATRON_CP \
   trainer.ref.megatron_config.pipeline_model_parallel_size=$MEGATRON_PP \
+  trainer.ref.megatron_config.expert_model_parallel_size=$MEGATRON_EP \
+  trainer.ref.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
   trainer.epochs=20 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=64 \
   trainer.policy_mini_batch_size=32 \
-  trainer.micro_forward_batch_size_per_gpu=8 \
-  trainer.micro_train_batch_size_per_gpu=8 \
+  trainer.micro_forward_batch_size_per_gpu=2 \
+  trainer.micro_train_batch_size_per_gpu=1 \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \

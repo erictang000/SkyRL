@@ -16,12 +16,12 @@ export _SKYRL_USE_NEW_INFERENCE=0
 # bash examples/train/megatron/run_megatron_dapo_nemotron3_nano.sh
 
 MODEL_NAME="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
-DATA_DIR="$HOME/data/dapo"
+DATA_DIR="/mnt/cluster_storage/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-NUM_NODES=1
+NUM_NODES=2
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=1
+NUM_INFERENCE_ENGINES=2
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
 LOGGER="wandb"  # change to "console" to print to stdout
 
@@ -32,7 +32,7 @@ LOSS_REDUCTION="token_mean"
 # applies overlong filtering (but not soft overlong punishment)
 APPLY_OVERLONG_FILTERING=true
 # apply soft overlong punishment with custom trainer impl in main_dapo.py
-OVERLONG_BUFFER_LEN=$((1024 * 4))
+OVERLONG_BUFFER_LEN=$((1024 * 2))
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
 
 # other DAPO parameters
@@ -42,10 +42,7 @@ TOP_P=1.0
 EVAL_TOP_P=0.7
 CLIP_RATIO_C=10.0
 MAX_PROMPT_LENGTH=$((1024 * 2))
-# Reduced from 8192 to 4096 for the overnight smoke run — full 8k responses
-# pushed Megatron's packed activations OOM (run01) and we don't have headroom
-# at this batch size. AIME problems usually fit in 4k.
-MAX_RESPONSE_LENGTH=$((1024 * 4))
+MAX_RESPONSE_LENGTH=$((1024 * 14))
 
 # repro run parameters
 TRAIN_BATCH_SIZE=128
@@ -67,6 +64,15 @@ MEGATRON_ETP=1
 TIS_IMP_RATIO_CAP=2.0
 TIS_TYPE=token
 
+# optimizer offload
+OPTIMIZER_CPU_OFFLOAD=true
+OPTIMIZER_OFFLOAD_FRACTION=1.0
+
+LD_LIBRARY_PATH=/opt/amazon/efa/lib:$LD_LIBRARY_PATH
+SKYRL_LD_LIBRARY_PATH_EXPORT=true
+
+FREEZE_MOE_ROUTER=true
+
 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$TEST_FILE']" \
@@ -85,6 +91,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
   trainer.algorithm.clip_ratio_c=$CLIP_RATIO_C \
   trainer.policy.model.path="$MODEL_NAME" \
+  trainer.policy.megatron_config.freeze_moe_router=$FREEZE_MOE_ROUTER \
   trainer.placement.colocate_all=true \
   trainer.strategy=megatron \
   trainer.placement.policy_num_nodes=$NUM_NODES \
@@ -98,6 +105,10 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.megatron_config.expert_tensor_parallel_size=$MEGATRON_ETP \
   trainer.algorithm.off_policy_correction.tis_ratio_type=$TIS_TYPE \
   trainer.algorithm.off_policy_correction.token_tis_ratio_clip_high=$TIS_IMP_RATIO_CAP \
+  trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_cpu_offload=$OPTIMIZER_CPU_OFFLOAD \
+  trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_offload_fraction=$OPTIMIZER_OFFLOAD_FRACTION \
+  trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer=$OPTIMIZER_CPU_OFFLOAD \
+  trainer.policy.megatron_config.optimizer_config_kwargs.overlap_cpu_optimizer_d2h_h2d=$OPTIMIZER_CPU_OFFLOAD \
   trainer.epochs=20 \
   trainer.algorithm.eps_clip_low=$CLIP_RATIO_LOW \
   trainer.algorithm.eps_clip_high=$CLIP_RATIO_HIGH \
@@ -125,13 +136,13 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.n_samples_per_prompt=$N_SAMPLES_PER_PROMPT \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.6 \
-  generator.inference_engine.engine_init_kwargs="{moe_backend: triton, max_model_len: 8192}" \
+  generator.inference_engine.engine_init_kwargs="{max_model_len: 20000}" \
   trainer.logger="$LOGGER" \
   trainer.project_name="dapo_nemotron3_nano" \
-  trainer.run_name="dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
-  trainer.export_path="$HOME/exports/dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.run_name="dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_max_response_length${MAX_RESPONSE_LENGTH}_freeze_moe_router${FREEZE_MOE_ROUTER}" \
+  trainer.export_path="$HOME/exports/dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_max_response_length${MAX_RESPONSE_LENGTH}_freeze_moe_router${FREEZE_MOE_ROUTER}" \
   trainer.hf_save_interval=-1 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.ckpt_path="$HOME/ckpts/dapo_nemotron3_nano_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}_max_response_length${MAX_RESPONSE_LENGTH}_freeze_moe_router${FREEZE_MOE_ROUTER}" \
   $@
