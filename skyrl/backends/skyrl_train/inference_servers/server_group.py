@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 # about the GPU ID to pack actors appropriately on different nodes.
 # Thus we use a fractional CPU allocation for colocated actors.
 COLOCATED_ACTOR_CPU_FRACTION = 0.2
+# For the "uni" backend (single-GPU engines), the actor itself is the vLLM worker
+# and holds the GPU. Colocated engines share each GPU bundle with a training worker
+# (fractional); non-colocated engines own the whole GPU.
+COLOCATED_ACTOR_GPU_FRACTION = 0.2
 
 
 class ServerGroup:
@@ -105,6 +109,16 @@ class ServerGroup:
         # Query the actor class for GPU requirements
         self._num_gpus_per_server = self._server_actor_cls.compute_num_gpus_per_server(cli_args)
 
+        # Single-GPU engines run vLLM in-process ("uni") so the actor is scheduled
+        # directly onto its bundle's GPU. This is robust to NOSET_VISIBLE_DEVICES and
+        # to multiple placement groups sharing a node, unlike the ray/mp backends
+        # which spawn a separate worker. Matches the legacy inference path
+        # (ray_wrapped_inference_engine.py).
+        configured_backend = self._server_actor_kwargs.get("distributed_executor_backend", "ray")
+        self._executor_backend = "uni" if self._num_gpus_per_server == 1 else configured_backend
+        # Propagate the resolved backend to the actor (and prepare_server_kwargs).
+        self._server_actor_kwargs["distributed_executor_backend"] = self._executor_backend
+
         logger.info(
             f"ServerGroup: actor_cls={self._server_actor_cls.__name__}, "
             f"num_servers={num_servers}, "
@@ -133,10 +147,24 @@ class ServerGroup:
             self._internal_pg = self._create_placement_group()
         return self._internal_pg
 
+    def _actor_num_gpus(self) -> float:
+        """GPUs the server actor itself should request.
+
+        For the "uni" backend the actor IS the vLLM worker and must hold the GPU.
+        For ray/mp, vLLM spawns workers that hold the GPUs, so the actor needs none
+        (GPU allocation is managed by the placement group / per-worker request).
+        """
+        if self._executor_backend != "uni":
+            return 0.0
+        # Mirrors the VLLM_RAY_PER_WORKER_GPUS fraction set in VLLMServerActor:
+        # colocated engines share a bundle's GPU with a training worker, while
+        # non-colocated engines own the whole GPU.
+        return COLOCATED_ACTOR_GPU_FRACTION if self._external_pg is not None else 1.0
+
     def _create_actor_class(self, pg: PlacementGroup, start_bundle_idx: int) -> Any:
         """Create actor class with scheduling constraints for a specific bundle."""
         return ray.remote(self._server_actor_cls).options(
-            num_gpus=0,  # GPU allocation managed by placement group
+            num_gpus=self._actor_num_gpus(),
             num_cpus=COLOCATED_ACTOR_CPU_FRACTION,
             scheduling_strategy=PlacementGroupSchedulingStrategy(
                 placement_group=pg,

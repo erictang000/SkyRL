@@ -10,6 +10,7 @@ from argparse import Namespace
 from typing import List, Optional, Tuple
 
 import httpx
+import ray
 import uvicorn
 import vllm.envs as envs
 from fastapi import HTTPException, Request
@@ -120,6 +121,10 @@ class VLLMServerActor(ServerActorProtocol):
                 ``"ray"`` spawns TP/PP workers as Ray tasks (default).
                 ``"mp"`` spawns workers as local processes using
                 CUDA_VISIBLE_DEVICES.
+                ``"uni"`` runs the engine in-process in this actor (no separate
+                workers). ServerGroup auto-selects ``"uni"`` for single-GPU
+                engines (TP*PP == 1); the actor itself holds the GPU via its
+                placement-group bundle.
             mp_cuda_visible_devices: Comma-separated physical GPU IDs for the
                 ``"mp"`` backend. Pre-computed by ServerGroup from the
                 per-server placement group. Only used when
@@ -139,6 +144,7 @@ class VLLMServerActor(ServerActorProtocol):
         self._server_idx = server_idx
         self._num_gpus_per_server = self.compute_num_gpus_per_server(vllm_cli_args)
         self._use_mp_backend = distributed_executor_backend == "mp"
+        self._use_uni_backend = distributed_executor_backend == "uni"
         self._enable_ray_prometheus_stats = enable_ray_prometheus_stats
 
         # Ensure vLLM sleep endpoints are enabled by using dev mode
@@ -189,6 +195,8 @@ class VLLMServerActor(ServerActorProtocol):
         # Configure GPU visibility for this server's TP/PP workers
         if self._use_mp_backend:
             self._setup_mp_gpu_visibility(mp_cuda_visible_devices)
+        elif self._use_uni_backend:
+            self._setup_uni_gpu_visibility()
         else:
             os.environ["VLLM_RAY_PER_WORKER_GPUS"] = str(0.2 if colocated_training else 1.0)
             # Set bundle indices for this server's TP/PP workers in the placement group.
@@ -224,6 +232,25 @@ class VLLMServerActor(ServerActorProtocol):
             logger.info(
                 f"Server {self._server_idx}: mp backend, " f"cleared CUDA_VISIBLE_DEVICES (single-GPU or auto-detect)"
             )
+
+    def _setup_uni_gpu_visibility(self) -> None:
+        """Pin GPU visibility for the uni (in-process) executor backend.
+
+        With the uni backend vLLM runs inside this actor process, so it uses the
+        GPU Ray assigned to the actor via its placement-group bundle. Normally Ray
+        masks CUDA_VISIBLE_DEVICES to that GPU; but when
+        RAY_EXPERIMENTAL_NOSET_*_VISIBLE_DEVICES is set (SkyRL's default so training
+        workers manage their own devices) Ray leaves all GPUs visible, so we pin
+        CUDA_VISIBLE_DEVICES to the assigned GPU ourselves. Mirrors the legacy
+        inference path (vllm_engine.setup_envvars_for_vllm).
+        """
+        from skyrl.train.utils.utils import ray_noset_visible_devices
+
+        if ray_noset_visible_devices():
+            gpu_ids = ray.get_gpu_ids()
+            if gpu_ids:
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_ids[0])
+                logger.info(f"Server {self._server_idx}: uni backend, " f"CUDA_VISIBLE_DEVICES={gpu_ids[0]}")
 
     def _setup_nixl_side_channel(self, side_channel_port: int) -> None:
         """
