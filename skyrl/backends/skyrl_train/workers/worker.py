@@ -1130,6 +1130,62 @@ class PolicyWorkerBase(Worker):
         output.metadata = micro_batch.metadata
         return output
 
+    # ------------------------------------------------------------------
+    # Multi-LoRA / adapter-store interface
+    # ------------------------------------------------------------------
+
+    def _resolve_lora_sync_target(self, model_id: Optional[str]) -> tuple[str, str]:
+        """Return ``(lora_name, lora_sync_path)`` for a given Tinker ``model_id``.
+
+        The single-tenant fallback (``model_id is None``) uses the default
+        shared adapter name + shared sync path. Multi-tenant routes through
+        ``os.path.basename`` on ``lora_sync_path`` so each adapter is written to
+        its own subdir and registered on the inference engine under that name.
+        """
+        from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
+            SKYRL_LORA_ADAPTER_NAME,
+        )
+
+        base_sync_path = self.cfg.policy.model.lora.lora_sync_path
+        safe_model_id = os.path.basename(model_id) if model_id is not None else None
+        if safe_model_id:
+            return safe_model_id, os.path.join(base_sync_path, safe_model_id)
+        return SKYRL_LORA_ADAPTER_NAME, base_sync_path
+
+    def swap_to_adapter(self, model_id: str) -> None:
+        """Make ``model_id`` the live LoRA adapter on this worker."""
+        return None
+
+    def adapter_store_state(self) -> dict:
+        """Diagnostic snapshot of the adapter store. Backends without an
+        adapter store report it as disabled."""
+        return {"enabled": False}
+
+    def _adapter_store_unsupported(self, op: str) -> None:
+        raise NotImplementedError(
+            f"{type(self).__name__}.{op} is not implemented: multi-tenant LoRA "
+            "adapter management (the adapter store) is currently only supported "
+            "on the Megatron backend. The FSDP backend supports a single LoRA "
+            "adapter (or full fine-tuning) per worker group."
+        )
+
+    def prime_optimizer_state(self) -> None:
+        """Materialise optimizer state so it can be snapshotted into the
+        pristine adapter slot. Only meaningful for adapter-store backends."""
+        self._adapter_store_unsupported("prime_optimizer_state")
+
+    def register_pristine_adapter(self) -> None:
+        """Capture the freshly-initialised LoRA state as the pristine slot."""
+        self._adapter_store_unsupported("register_pristine_adapter")
+
+    def register_adapter(self, model_id: str) -> None:
+        """Register a new LoRA adapter slot keyed by ``model_id``."""
+        self._adapter_store_unsupported("register_adapter")
+
+    def delete_adapter(self, model_id: str) -> None:
+        """Remove the LoRA adapter slot keyed by ``model_id``."""
+        self._adapter_store_unsupported("delete_adapter")
+
 
 class CriticWorkerBase(Worker):
     def __init__(self, **kwargs):
