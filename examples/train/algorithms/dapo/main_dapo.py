@@ -6,6 +6,7 @@ import sys
 
 import ray
 import torch
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -23,6 +24,12 @@ class DAPOAlgorithmConfig(AlgorithmConfig):
 
     overlong_buffer_len: int = 512
     overlong_buffer_penalty_factor: float = 1.0
+
+    # not specific to original DAPO paper
+    # applies a linear length penalty based on question pass rate: https://arxiv.org/abs/2506.05256
+    # penalty is prompt pass rate * length of trajectory / max context length
+    linear_length_penalty: bool = False
+    linear_length_penalty_factor: float = 0.25
 
 
 DAPOConfig = make_config(algorithm_cls=DAPOAlgorithmConfig)
@@ -45,6 +52,14 @@ class DAPOTrainer(RayPPOTrainer):
         # See examples/train_integrations/harbor for an example.
         overlong_buffer_len = self.cfg.trainer.algorithm.overlong_buffer_len
         overlong_buffer_penalty_factor = self.cfg.trainer.algorithm.overlong_buffer_penalty_factor
+        linear_length_penalty = self.cfg.trainer.algorithm.linear_length_penalty
+        linear_length_penalty_factor = self.cfg.trainer.algorithm.linear_length_penalty_factor
+
+        if linear_length_penalty:
+            assert (
+                overlong_buffer_penalty_factor == 0.0
+            ), "linear length penalty and overlong buffer penalty cannot be used together"
+
         # modify rewards here
         response_ids = generator_output["response_ids"]
         rewards = generator_output["rewards"]
@@ -58,20 +73,39 @@ class DAPOTrainer(RayPPOTrainer):
         # NOTE: this is only valid for single turn generation
         max_response_length = self.cfg.generator.sampling_params.max_generate_length
 
+        # compute the per-prompt pass rate from the (unmodified) rewards, grouping by uid.
+        # rewards are verifiable sequence-level rewards, so the pass rate is the fraction of
+        # correct (positive-reward) responses for each prompt.
+        uid_to_pass_rate = {}
+        if linear_length_penalty:
+            uid_to_rewards = defaultdict(list)
+            for uid, reward in zip(uids, rewards):
+                uid_to_rewards[uid].append(reward)
+            uid_to_pass_rate = {
+                uid: sum(1 for r in group if r > 0) / len(group) for uid, group in uid_to_rewards.items()
+            }
+
         # apply soft overlong punishment
         for i, response_length in enumerate(response_lengths):
-            # max_exceed_length is the beginning of the overlong buffer
-            max_exceed_length = max_response_length - overlong_buffer_len
-            # if the response is within the overlong buffer, apply the penalty
-            if response_length > max_exceed_length and response_length <= max_response_length:
-                exceed_length = response_length - max_exceed_length
-                penalty = exceed_length / overlong_buffer_len * overlong_buffer_penalty_factor
+            if not linear_length_penalty:
+                # max_exceed_length is the beginning of the overlong buffer
+                max_exceed_length = max_response_length - overlong_buffer_len
+                # if the response is within the overlong buffer, apply the penalty
+                if response_length > max_exceed_length and response_length <= max_response_length:
+                    exceed_length = response_length - max_exceed_length
+                    penalty = exceed_length / overlong_buffer_len * overlong_buffer_penalty_factor
 
+                    rewards[i] -= penalty
+                # if the response is outside the overlong buffer, set the reward to 0
+                elif response_length > max_response_length:
+                    # if self.cfg.generator.apply_overlong_filtering is true, loss masks are already set to 0 for these responses
+                    rewards[i] = 0.0
+            else:
+                # apply linear length penalty: scale by the prompt's pass rate so that
+                # easier prompts (higher pass rate) are penalized more heavily for long responses.
+                pass_rate = uid_to_pass_rate[uids[i]]
+                penalty = pass_rate * (response_length / max_response_length) * linear_length_penalty_factor
                 rewards[i] -= penalty
-            # if the response is outside the overlong buffer, set the reward to 0
-            elif response_length > max_response_length:
-                # if self.cfg.generator.apply_overlong_filtering is true, loss masks are already set to 0 for these responses
-                rewards[i] = 0.0
 
         generator_output["rewards"] = rewards
 
