@@ -16,12 +16,16 @@ LOGGER="wandb"  # change to "console" to print to stdout
 
 CLIP_RATIO_LOW=0.2
 CLIP_RATIO_HIGH=0.28
-LOSS_REDUCTION="token_mean_legacy"
+LOSS_REDUCTION="prompt_mean"
 # applies overlong filtering (but not soft overlong punishment)
 APPLY_OVERLONG_FILTERING=true
 # apply soft overlong punishment with custom trainer impl in main_dapo.py
 OVERLONG_BUFFER_LEN=$((1024 * 4))
-OVERLONG_BUFFER_PENALTY_FACTOR=1.0
+OVERLONG_BUFFER_PENALTY_FACTOR=0.0
+
+# linear length penalty parameters
+LINEAR_LENGTH_PENALTY=true
+LINEAR_LENGTH_PENALTY_FACTOR=0.25
 
 # other DAPO parameters
 USE_KL_LOSS=false
@@ -47,6 +51,8 @@ uv run --isolated --extra fsdp -m examples.train.algorithms.dapo.main_dapo \
   trainer.algorithm.policy_loss_type="dual_clip" \
   trainer.algorithm.overlong_buffer_len=$OVERLONG_BUFFER_LEN \
   trainer.algorithm.overlong_buffer_penalty_factor=$OVERLONG_BUFFER_PENALTY_FACTOR \
+  trainer.algorithm.linear_length_penalty=$LINEAR_LENGTH_PENALTY \
+  trainer.algorithm.linear_length_penalty_factor=$LINEAR_LENGTH_PENALTY_FACTOR \
   trainer.algorithm.loss_reduction=$LOSS_REDUCTION \
   generator.inference_engine.enforce_eager=$ENFORCE_EAGER \
   generator.apply_overlong_filtering=$APPLY_OVERLONG_FILTERING \
@@ -74,8 +80,8 @@ uv run --isolated --extra fsdp -m examples.train.algorithms.dapo.main_dapo \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
-  trainer.micro_forward_batch_size_per_gpu=8 \
-  trainer.micro_train_batch_size_per_gpu=4 \
+  trainer.micro_forward_batch_size_per_gpu=16 \
+  trainer.micro_train_batch_size_per_gpu=8 \
   trainer.ckpt_interval=10 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
@@ -86,18 +92,18 @@ uv run --isolated --extra fsdp -m examples.train.algorithms.dapo.main_dapo \
   generator.inference_engine.backend=vllm \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \
-  generator.inference_engine.async_engine=false \
+  generator.inference_engine.async_engine=true \
   generator.batched=true \
   environment.env_class=aime \
   generator.n_samples_per_prompt=$N_SAMPLES_PER_PROMPT \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="dapo_aime" \
-  trainer.run_name="dapo_qwen3_1.7b_base" \
-  trainer.export_path="$HOME/exports/dapo_qwen3_1.7b_base" \
+  trainer.project_name="prompt_mean_dapo" \
+  trainer.run_name="prompt_mean_linear_penalty_$LINEAR_LENGTH_PENALTY_FACTOR" \
+  trainer.export_path="/mnt/nvme/exports/dapo_qwen3_1.7b_base" \
   trainer.hf_save_interval=10 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_1.7b_base" \
+  trainer.ckpt_path="/mnt/nvme/ckpts/dapo_qwen3_1.7b_base" \
   $@

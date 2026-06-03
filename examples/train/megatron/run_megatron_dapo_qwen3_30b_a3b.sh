@@ -10,10 +10,10 @@ MODEL_NAME="Qwen/Qwen3-30B-A3B-Base"
 DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-NUM_NODES=2
+NUM_NODES=1
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=2
-INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
+NUM_INFERENCE_ENGINES=4
+INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=2
 LOGGER="wandb"  # change to "console" to print to stdout
 
 CLIP_RATIO_LOW=0.2
@@ -107,18 +107,18 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.inference_engine.backend=vllm \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \
-  generator.inference_engine.async_engine=false \
+  generator.inference_engine.async_engine=true \
   generator.batched=true \
   environment.env_class=aime \
   generator.n_samples_per_prompt=$N_SAMPLES_PER_PROMPT \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.7 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="dapo_aime" \
-  trainer.run_name="dapo_qwen3_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
-  trainer.export_path="$HOME/exports/dapo_qwen3_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.project_name="prompt_mean_dapo" \
+  trainer.run_name="token_mean_baseline_qwen30b" \
+  trainer.export_path="/mnt/nvme/exports/qwen3_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   trainer.hf_save_interval=300 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
+  trainer.ckpt_path="/mnt/nvme/ckpts/qwen3_30b_a3b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}" \
   $@
