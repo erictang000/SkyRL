@@ -71,7 +71,7 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
     if "qwen3.5" in model_name.lower():
         # packed sequence not yet supported for GDN
         # https://github.com/NVIDIA/Megatron-LM/pull/2644
-        cfg.trainer.remove_microbatch_padding = False
+        cfg.trainer.remove_microbatch_padding = True
     # Large MoE models: Megatron's DistributedOptimizer eagerly materializes
     # the fp32 master + AdamW state on GPU at init (~6x model size), which
     # OOMs on 4xH100 before forward ever runs. These tests only forward +

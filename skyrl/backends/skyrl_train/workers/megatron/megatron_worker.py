@@ -354,6 +354,22 @@ class MegatronWorker:
         bridge = AutoBridge.from_hf_pretrained(model_path, trust_remote_code=True)
         provider = bridge.to_megatron_provider()
 
+        # Disable Multi-Token Prediction (MTP) for training. MTP is a
+        # speculative-decoding draft head; its auxiliary loss is not used by
+        # SkyRL's policy / cross-entropy losses (which read only the main head
+        # logits). Beyond being dead compute, the MTP layer's
+        # ``_checkpointed_forward`` in megatron-core splats non-tensor kwargs
+        # (e.g. ``packed_seq_params``) as positional args into
+        # ``tensor_parallel.checkpoint``, whose ``CheckpointFunction`` only
+        # accepts tensors -- so with ``recompute_granularity='full'`` (SkyRL's
+        # default) a packed-sequence backward raises ``save_for_backward can
+        # only save variables, but argument N is of type PackedSeqParams``. This
+        # mirrors the existing MTP-disable in ``model_bridges.py`` (GLM-4.7-Flash
+        # / DeepSeek-V3 style models).
+        if getattr(provider, "mtp_num_layers", None):
+            logger.info(f"Disabling MTP for training (mtp_num_layers={provider.mtp_num_layers} -> None)")
+            provider.mtp_num_layers = None
+
         # Workaround for megatron-bridge CONFIG_MAPPING dropping None values:
         # MLA models like Moonlight-16B have q_lora_rank=None (no Q compression),
         # but CONFIG_MAPPING skips None so the MCoreMLATransformerConfig default

@@ -36,7 +36,7 @@ from megatron.core.transformer.moe.moe_utils import (
     get_moe_layer_wise_logging_tracker,
     reduce_aux_losses_tracker_across_ranks,
 )
-from megatron.core.utils import get_attr_wrapped_model
+from megatron.core.utils import get_attr_wrapped_model, unwrap_model
 
 ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
 
@@ -513,6 +513,44 @@ def preprocess_packed_seqs(
         return input_ids_rmpad.unsqueeze(0), packed_seq_params
     else:
         return input_ids, packed_seq_params
+
+
+def model_self_packs_for_cp(model: Union[nn.Module, List[nn.Module]]) -> bool:
+    """Whether the model packs sequences + CP-shards inside its own ``forward``.
+
+    Some mbridge model wrappers (e.g. ``Qwen3VLModel``, which backs the Qwen3.5
+    hybrid Gated-DeltaNet + attention MoE models) call ``preprocess_packed_seqs``
+    *inside* their own ``forward``. For those models SkyRL must hand the model an
+    unpacked ``[B, S]`` batch + bool ``attention_mask`` + ``PackedSeqParams``
+    (global, un-CP-divided ``cu_seqlens``) and let the model pack/CP-shard
+    itself. If SkyRL also pre-packs + CP-shards (the classic path), the sequence
+    gets packed twice: the model then sees a global ``cu_seqlens`` (e.g.
+    ``[0, 4112]``) that no longer matches the CP-local tensor length, and the
+    GatedDeltaNet layer's ``_resolve_cu_seqlens`` check fails with
+    ``cu_seqlens_q[-1]=4112 does not match total_sequence_length=...``.
+
+    SkyRL's :func:`preprocess_packed_seqs` and mbridge's internal
+    ``preprocess_packed_seqs`` use an identical packing/zigzag layout
+    (``align_size = tp * cp * 2``), so the packed-logprob scatter still maps the
+    model's THD output correctly in this delegated path.
+
+    Returns ``False`` (classic pre-packing path) when mbridge / Qwen3VL is not
+    importable, so non-hybrid models are unaffected.
+    """
+    try:
+        from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
+            Qwen3VLModel,
+        )
+    except ImportError:
+        return False
+
+    chunks = model if isinstance(model, (list, tuple)) else [model]
+    for chunk in chunks:
+        unwrapped = unwrap_model(chunk)
+        unwrapped_list = unwrapped if isinstance(unwrapped, (list, tuple)) else [unwrapped]
+        if any(isinstance(m, Qwen3VLModel) for m in unwrapped_list):
+            return True
+    return False
 
 
 def remove_left_padding(
