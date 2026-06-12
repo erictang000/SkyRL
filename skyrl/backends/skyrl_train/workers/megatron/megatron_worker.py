@@ -77,6 +77,9 @@ if TYPE_CHECKING:
     from skyrl.train.config.config import InferenceEngineConfig
 
 import skyrl.backends.skyrl_train.workers.megatron.model_bridges as _  # noqa: F401  # register extra bridges
+from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
+    maybe_force_qwen35_text_bridge,
+)
 
 
 class MegatronWeightExtractor(WeightExtractor):
@@ -326,6 +329,7 @@ class MegatronWorker:
         bf16=True,
         flash_attn=False,
         lora_config=None,
+        language_model_only=False,
     ):
         """
         Initialize the Megatron-Bridge bridge and provider objects + hf_config and tokenizer
@@ -352,6 +356,20 @@ class MegatronWorker:
                 transformer_config_kwargs[key] = None
 
         bridge = AutoBridge.from_hf_pretrained(model_path, trust_remote_code=True)
+
+        # For Qwen3.5 hybrid GDN models, language_model_only routes the unified
+        # multimodal checkpoint to megatron-core's native GPTModel + GDN ``thd``
+        # path (dropping the vision tower) instead of the VL bridge ->
+        # ``Qwen3VLModel``, which double-packs sequences and corrupts the GDN
+        # ``cu_seqlens`` under sample packing. Must run before
+        # ``to_megatron_provider`` (which resolves the bridge from
+        # ``architectures``). No-op for all other models / architectures.
+        if language_model_only and maybe_force_qwen35_text_bridge(bridge, hf_config):
+            logger.info(
+                "language_model_only=True: forcing Qwen3.5 text->GPTModel bridge "
+                "(native GDN thd packing path; vision tower dropped)"
+            )
+
         provider = bridge.to_megatron_provider()
 
         # Disable Multi-Token Prediction (MTP) for training. MTP is a
@@ -585,6 +603,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             self.cfg.policy.megatron_config.transformer_config_kwargs,
             bf16=self.cfg.bf16,
             flash_attn=self.cfg.flash_attn,
+            language_model_only=self.cfg.policy.language_model_only,
         )
 
         if self.enable_router_replay:
@@ -1285,6 +1304,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
             self.cfg.ref.megatron_config.transformer_config_kwargs,
             bf16=self.cfg.bf16,
             flash_attn=self.cfg.flash_attn,
+            language_model_only=self.cfg.ref.language_model_only,
         )
 
         self.actor_module = self.make_megatron_module(
