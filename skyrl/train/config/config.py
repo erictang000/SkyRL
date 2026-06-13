@@ -536,6 +536,13 @@ class InferenceEngineConfig(BaseConfig):
     enable_ray_prometheus_stats: bool = True
     """Enable Ray Prometheus stats logger for inference engine metrics (vLLM v1 only)."""
     gpu_memory_utilization: float = 0.8
+    use_expandable_segments: bool = False
+    """Set ``PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`` on the inference-engine
+    processes to reduce fragmentation. Independent of the trainer-side
+    ``TrainerConfig.use_expandable_segments``. Default ``False``: it is a safe opt-in
+    on vLLM >= 0.20.1, where the CuMemAllocator auto-disables expandable segments around
+    its sleep/wake memory pool. On older vLLM, sleep mode + expandable segments is a hard
+    error, so leave this off."""
     max_num_seqs: int = 1024
     remote_urls: List[str] = field(default_factory=lambda: [])
     enable_http_endpoint: bool = False
@@ -659,6 +666,11 @@ class EnvironmentConfig(BaseConfig):
 @dataclass
 class TrainerConfig(BaseConfig):
     placement: PlacementConfig = field(default_factory=PlacementConfig)
+    use_expandable_segments: bool = True
+    """Enable PyTorch's CUDA ``expandable_segments`` allocator on the training
+    workers to reduce GPU memory fragmentation across the offload/backload and
+    forward/backward cycles. See ``InferenceEngineConfig`` for the
+    equivalent inference-engine knob."""
     sequence_parallel_backend: str = "ulysses"
     strategy: str = "fsdp"
     policy: PolicyConfig = field(default_factory=PolicyConfig)
