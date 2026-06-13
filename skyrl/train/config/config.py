@@ -704,6 +704,23 @@ class TrainerConfig(BaseConfig):
     critic_mini_batch_size: int = 256
     micro_train_batch_size_per_gpu: int = 1
     micro_forward_batch_size_per_gpu: int = 1
+    max_tokens_per_microbatch: int = -1
+    """Maximum number of tokens per microbatch for both forward and training steps. When > 0, microbatches 
+    are formed by bin-packing samples based on their token counts (from attention_mask) instead of using a 
+    fixed sample count, and micro_train_batch_size_per_gpu / micro_forward_batch_size_per_gpu are ignored.
+    -1 means disabled (use sample-based micro_train_batch_size_per_gpu / micro_forward_batch_size_per_gpu).
+    Applies to both forward and training micro-batching.
+
+    NOTE: this is a *soft* cap. Sequences are never split across microbatches, so a single sequence
+    longer than ``max_tokens_per_microbatch`` is placed alone in its own microbatch that exceeds the
+    cap (no error, no truncation). The true peak microbatch size is therefore
+    ``max(max_tokens_per_microbatch, longest_sequence_in_batch)``."""
+    recompute_old_logprobs_per_minibatch: bool = True
+    """When True, recomputes policy/ref model logprobs (and critic values) per mini-batch using
+    the same mini-batch + DP partition as the training step. When False, a single full-batch forward is run.
+    This makes the microbatch packing — and therefore the resulting logprobs/values — identical to
+    what forward_backward recomputes, so the PPO ratio (and critic value clipping) is exact at the
+    first inner step."""
     update_ref_every_epoch: bool = False
     remove_microbatch_padding: bool = True
     """Pack samples into the THD layout and strip intra-microbatch padding (requires flash attention)."""
