@@ -492,6 +492,10 @@ class FullyAsyncConfig(BaseConfig):
     num_parallel_generation_workers: int = 768
     """Number of generation workers to spawn. Should be >= ``policy_mini_batch_size`` and
     <= ``policy_mini_batch_size * (max_staleness_steps + 1)``."""
+    clear_kv_cache_on_weight_sync: bool = True
+    """Whether or not to clear the KV cache on weight sync. Defaults to True, matching synchronous RL.
+    Set to False for fully async training to reuse KV cache from stale policies during generation
+    (avoids recomputation at the cost of using slightly stale KV cache)."""
 
 
 # ---------------------------------------------------------------------------
