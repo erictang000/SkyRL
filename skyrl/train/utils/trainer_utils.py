@@ -568,26 +568,49 @@ def filter_generator_output(output: GeneratorOutput, kept_indices: List[int]) ->
     return filtered
 
 
-def zero_variance_filter(rewards: List[float], uids: List[str]) -> List[int]:
+def zero_variance_filter(
+    rewards: List[float],
+    uids: List[str],
+    loss_masks: Optional[List[List[int]]] = None,
+    tol: float = 0.0,
+) -> List[int]:
     """
-    Given a list of trajectory level rewards and uids, return the indices of the trajectories with non-zero variance rewards.
+    Given a list of trajectory level rewards and uids, return the indices of the trajectories to keep.
+
+    A group (set of trajectories sharing a uid) is filtered out only when it has more than one
+    *live* trajectory and the spread of their rewards is within ``tol`` (i.e. no GRPO signal).
+    Groups with at most one live trajectory (singletons, or groups whose other trajectories were
+    already masked upstream) are always kept.
+
+    A trajectory is "live" if it has at least one unmasked token (``sum(loss_mask) > 0``). When
+    ``loss_masks`` is None, all trajectories are treated as live. Computing variance over live
+    trajectories only means trajectories masked upstream (e.g. failed or timed-out rollouts) do not
+    make a genuine zero-variance group look like it has variance.
 
     Args:
         rewards: List[float]
         uids: List[str]
+        loss_masks: Optional per-trajectory loss masks, used to determine which trajectories are live.
+        tol: Two rewards within this absolute tolerance count as equal. 0.0 reproduces exact
+            (``np.std > 0``) behavior; set a small value (e.g. 1e-6) for float (LLM-judge) rewards.
 
     Returns:
         List[int]
     """
-    # Group by UID and calculate standard deviation
-    uid2metric_vals = defaultdict(list)
-    for uid, reward in zip(uids, rewards):
-        uid2metric_vals[uid].append(reward)
+    is_live = [True] * len(rewards) if loss_masks is None else [sum(mask) > 0 for mask in loss_masks]
 
-    # Identify UIDs to keep: non-zero variance or singletons
-    kept_uids_set = {
-        uid for uid, metric_vals in uid2metric_vals.items() if np.std(metric_vals) > 0 or len(metric_vals) == 1
-    }
+    # Group live rewards by UID.
+    uid2live_rewards = defaultdict(list)
+    for uid, reward, live in zip(uids, rewards, is_live):
+        if live:
+            uid2live_rewards[uid].append(reward)
+
+    def _is_zero_variance(uid: str) -> bool:
+        vals = uid2live_rewards.get(uid, [])
+        return len(vals) > 1 and (max(vals) - min(vals)) <= tol
+
+    # Keep everything except groups with >1 live trajectory and no reward spread.
+    kept_uids_set = {uid for uid in set(uids) if not _is_zero_variance(uid)}
 
     # Return indices of trajectories with kept UIDs
     return [i for i, uid in enumerate(uids) if uid in kept_uids_set]

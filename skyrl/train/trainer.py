@@ -969,7 +969,17 @@ class RayPPOTrainer:
             per_token_rewards = rewards
         else:
             if self.cfg.trainer.algorithm.zero_variance_filter:
-                kept_indices_set = set(zero_variance_filter(rewards, uids))
+                kept_indices_set = set(
+                    zero_variance_filter(
+                        rewards,
+                        uids,
+                        loss_masks=generator_output["loss_masks"],
+                        tol=self.cfg.trainer.algorithm.zero_variance_filter_tol,
+                    )
+                )
+                num_groups = len(set(uids))
+                num_kept_groups = len({uids[i] for i in kept_indices_set})
+                self.all_metrics["reward/num_zero_variance_filtered"] = num_groups - num_kept_groups
                 generator_output["loss_masks"] = [
                     [0] * len(mask) if i not in kept_indices_set else mask
                     for i, mask in enumerate(generator_output["loss_masks"])
