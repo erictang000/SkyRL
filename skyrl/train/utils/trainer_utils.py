@@ -597,7 +597,7 @@ def zero_variance_filter(
     Returns:
         List[int]
     """
-    is_live = [True] * len(rewards) if loss_masks is None else [sum(mask) > 0 for mask in loss_masks]
+    is_live = [True] * len(rewards) if loss_masks is None else [any(mask) for mask in loss_masks]
 
     # Group live rewards by UID.
     uid2live_rewards = defaultdict(list)
