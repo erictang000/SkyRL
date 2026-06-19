@@ -5,12 +5,17 @@ and for the worker-side per-mini-batch train/rollout logprob diff metric.
 uv run --isolated --extra dev pytest tests/train/algorithms/test_skip_fwd_logprobs.py
 """
 
+import pytest
 import torch
 
 from skyrl.backends.skyrl_train.utils.off_policy_correction_utils import (
     off_policy_correction_enabled,
 )
-from skyrl.backends.skyrl_train.utils.ppo_utils import LOSSES_WITHOUT_OLD_LOGPROBS
+from skyrl.backends.skyrl_train.utils.ppo_utils import (
+    LOSSES_WITHOUT_OLD_LOGPROBS,
+    dppo_policy_loss,
+    rollout_is_policy_loss,
+)
 from skyrl.backends.skyrl_train.workers.worker_utils import (
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
@@ -18,7 +23,7 @@ from skyrl.backends.skyrl_train.workers.worker_utils import (
     compute_minibatch_rollout_logprob_diff_metrics,
     reduce_metrics,
 )
-from skyrl.train.config import OffPolicyCorrectionConfig
+from skyrl.train.config import AlgorithmConfig, OffPolicyCorrectionConfig
 from skyrl.train.utils.trainer_utils import finalize_minibatch_rollout_logprob_diff_std
 
 
@@ -28,6 +33,34 @@ def test_losses_without_old_logprobs():
     assert "dppo" in LOSSES_WITHOUT_OLD_LOGPROBS
     assert "regular" not in LOSSES_WITHOUT_OLD_LOGPROBS
     assert "gspo" not in LOSSES_WITHOUT_OLD_LOGPROBS
+
+
+@pytest.mark.parametrize(
+    "loss_name, loss_fn",
+    [("rollout_is", rollout_is_policy_loss), ("dppo", dppo_policy_loss)],
+)
+def test_skip_path_losses_run_with_old_log_probs_none(loss_name, loss_fn):
+    """Skip-path invariant: with the forward pass skipped, ``old_log_probs`` reaches the loss as
+    ``None``. These losses must not dereference it when off-policy correction is disabled (which
+    ``_skip_policy_forward`` guarantees) -- rollout logprobs stand in for the old logprobs."""
+    assert loss_name in LOSSES_WITHOUT_OLD_LOGPROBS
+    config = AlgorithmConfig(policy_loss_type=loss_name, off_policy_correction=OffPolicyCorrectionConfig())
+    assert not off_policy_correction_enabled(config.off_policy_correction)
+
+    log_probs = torch.tensor([[-1.0, -1.5, -0.8], [-0.7, -1.2, -2.0]])
+    rollout_logprobs = torch.tensor([[-1.2, -1.0, -0.9], [-0.6, -1.5, -1.7]])
+    advantages = torch.tensor([[1.0, 1.0, 1.0], [-1.0, -1.0, -1.0]])
+    loss_mask = torch.tensor([[1.0, 1.0, 1.0], [1.0, 1.0, 0.0]])
+
+    loss, _ = loss_fn(
+        log_probs,
+        None,  # old_log_probs: skipped forward pass
+        advantages,
+        config=config,
+        loss_mask=loss_mask,
+        rollout_logprobs=rollout_logprobs,
+    )
+    assert torch.isfinite(loss)
 
 
 def test_off_policy_correction_enabled():
