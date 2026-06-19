@@ -456,6 +456,13 @@ class PolicyLossType(StrEnum):
     DPPO = "dppo"
 
 
+# Policy losses that optimize against the rollout logprobs and so do not need the "old"
+# policy logprobs from a forward pass over the batch. When one of these is used (and nothing
+# else consumes the old logprobs) the policy forward pass in `fwd_logprobs_values_reward`
+# can be skipped.
+LOSSES_WITHOUT_OLD_LOGPROBS = frozenset({PolicyLossType.ROLLOUT_IS, PolicyLossType.DPPO})
+
+
 class PolicyLossRegistry(BaseFunctionRegistry):
     """
     Registry for policy loss functions.

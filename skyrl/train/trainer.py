@@ -33,7 +33,11 @@ from skyrl.backends.skyrl_train.training_batch import (
 )
 from skyrl.backends.skyrl_train.utils import ppo_utils
 from skyrl.backends.skyrl_train.utils.io import io
+from skyrl.backends.skyrl_train.utils.off_policy_correction_utils import (
+    off_policy_correction_enabled,
+)
 from skyrl.backends.skyrl_train.utils.ppo_utils import (
+    LOSSES_WITHOUT_OLD_LOGPROBS,
     AdaptiveKLController,
     FixedKLController,
     apply_loss_reduction_to_advantages_minibatch,
@@ -91,6 +95,31 @@ from skyrl.train.utils.trainer_utils import (
 )
 from skyrl.train.utils.utils import ResolvedPlacementGroup, configure_ray_worker_logging
 from skyrl.train.utils.vllm_metrics_scraper import VLLMMetricsScraper
+
+# Worker-side train/rollout logprob diff metric. The workers emit the first and second moments
+# (mean and mean-of-squares) of the abs diff, which reduce correctly (as means) across
+# microbatches, DP ranks, and mini-batches. The std is derived from those moments here since a
+# std cannot itself be mean-reduced across those axes.
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY = "minibatch_rollout_logprobs_abs_diff_mean"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY = "minibatch_rollout_logprobs_abs_diff_sq_mean"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY = "minibatch_rollout_logprobs_abs_diff_std"
+
+
+def _finalize_minibatch_rollout_logprob_diff_std(metrics: Dict[str, float]) -> None:
+    """Derive the train/rollout logprob diff std from its reduced first and second moments.
+
+    Operates in place on ``metrics``: replaces the second-moment key with the derived std.
+    No-op when the moments are absent (e.g. critic training, or no rollout logprobs).
+    """
+    if (
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY not in metrics
+        or MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY not in metrics
+    ):
+        return
+    mean = metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY]
+    sq_mean = metrics.pop(MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY)
+    # Clamp at 0 to guard against tiny negatives from floating-point round-off.
+    metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY] = math.sqrt(max(0.0, sq_mean - mean**2))
 
 
 class RayPPOTrainer:
@@ -1172,6 +1201,23 @@ class RayPPOTrainer:
         output = self.dispatch.forward(model, data_fwd_pass)
         return loss_fn_outputs_to_tensor(output.loss_fn_outputs, key=key)
 
+    def _skip_policy_forward(self, training_input: TrainingInputBatch) -> bool:
+        """Whether the policy forward pass producing the "old" logprobs can be skipped.
+
+        Losses such as ``rollout_is`` and ``dppo`` optimize against the rollout logprobs rather
+        than the old policy logprobs. The forward pass can be skipped when all of the following
+        hold: rollout logprobs are present (these losses fall back to the old logprobs without
+        them), the KL reward penalty is disabled, and no off-policy correction is active -- the
+        KL reward penalty and off-policy correction both read the forward-pass logprobs.
+        """
+        algorithm = self.cfg.trainer.algorithm
+        return (
+            algorithm.policy_loss_type in LOSSES_WITHOUT_OLD_LOGPROBS
+            and training_input.get("rollout_logprobs", None) is not None
+            and not algorithm.use_kl_in_reward
+            and not off_policy_correction_enabled(algorithm.off_policy_correction)
+        )
+
     @torch.no_grad()
     def fwd_logprobs_values_reward(
         self,
@@ -1222,13 +1268,18 @@ class RayPPOTrainer:
             )
             self.dispatch.empty_cache("ref")
 
-        # Policy forward
-        action_log_probs = self._execute_forward_pass(
-            "policy",
-            data_fwd_pass,
-            key="logprobs",
-            mini_batch_boundaries=training_input.metadata.get("policy_mini_batch_boundaries"),
-        )
+        # Policy forward. Skipped when the configured loss optimizes against rollout logprobs
+        # (e.g. rollout_is, dppo) and nothing else consumes the "old" policy logprobs -- the
+        # forward pass would otherwise produce a tensor the training step never reads.
+        if self._skip_policy_forward(training_input):
+            action_log_probs = None
+        else:
+            action_log_probs = self._execute_forward_pass(
+                "policy",
+                data_fwd_pass,
+                key="logprobs",
+                mini_batch_boundaries=training_input.metadata.get("policy_mini_batch_boundaries"),
+            )
 
         # Empty cache after all forward passes
         self.dispatch.empty_cache()
@@ -1236,16 +1287,18 @@ class RayPPOTrainer:
         sequences_all: torch.Tensor = training_input["sequences"]
         # NOTE (sumanthrh): The slicing is needed to make sure that the batch dimension doesn't change for the tensordict.
         base_log_probs = base_log_probs[: len(sequences_all)] if base_log_probs is not None else None
-        action_log_probs = action_log_probs[: len(sequences_all)]
+        action_log_probs = action_log_probs[: len(sequences_all)] if action_log_probs is not None else None
         values = values[: len(sequences_all)] if values is not None else None
 
         training_input["base_action_log_probs"] = base_log_probs
         training_input["action_log_probs"] = action_log_probs
         training_input["values"] = values
 
-        if training_input.get("rollout_logprobs", None) is not None:
-            # calculates the difference in probs between inference and trainer components
-            # only consider response tokens
+        if training_input.get("rollout_logprobs", None) is not None and action_log_probs is not None:
+            # calculates the difference in probs between inference and the trainer forward pass
+            # only consider response tokens. When the policy forward pass is skipped this metric is
+            # unavailable; the worker emits a per-mini-batch `minibatch_rollout_logprobs_abs_diff_*`
+            # metric instead (see `_forward_backward_micro`).
             logprobs_diff = (
                 training_input["rollout_logprobs"][training_input["loss_mask"] > 0]
                 - action_log_probs[training_input["loss_mask"] > 0]
@@ -1409,6 +1462,7 @@ class RayPPOTrainer:
 
         # Reduce metrics across all mini-batches and epochs
         reduced_metrics = reduce_metrics(all_metrics, sum_loss_metrics=False)
+        _finalize_minibatch_rollout_logprob_diff_std(reduced_metrics)
         return reduced_metrics
 
     def train_critic_and_policy(self, data: TrainingInputBatch):
