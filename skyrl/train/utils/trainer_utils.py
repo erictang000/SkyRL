@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from collections import defaultdict
 from enum import Enum
@@ -15,6 +16,11 @@ from transformers import AutoTokenizer
 
 from skyrl.backends.skyrl_train.utils.io import io
 from skyrl.backends.skyrl_train.workers.worker import PPORayActorGroup
+from skyrl.backends.skyrl_train.workers.worker_utils import (
+    MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
+    MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
+    MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY,
+)
 from skyrl.train.config import SkyRLTrainConfig, TrainerConfig
 from skyrl.train.dataset import PromptDataset
 from skyrl.train.generators.base import GeneratorOutput
@@ -26,6 +32,26 @@ from skyrl.train.generators.utils import (
 BasicType = Union[int, float, str, bool, type(None)]
 
 GLOBAL_STEP_PREFIX = "global_step_"
+
+
+def finalize_minibatch_rollout_logprob_diff_std(metrics: Dict[str, float]) -> None:
+    """Derive the train/rollout logprob diff std from its reduced first and second moments.
+
+    The workers emit the abs-diff mean and mean-of-squares, which reduce correctly as means
+    across micro-batches, DP ranks, and mini-batches; the std is reconstructed here since it
+    cannot itself be mean-reduced across those axes. Operates in place on ``metrics``: replaces
+    the second-moment key with the derived std. No-op when the moments are absent (e.g. critic
+    training, or no rollout logprobs).
+    """
+    if (
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY not in metrics
+        or MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY not in metrics
+    ):
+        return
+    mean = metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY]
+    sq_mean = metrics.pop(MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY)
+    # Clamp at 0 to guard against tiny negatives from floating-point round-off.
+    metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY] = math.sqrt(max(0.0, sq_mean - mean**2))
 
 
 class ResumeMode(Enum):

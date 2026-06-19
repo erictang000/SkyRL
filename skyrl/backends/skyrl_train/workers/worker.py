@@ -54,6 +54,7 @@ from skyrl.backends.skyrl_train.workers.worker_utils import (
     BaseBatchIterator,
     BatchIterator,
     all_reduce_metrics,
+    compute_minibatch_rollout_logprob_diff_metrics,
     get_microbatch_iterator,
     reduce_metrics,
 )
@@ -1003,42 +1004,10 @@ class PolicyWorkerBase(Worker):
             if self.cfg.algorithm.use_kl_loss:
                 status["policy_kl"] = kl_loss.item()
             status.update(
-                self._minibatch_rollout_logprob_diff_metrics(action_log_probs, rollout_action_logprobs, loss_mask)
+                compute_minibatch_rollout_logprob_diff_metrics(action_log_probs, rollout_action_logprobs, loss_mask)
             )
 
         return status
-
-    @torch.no_grad()
-    def _minibatch_rollout_logprob_diff_metrics(
-        self,
-        action_log_probs: torch.Tensor,
-        rollout_logprobs: Optional[torch.Tensor],
-        loss_mask: Optional[torch.Tensor],
-    ) -> Dict[str, float]:
-        """Per-micro-batch abs diff between train-step and rollout logprobs.
-
-        Unlike the trainer's forward-pass `rollout_train_logprobs_abs_diff` metric (rollout vs a
-        single full-batch forward), this uses the logprobs actually computed in this gradient
-        micro-step. When ``train_batch_size > mini_batch_size`` the policy drifts across
-        mini-batches, so this is the diff the loss actually optimizes against -- worth monitoring
-        even though the forward-pass metric may be unavailable (i.e. when it is skipped).
-
-        Emits the first and second moments (`_mean`, `_sq_mean`) so the trainer can derive a std
-        that reduces correctly across micro-batches, DP ranks, and mini-batches, plus `_max`/`_min`.
-        """
-        if rollout_logprobs is None:
-            return {}
-        abs_diff = (action_log_probs - rollout_logprobs).abs()
-        if loss_mask is not None:
-            abs_diff = abs_diff[loss_mask > 0]
-        if abs_diff.numel() == 0:
-            return {}
-        return {
-            "minibatch_rollout_logprobs_abs_diff_mean": abs_diff.mean().item(),
-            "minibatch_rollout_logprobs_abs_diff_sq_mean": abs_diff.square().mean().item(),
-            "minibatch_rollout_logprobs_abs_diff_max": abs_diff.max().item(),
-            "minibatch_rollout_logprobs_abs_diff_min": abs_diff.min().item(),
-        }
 
     def optim_step(self) -> float:
         """

@@ -1,5 +1,5 @@
 import math
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -8,6 +8,49 @@ from skyrl.backends.skyrl_train.distributed.strategy import DistributedStrategy
 from skyrl.backends.skyrl_train.training_batch import TensorBatch, TrainingInputBatch
 from skyrl.train.dataset.bin_packing import make_seq_packer
 from skyrl.train.dataset.replay_buffer import Experience
+
+# Worker-side abs diff between train-step and rollout logprobs, computed per micro-batch.
+# The first/second moments (`_mean`, `_sq_mean`) reduce correctly as means across
+# micro-batches, DP ranks, and mini-batches; `_max`/`_min` reduce as max/min. The std is
+# reconstructed from the moments downstream (it cannot itself be mean-reduced across those axes).
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX = "minibatch_rollout_logprobs_abs_diff"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_mean"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_sq_mean"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_max"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_min"
+MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_std"
+
+
+@torch.no_grad()
+def compute_minibatch_rollout_logprob_diff_metrics(
+    action_log_probs: torch.Tensor,
+    rollout_logprobs: Optional[torch.Tensor],
+    loss_mask: Optional[torch.Tensor],
+) -> Dict[str, float]:
+    """Per-micro-batch abs diff between train-step and rollout logprobs.
+
+    Unlike the trainer's forward-pass `rollout_train_logprobs_abs_diff` metric (rollout vs a
+    single full-batch forward), this uses the logprobs actually computed in this gradient
+    micro-step. When ``train_batch_size > mini_batch_size`` the policy drifts across
+    mini-batches, so this is the diff the loss actually optimizes against -- worth monitoring
+    even when the forward-pass metric is skipped.
+
+    Returns an empty dict (no metrics emitted) when rollout logprobs are unavailable or every
+    token is masked, e.g. for fully-padding micro-batches from token-based batching.
+    """
+    if rollout_logprobs is None:
+        return {}
+    abs_diff = (action_log_probs - rollout_logprobs).abs()
+    if loss_mask is not None:
+        abs_diff = abs_diff[loss_mask > 0]
+    if abs_diff.numel() == 0:
+        return {}
+    return {
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY: abs_diff.mean().item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY: abs_diff.square().mean().item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY: abs_diff.max().item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY: abs_diff.min().item(),
+    }
 
 
 def reduce_metrics(metrics: Dict[str, List[float]], sum_loss_metrics: bool = False) -> Dict[str, float]:

@@ -88,6 +88,7 @@ from skyrl.train.utils.trainer_utils import (
     build_dataloader,
     cleanup_old_checkpoints,
     extract_step_from_path,
+    finalize_minibatch_rollout_logprob_diff_std,
     run_on_each_node,
     validate_consistency_for_latest_checkpoint,
     validate_generator_output,
@@ -95,31 +96,6 @@ from skyrl.train.utils.trainer_utils import (
 )
 from skyrl.train.utils.utils import ResolvedPlacementGroup, configure_ray_worker_logging
 from skyrl.train.utils.vllm_metrics_scraper import VLLMMetricsScraper
-
-# Worker-side train/rollout logprob diff metric. The workers emit the first and second moments
-# (mean and mean-of-squares) of the abs diff, which reduce correctly (as means) across
-# microbatches, DP ranks, and mini-batches. The std is derived from those moments here since a
-# std cannot itself be mean-reduced across those axes.
-MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY = "minibatch_rollout_logprobs_abs_diff_mean"
-MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY = "minibatch_rollout_logprobs_abs_diff_sq_mean"
-MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY = "minibatch_rollout_logprobs_abs_diff_std"
-
-
-def _finalize_minibatch_rollout_logprob_diff_std(metrics: Dict[str, float]) -> None:
-    """Derive the train/rollout logprob diff std from its reduced first and second moments.
-
-    Operates in place on ``metrics``: replaces the second-moment key with the derived std.
-    No-op when the moments are absent (e.g. critic training, or no rollout logprobs).
-    """
-    if (
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY not in metrics
-        or MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY not in metrics
-    ):
-        return
-    mean = metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY]
-    sq_mean = metrics.pop(MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY)
-    # Clamp at 0 to guard against tiny negatives from floating-point round-off.
-    metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY] = math.sqrt(max(0.0, sq_mean - mean**2))
 
 
 class RayPPOTrainer:
@@ -1462,7 +1438,7 @@ class RayPPOTrainer:
 
         # Reduce metrics across all mini-batches and epochs
         reduced_metrics = reduce_metrics(all_metrics, sum_loss_metrics=False)
-        _finalize_minibatch_rollout_logprob_diff_std(reduced_metrics)
+        finalize_minibatch_rollout_logprob_diff_std(reduced_metrics)
         return reduced_metrics
 
     def train_critic_and_policy(self, data: TrainingInputBatch):

@@ -7,17 +7,19 @@ uv run --isolated --extra dev pytest tests/train/algorithms/test_skip_fwd_logpro
 
 import torch
 
-from skyrl.backends.skyrl_train.utils.off_policy_correction_utils import off_policy_correction_enabled
+from skyrl.backends.skyrl_train.utils.off_policy_correction_utils import (
+    off_policy_correction_enabled,
+)
 from skyrl.backends.skyrl_train.utils.ppo_utils import LOSSES_WITHOUT_OLD_LOGPROBS
-from skyrl.backends.skyrl_train.workers.worker import PolicyWorkerBase
-from skyrl.backends.skyrl_train.workers.worker_utils import all_reduce_metrics, reduce_metrics  # noqa: F401
-from skyrl.train.config import OffPolicyCorrectionConfig
-from skyrl.train.trainer import (
+from skyrl.backends.skyrl_train.workers.worker_utils import (
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY,
-    _finalize_minibatch_rollout_logprob_diff_std,
+    compute_minibatch_rollout_logprob_diff_metrics,
+    reduce_metrics,
 )
+from skyrl.train.config import OffPolicyCorrectionConfig
+from skyrl.train.utils.trainer_utils import finalize_minibatch_rollout_logprob_diff_std
 
 
 def test_losses_without_old_logprobs():
@@ -48,9 +50,7 @@ def test_minibatch_metric_values_match_manual():
     rollout_logprobs = torch.tensor([[-1.5, -1.0, -3.0], [-0.5, -2.0, -1.0]])
     loss_mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
 
-    metrics = PolicyWorkerBase._minibatch_rollout_logprob_diff_metrics(
-        None, action_log_probs, rollout_logprobs, loss_mask
-    )
+    metrics = compute_minibatch_rollout_logprob_diff_metrics(action_log_probs, rollout_logprobs, loss_mask)
 
     abs_diff = (action_log_probs - rollout_logprobs).abs()[loss_mask > 0]
     assert metrics["minibatch_rollout_logprobs_abs_diff_mean"] == abs_diff.mean().item()
@@ -63,15 +63,15 @@ def test_minibatch_metric_absent_without_rollout_or_tokens():
     """No metric is emitted when rollout logprobs are missing or every token is masked."""
     alp = torch.tensor([[-1.0, -2.0]])
     rlp = torch.tensor([[-1.5, -1.0]])
-    assert PolicyWorkerBase._minibatch_rollout_logprob_diff_metrics(None, alp, None, None) == {}
+    assert compute_minibatch_rollout_logprob_diff_metrics(alp, None, None) == {}
     fully_masked = torch.zeros_like(alp)
-    assert PolicyWorkerBase._minibatch_rollout_logprob_diff_metrics(None, alp, rlp, fully_masked) == {}
+    assert compute_minibatch_rollout_logprob_diff_metrics(alp, rlp, fully_masked) == {}
 
 
 def test_finalize_std_noop_without_moments():
     """The std derivation is a no-op when the moment keys are absent (e.g. critic training)."""
     metrics = {"foo": 1.0}
-    _finalize_minibatch_rollout_logprob_diff_std(metrics)
+    finalize_minibatch_rollout_logprob_diff_std(metrics)
     assert metrics == {"foo": 1.0}
 
 
@@ -106,7 +106,7 @@ def test_std_aggregates_correctly_across_microbatches_and_minibatches():
     # Trainer-level reduction across mini-batches.
     all_metrics = {k: [mb1[k], mb2[k]] for k in keys}
     reduced = reduce_metrics(all_metrics)
-    _finalize_minibatch_rollout_logprob_diff_std(reduced)
+    finalize_minibatch_rollout_logprob_diff_std(reduced)
 
     # All micro-batches are equal size, so the pooled mean/std are exact.
     pooled = torch.cat(diffs)
