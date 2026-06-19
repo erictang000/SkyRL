@@ -71,8 +71,14 @@ class FullyAsyncDAPOTrainer(FullyAsyncRayPPOTrainer):
                 penalty = exceed_length / overlong_buffer_len * overlong_buffer_penalty_factor
 
                 if is_per_token:
-                    # Subtract penalty from the last token's reward
-                    rewards[i][-1] -= penalty
+                    # Subtract penalty from the last token's reward. Reassign the slot with a fresh
+                    # list instead of mutating in place: generator_output and metrics_generator_output
+                    # share the same inner reward-list objects (concatenate_generator_outputs only
+                    # copies the outer list), so an in-place mutation would penalize the shared list
+                    # twice -- once per call -- corrupting both the trained rewards and the metrics.
+                    penalized = list(rewards[i])
+                    penalized[-1] -= penalty
+                    rewards[i] = penalized
                 else:
                     rewards[i] -= penalty
             elif response_length > max_response_length:
