@@ -199,6 +199,24 @@ class TestTokenBasedBatchIterator:
         # Padding rows must not contribute to the loss.
         assert padding["loss_mask"].sum().item() == 0
 
+    def test_padding_microbatch_carries_rollout_logprobs(self):
+        """When the real data has rollout_logprobs, padding microbatches must carry the key too.
+        Otherwise a loss requiring it (off_policy_correction / use_rollout_kl_loss) hits a None on
+        padding microbatches and raises inside the distributed forward_backward -- which desyncs the
+        collective and aborts all ranks with no traceback. Regression test for that drop."""
+        batch = self._make_batch([10, 10, 5, 5], num_actions=4)
+        batch["rollout_logprobs"] = 0.2 * torch.ones((4, 4), device="cpu")
+        iterator = TokenBasedBatchIterator(batch, max_tokens_per_microbatch=15)
+
+        padding = iterator._create_padding_microbatch()
+        assert padding.get("rollout_logprobs") is not None
+        assert padding["rollout_logprobs"].shape == (padding["loss_mask"].shape[0], 4)
+
+        # And it must NOT be fabricated when the real data lacks it.
+        batch_no_lp = self._make_batch([10, 10, 5, 5], num_actions=4)
+        iterator_no_lp = TokenBasedBatchIterator(batch_no_lp, max_tokens_per_microbatch=15)
+        assert iterator_no_lp._create_padding_microbatch().get("rollout_logprobs") is None
+
     def test_multimodal_tensorlist_microbatching(self):
         """Token-based microbatching must gather TensorList fields (multi-modal pixel_values /
         image_grid_thw) via the same index gather used for regular tensors."""

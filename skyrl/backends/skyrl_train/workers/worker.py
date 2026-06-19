@@ -959,6 +959,26 @@ class PolicyWorkerBase(Worker):
                 kl_loss = torch.tensor(0.0)
             kl_loss_term = kl_loss * self.cfg.algorithm.kl_loss_coef
 
+            # rollout KL loss: soft trust region penalizing the train<->rollout logprob drift.
+            # Unlike the binary DPPO/clip masks (which only act on tokens that cross a threshold),
+            # this penalizes the train-rollout gap on every token, so it directly counteracts the
+            # growing off-policy gap in async training. prime-rl uses the squared log importance
+            # ratio (log_probs - rollout_logprobs)**2; "k2" gives that up to a 1/2 factor.
+            if self.cfg.algorithm.use_rollout_kl_loss:
+                assert (
+                    rollout_action_logprobs is not None
+                ), "use_rollout_kl_loss=True requires rollout_logprobs (e.g. fully async training)"
+                rollout_kl_loss = compute_approx_kl(
+                    action_log_probs,
+                    rollout_action_logprobs,
+                    loss_mask=loss_mask,
+                    kl_estimator_type=self.cfg.algorithm.rollout_kl_estimator_type,
+                )
+                rollout_kl_loss = masked_mean(rollout_kl_loss, loss_mask, dim=-1).mean()
+            else:
+                rollout_kl_loss = torch.tensor(0.0)
+            rollout_kl_loss_term = rollout_kl_loss * self.cfg.algorithm.rollout_kl_loss_coef
+
             # DP all-reduce averages gradients, but policy losses are pre-scaled sums
             # (see `apply_loss_reduction_to_advantages_minibatch`), so we multiply by
             # dp_size to recover the correct sum reduction across workers.
@@ -966,7 +986,10 @@ class PolicyWorkerBase(Worker):
 
             # NOTE: The KL and entropy loss terms are not pre-scaled,
             # so we just average them across microbatches and DP workers.
-            loss = policy_loss * grad_sum_correction_factor + (kl_loss_term - entropy_loss_term) * microbatch_weight
+            loss = (
+                policy_loss * grad_sum_correction_factor
+                + (kl_loss_term + rollout_kl_loss_term - entropy_loss_term) * microbatch_weight
+            )
             unscaled_loss = loss / grad_sum_correction_factor
             self.strategy.backward(loss, self.model, self.optimizer)
 
@@ -1002,6 +1025,8 @@ class PolicyWorkerBase(Worker):
                 status["loss_metrics/" + k] = v
             if self.cfg.algorithm.use_kl_loss:
                 status["policy_kl"] = kl_loss.item()
+            if self.cfg.algorithm.use_rollout_kl_loss:
+                status["rollout_kl"] = rollout_kl_loss.item()
 
         return status
 

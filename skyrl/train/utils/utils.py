@@ -376,6 +376,16 @@ def validate_cfg(cfg: SkyRLTrainConfig):
                 "`trainer.algorithm.off_policy_correction` doesn't support clip_cov or kl_cov policy loss types"
             )
 
+    # Rollout KL loss penalizes the train<->rollout logprob gap, so it also needs the generator
+    # to return rollout logprobs. Auto-enable logprobs (mirroring off_policy_correction above) so the
+    # feature does not fail deep inside the training step with a None rollout_logprobs tensor.
+    if cfg.trainer.algorithm.use_rollout_kl_loss and cfg.generator.sampling_params.logprobs is None:
+        logger.warning(
+            "`generator.sampling_params.logprobs` is `None` but `use_rollout_kl_loss` is enabled."
+            " Setting `logprobs` to `1`."
+        )
+        cfg.generator.sampling_params.logprobs = 1
+
     if cfg.trainer.policy.model.lora.rank > 0:
         # LoRA enabled: generator backend must be vllm, training backend must be fsdp or megatron
         assert cfg.generator.inference_engine.backend == "vllm", "LoRA enabled requires vLLM backend"

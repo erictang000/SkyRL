@@ -432,6 +432,16 @@ class AlgorithmConfig(BaseConfig):
     use_kl_loss: bool = True
     """Apply KL loss in the policy model. Mutually exclusive with ``use_kl_in_reward``."""
     kl_loss_coef: float = 0.001
+    use_rollout_kl_loss: bool = False
+    """Penalize the train<->rollout logprob drift (the "mismatch"/off-policy gap) with a KL term
+    against the rollout (behavior) policy, in addition to the policy loss. Requires the generator
+    to provide ``rollout_logprobs`` (e.g. fully async training). Composes with any ``policy_loss_type``
+    and is independent of ``use_kl_loss`` (which is KL vs the frozen reference model)."""
+    rollout_kl_loss_coef: float = 0.0
+    """Coefficient for the rollout KL loss. Only used when ``use_rollout_kl_loss=True``."""
+    rollout_kl_estimator_type: str = "k2"
+    """KL estimator for the rollout KL loss. Default ``"k2"`` gives ``0.5 * (log_probs - rollout_logprobs)**2``,
+    i.e. the squared log importance ratio (up to the 1/2 factor absorbed by ``rollout_kl_loss_coef``)."""
     use_entropy_loss: bool = False
     entropy_loss_coef: float = 0.01
     temperature: Optional[float] = None

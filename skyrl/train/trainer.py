@@ -813,10 +813,19 @@ class RayPPOTrainer:
         off_policy_correction = self.cfg.trainer.algorithm.off_policy_correction
         tis_ratio_type = off_policy_correction.tis_ratio_type
         sequence_mask_metric = off_policy_correction.sequence_mask_metric
-        if tis_ratio_type is not None or sequence_mask_metric is not None:
-            assert (
-                rollout_logprobs_tensor is not None
-            ), "expected non-null rollout logprobs tensor when off_policy_correction is enabled"
+        # Fail fast on the driver (with a clear traceback) if rollout logprobs are required but missing.
+        # Deferring this to the per-rank loss function instead raises mid-collective inside the distributed
+        # forward_backward, which desyncs NCCL and surfaces as a silent multi-rank abort with no traceback.
+        needs_rollout_logprobs = (
+            tis_ratio_type is not None
+            or sequence_mask_metric is not None
+            or self.cfg.trainer.algorithm.use_rollout_kl_loss
+        )
+        if needs_rollout_logprobs:
+            assert rollout_logprobs_tensor is not None, (
+                "expected non-null rollout logprobs tensor when off_policy_correction or use_rollout_kl_loss "
+                "is enabled. Ensure `generator.sampling_params.logprobs` is set so the generator returns them."
+            )
             assert rollout_logprobs_tensor.shape == loss_masks_tensor.shape, "Logprobs should look like responses"
 
         # 3. Create training input batch.

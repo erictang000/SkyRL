@@ -250,20 +250,27 @@ class TokenBasedBatchIterator(BaseBatchIterator):
         attention_mask = torch.zeros((batch_size, seq_len), dtype=int, device=device)
         attention_mask[:, 0] = 1
 
-        data = TrainingInputBatch(
-            {
-                "sequences": torch.randint(0, 100, (batch_size, seq_len), device=device),
-                "attention_mask": attention_mask,
-                "action_log_probs": 0.4 * torch.ones((batch_size, num_actions), device=device),
-                "base_action_log_probs": 0.3 * torch.ones((batch_size, num_actions), device=device),
-                "values": 0.5 * torch.ones((batch_size, num_actions), device=device),
-                "returns": 0.5 * torch.ones((batch_size, num_actions), device=device),
-                "advantages": 0.6 * torch.ones((batch_size, num_actions), device=device),
-                # Loss mask is all zeros so padding samples don't contribute to the loss.
-                "loss_mask": torch.zeros((batch_size, num_actions), dtype=int, device=device),
-                "response_mask": torch.ones((batch_size, num_actions), dtype=int, device=device),
-            }
-        )
+        padding_data = {
+            "sequences": torch.randint(0, 100, (batch_size, seq_len), device=device),
+            "attention_mask": attention_mask,
+            "action_log_probs": 0.4 * torch.ones((batch_size, num_actions), device=device),
+            "base_action_log_probs": 0.3 * torch.ones((batch_size, num_actions), device=device),
+            "values": 0.5 * torch.ones((batch_size, num_actions), device=device),
+            "returns": 0.5 * torch.ones((batch_size, num_actions), device=device),
+            "advantages": 0.6 * torch.ones((batch_size, num_actions), device=device),
+            # Loss mask is all zeros so padding samples don't contribute to the loss.
+            "loss_mask": torch.zeros((batch_size, num_actions), dtype=int, device=device),
+            "response_mask": torch.ones((batch_size, num_actions), dtype=int, device=device),
+        }
+        # Mirror optional fields present on the real data so padding microbatches carry the same
+        # keys (loss_mask=0 keeps their values irrelevant). A loss function that requires a field to
+        # be present -- e.g. rollout_logprobs for off_policy_correction / use_rollout_kl_loss -- would
+        # otherwise hit a None on padding microbatches and raise. Inside the distributed
+        # forward_backward that raise desyncs the collective and aborts all ranks with no traceback.
+        if self.data.get("rollout_logprobs") is not None:
+            padding_data["rollout_logprobs"] = torch.zeros((batch_size, num_actions), device=device)
+
+        data = TrainingInputBatch(padding_data)
         data.metadata = self.data.metadata
         return data
 

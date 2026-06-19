@@ -28,6 +28,7 @@ from skyrl.backends.skyrl_train.utils.ppo_utils import (
     compute_approx_kl,
 )
 from skyrl.backends.skyrl_train.utils.replay_utils import (
+    clear_router_replay,
     setup_per_microbatch_replay_backward,
     setup_per_microbatch_replay_forward,
 )
@@ -189,6 +190,14 @@ class MegatronModelWrapper:
                     model_config=get_model_config(model),
                     remove_microbatch_padding=self.remove_microbatch_padding,
                 )
+            elif getattr(get_model_config(model), "moe_enable_routing_replay", False):
+                # This microbatch carries no replay indices (e.g. a token-batching padding
+                # microbatch, which is appended last and built without rollout_expert_indices).
+                # Clear any stale REPLAY_FORWARD action left by the previous microbatch: otherwise
+                # RouterReplay.get_replay_topk() gathers the previous microbatch's (mis-sized)
+                # target_topk_idx against this microbatch's scores, raising mid-collective inside the
+                # distributed forward_backward and aborting all ranks with no traceback.
+                clear_router_replay()
 
             sequences = batch["sequences"]
             attention_mask = batch["attention_mask"].to(bool)
@@ -458,6 +467,26 @@ class MegatronModelWrapper:
                 kl_loss = torch.tensor(0.0, device=logits.device)
             kl_loss_term = kl_loss * loss_config.kl_loss_coef
 
+            # rollout KL loss: soft trust region penalizing the train<->rollout logprob drift.
+            # Unlike the binary DPPO/clip masks (which only act on tokens that cross a threshold),
+            # this penalizes the train-rollout gap on every token, so it directly counteracts the
+            # growing off-policy gap in async training. prime-rl uses the squared log importance
+            # ratio (log_probs - rollout_logprobs)**2; "k2" gives that up to a 1/2 factor.
+            if loss_config.use_rollout_kl_loss:
+                assert (
+                    rollout_action_logprobs is not None
+                ), "use_rollout_kl_loss=True requires rollout_logprobs (e.g. fully async training)"
+                rollout_kl_loss = compute_approx_kl(
+                    action_log_probs,
+                    rollout_action_logprobs,
+                    loss_mask=loss_mask,
+                    kl_estimator_type=loss_config.rollout_kl_estimator_type,
+                )
+                rollout_kl_loss = masked_mean(rollout_kl_loss, loss_mask, dim=-1).mean()
+            else:
+                rollout_kl_loss = torch.tensor(0.0, device=logits.device)
+            rollout_kl_loss_term = rollout_kl_loss * loss_config.rollout_kl_loss_coef
+
             # Policy losses are pre-scaled to achieve the correct loss_reduction
             # when summing across the entire minibatch (see `apply_loss_reduction_to_advantages_minibatch`).
             # Megatron divides loss by num_microbatches
@@ -480,7 +509,7 @@ class MegatronModelWrapper:
             kl_entropy_microbatch_scale = num_microbatches / max(1, num_real_microbatches)
             loss = (
                 policy_loss * grad_sum_correction_factor
-                + (kl_loss_term - entropy_loss_term) * kl_entropy_microbatch_scale
+                + (kl_loss_term + rollout_kl_loss_term - entropy_loss_term) * kl_entropy_microbatch_scale
             )
             unscaled_loss = loss / grad_sum_correction_factor
 
@@ -509,6 +538,7 @@ class MegatronModelWrapper:
                 "policy_loss": policy_loss.detach().item(),
                 "policy_entropy": entropy.detach().item(),
                 "policy_kl": kl_loss.detach().item(),
+                "rollout_kl": rollout_kl_loss.detach().item(),
                 "loss_fn_outputs": loss_fn_outputs,
             }
             for k, v in loss_metrics.items():
@@ -530,6 +560,14 @@ class MegatronModelWrapper:
                     model_config=get_model_config(model),
                     remove_microbatch_padding=self.remove_microbatch_padding,
                 )
+            elif getattr(get_model_config(model), "moe_enable_routing_replay", False):
+                # This microbatch carries no replay indices (e.g. a token-batching padding
+                # microbatch, which is appended last and built without rollout_expert_indices).
+                # Clear any stale REPLAY_FORWARD action left by the previous microbatch: otherwise
+                # RouterReplay.get_replay_topk() gathers the previous microbatch's (mis-sized)
+                # target_topk_idx against this microbatch's scores, raising mid-collective inside the
+                # distributed forward_backward and aborting all ranks with no traceback.
+                clear_router_replay()
 
             sequences = batch["sequences"]
             attention_mask = batch["attention_mask"].to(bool)
