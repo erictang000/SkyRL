@@ -1180,11 +1180,9 @@ class RayPPOTrainer:
     def _skip_policy_forward(self, training_input: TrainingInputBatch) -> bool:
         """Whether the policy forward pass producing the "old" logprobs can be skipped.
 
-        Losses such as ``rollout_is`` and ``dppo`` optimize against the rollout logprobs rather
-        than the old policy logprobs. The forward pass can be skipped when all of the following
-        hold: rollout logprobs are present (these losses fall back to the old logprobs without
-        them), the KL reward penalty is disabled, and no off-policy correction is active -- the
-        KL reward penalty and off-policy correction both read the forward-pass logprobs.
+        Safe only when the loss optimizes against rollout logprobs and nothing else reads the
+        old logprobs: rollout logprobs are present (these losses fall back to old logprobs
+        without them), the KL reward penalty is off, and off-policy correction is disabled.
         """
         algorithm = self.cfg.trainer.algorithm
         return (
@@ -1244,9 +1242,8 @@ class RayPPOTrainer:
             )
             self.dispatch.empty_cache("ref")
 
-        # Policy forward. Skipped when the configured loss optimizes against rollout logprobs
-        # (e.g. rollout_is, dppo) and nothing else consumes the "old" policy logprobs -- the
-        # forward pass would otherwise produce a tensor the training step never reads.
+        # Policy forward. Skipped for losses that optimize against rollout logprobs (see
+        # `_skip_policy_forward`), where the resulting logprobs are never read.
         if self._skip_policy_forward(training_input):
             action_log_probs = None
         else:
@@ -1271,10 +1268,8 @@ class RayPPOTrainer:
         training_input["values"] = values
 
         if training_input.get("rollout_logprobs", None) is not None and action_log_probs is not None:
-            # calculates the difference in probs between inference and the trainer forward pass
-            # only consider response tokens. When the policy forward pass is skipped this metric is
-            # unavailable; the worker emits a per-mini-batch `minibatch_rollout_logprobs_abs_diff_*`
-            # metric instead (see `_forward_backward_micro`).
+            # Abs diff between rollout and forward-pass logprobs, over response tokens. When the
+            # forward pass is skipped, the worker's `minibatch_rollout_logprobs_abs_diff_*` is used.
             logprobs_diff = (
                 training_input["rollout_logprobs"][training_input["loss_mask"] > 0]
                 - action_log_probs[training_input["loss_mask"] > 0]

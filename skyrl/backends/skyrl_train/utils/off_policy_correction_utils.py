@@ -7,11 +7,7 @@ from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean, safe_exp_d
 
 
 def off_policy_correction_enabled(off_policy_correction: DictConfig) -> bool:
-    """Whether any off-policy correction (which reads the old policy logprobs) is active.
-
-    Mirrors the conditions in :func:`compute_off_policy_correction` that require the old
-    policy logprobs: TIS ratio, sequence masking, outlier token masking, or per-token masking.
-    """
+    """Whether any off-policy correction (TIS, sequence/outlier/token masking) is active."""
     apply_tis = off_policy_correction.tis_ratio_type is not None
     apply_sequence_mask = off_policy_correction.sequence_mask_metric is not None
     apply_outlier_token_mask = (

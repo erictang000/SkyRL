@@ -9,10 +9,9 @@ from skyrl.backends.skyrl_train.training_batch import TensorBatch, TrainingInput
 from skyrl.train.dataset.bin_packing import make_seq_packer
 from skyrl.train.dataset.replay_buffer import Experience
 
-# Worker-side abs diff between train-step and rollout logprobs, computed per micro-batch.
-# The first/second moments (`_mean`, `_sq_mean`) reduce correctly as means across
-# micro-batches, DP ranks, and mini-batches; `_max`/`_min` reduce as max/min. The std is
-# reconstructed from the moments downstream (it cannot itself be mean-reduced across those axes).
+# Per-micro-batch abs diff between train-step and rollout logprobs. The moments (`_mean`,
+# `_sq_mean`) and `_max`/`_min` reduce correctly across micro-batches, DP ranks, and
+# mini-batches; the std is reconstructed from the moments downstream.
 MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX = "minibatch_rollout_logprobs_abs_diff"
 MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_mean"
 MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY = f"{MINIBATCH_ROLLOUT_LOGPROB_DIFF_PREFIX}_sq_mean"
@@ -27,16 +26,12 @@ def compute_minibatch_rollout_logprob_diff_metrics(
     rollout_logprobs: Optional[torch.Tensor],
     loss_mask: Optional[torch.Tensor],
 ) -> Dict[str, float]:
-    """Per-micro-batch abs diff between train-step and rollout logprobs.
+    """Per-micro-batch abs diff between the train-step and rollout logprobs.
 
-    Unlike the trainer's forward-pass `rollout_train_logprobs_abs_diff` metric (rollout vs a
-    single full-batch forward), this uses the logprobs actually computed in this gradient
-    micro-step. When ``train_batch_size > mini_batch_size`` the policy drifts across
-    mini-batches, so this is the diff the loss actually optimizes against -- worth monitoring
-    even when the forward-pass metric is skipped.
-
-    Returns an empty dict (no metrics emitted) when rollout logprobs are unavailable or every
-    token is masked, e.g. for fully-padding micro-batches from token-based batching.
+    Unlike the trainer's forward-pass `rollout_train_logprobs_abs_diff` metric, this uses the
+    logprobs the loss actually optimizes against, so it reflects mini-batch drift when
+    ``train_batch_size > mini_batch_size``. Returns ``{}`` when rollout logprobs are unavailable
+    or every token is masked (e.g. fully-padding micro-batches from token-based batching).
     """
     if rollout_logprobs is None:
         return {}

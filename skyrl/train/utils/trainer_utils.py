@@ -35,13 +35,11 @@ GLOBAL_STEP_PREFIX = "global_step_"
 
 
 def finalize_minibatch_rollout_logprob_diff_std(metrics: Dict[str, float]) -> None:
-    """Derive the train/rollout logprob diff std from its reduced first and second moments.
+    """Reconstruct the logprob-diff std from its reduced first/second moments, in place.
 
-    The workers emit the abs-diff mean and mean-of-squares, which reduce correctly as means
-    across micro-batches, DP ranks, and mini-batches; the std is reconstructed here since it
-    cannot itself be mean-reduced across those axes. Operates in place on ``metrics``: replaces
-    the second-moment key with the derived std. No-op when the moments are absent (e.g. critic
-    training, or no rollout logprobs).
+    Std can't be mean-reduced across micro-batches/DP/mini-batches, so the workers emit the
+    moments and we derive ``std = sqrt(E[x^2] - E[x]^2)`` here. Replaces the second-moment key
+    with the std; no-op when the moments are absent (e.g. critic training, or no rollout logprobs).
     """
     if (
         MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY not in metrics
@@ -50,7 +48,7 @@ def finalize_minibatch_rollout_logprob_diff_std(metrics: Dict[str, float]) -> No
         return
     mean = metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY]
     sq_mean = metrics.pop(MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY)
-    # Clamp at 0 to guard against tiny negatives from floating-point round-off.
+    # max(0, ...) guards tiny negatives from float round-off.
     metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY] = math.sqrt(max(0.0, sq_mean - mean**2))
 
 

@@ -40,9 +40,8 @@ def test_losses_without_old_logprobs():
     [("rollout_is", rollout_is_policy_loss), ("dppo", dppo_policy_loss)],
 )
 def test_skip_path_losses_run_with_old_log_probs_none(loss_name, loss_fn):
-    """Skip-path invariant: with the forward pass skipped, ``old_log_probs`` reaches the loss as
-    ``None``. These losses must not dereference it when off-policy correction is disabled (which
-    ``_skip_policy_forward`` guarantees) -- rollout logprobs stand in for the old logprobs."""
+    """Skip-path invariant: these losses must produce a finite loss with ``old_log_probs=None``
+    when off-policy correction is disabled (rollout logprobs stand in for the old logprobs)."""
     assert loss_name in LOSSES_WITHOUT_OLD_LOGPROBS
     config = AlgorithmConfig(policy_loss_type=loss_name, off_policy_correction=OffPolicyCorrectionConfig())
     assert not off_policy_correction_enabled(config.off_policy_correction)
@@ -109,15 +108,9 @@ def test_finalize_std_noop_without_moments():
 
 
 def test_std_aggregates_correctly_across_microbatches_and_minibatches():
-    """End-to-end: the derived std matches the true std over all tokens.
-
-    Reproduces the reduction pipeline -- per-micro-batch moments are mean-reduced over
-    micro-batches (worker), then over mini-batches (trainer), and the std is derived from the
-    reduced first and second moments. With equal-size micro-batches this recovers the exact
-    population std of the pooled abs diffs.
-    """
+    """Reduce per-micro-batch moments over micro-batches then mini-batches, derive the std, and
+    check it equals the exact pooled population std (exact because all sizes are equal)."""
     # Four equal-size micro-batches grouped into two mini-batches of two micro-batches each.
-    # Equal sizes everywhere mean the unweighted hierarchical mean equals the pooled mean.
     diffs = [
         torch.tensor([0.1, 0.3, 0.5, 0.2]),
         torch.tensor([1.0, 0.8, 0.6, 0.4]),
