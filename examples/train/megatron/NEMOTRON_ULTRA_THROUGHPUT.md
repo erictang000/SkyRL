@@ -41,11 +41,15 @@ MTPM memory ceiling is per-DP-rank and independent of DP size.
   essentially {TP8/PP4/EP16/DP2, TP8/PP2/EP32/DP4}.
 - **Long context is activation-bound by the single longest sequence**: with `remove_microbatch_padding`, any
   sequence longer than MTPM gets its own microbatch that must fit alone. The *single-sequence* ceiling is
-  **~40–48k tokens** (CP1/PP4/DP2) — well below the ~64k *packed* ceiling, because a long contiguous sequence
-  has a much larger per-microbatch footprint than an equal-token pack of short ones — rising to ~96k only at
-  CP2/PP2/DP2. **CP does not help much**: CP=2 forces PP2 (to keep EP16/DP2), and PP2's 2× weights cancel the
-  activation memory CP frees. The full 60k±30k distribution (tail → 131k) is **not trainable on 64 GPUs**
-  without truncating sequences to ~40k.
+  **~40–48k tokens** at CP1/PP4/DP2 (well below the ~64k *packed* ceiling — a long contiguous sequence has a
+  much larger per-microbatch footprint than an equal-token pack of short ones).
+- **Context parallelism roughly doubles that ceiling to ~96k.** CP *composes* with EP (in Megatron-Core
+  `EP` divides `TP·CP·DP`, so CP does not steal from EP's budget): **`TP8/PP4/CP2/EP16/DP1` fits a single 96k
+  sequence** (128k OOMs) while keeping baseline expert memory. CP=4 via `TP8/PP2/CP4/EP32/DP1` is *valid* but
+  *worse* — it still OOMs at 128k because dropping to PP2 (needed to free GPUs for CP4) doubles the weights and
+  eats the budget CP frees. So the practical long-context recipe is **PP4 + CP2** (≤~96k/seq, at the cost of
+  DP→1), and the 60k±30k distribution becomes mostly trainable (clamp ~96k truncates only the ~10% tail vs
+  ~half at CP1's ~40k clamp).
 - **Long sequences are *more* throughput-efficient per token** (~12k tok/s on a ~39k-mean distribution at
   PP4/DP2, vs ~7.7k for uniform 10 240-token seqs): bigger microbatches use the GEMMs better and incur less
   per-microbatch/pipeline overhead.
@@ -88,17 +92,21 @@ given the layer-count and EP constraints. TP must stay 8 (sequence parallelism s
 
 ## Stage 3 — long context (variable length) & context parallelism
 
-Single-sequence ceiling (one sequence alone in its microbatch):
+**CP composes with EP** (not with DP-budget-for-EP as first assumed): in Megatron-Core the expert group is
+formed over `TP·CP·DP`, so with `ETP=1`, **`EP` must divide `TP·CP·DP`** — adding CP does *not* force EP down.
+This makes CP genuinely useful here. Single-sequence ceiling (one sequence alone in its microbatch):
 
-| Config | single-seq ceiling | note |
-|:--|---:|:--|
-| CP1 / PP4 / DP2 | **~40–48k tok** | single 40 960 fits (peak 110 GB); single 49 152 OOMs. A contiguous long seq has a much bigger per-microbatch footprint than the packed 6×10 240 that fit in stage 1, so the *single-sequence* ceiling (~40–48k) is well below the *packed* 64k ceiling. |
-| CP2 / PP2 / EP16 / DP2 | ~96k tok | 128k OOMs: needs 60 GiB activation, only 54 free (PP2 weights eat the headroom CP frees) |
+| Config | world | single-seq ceiling | note |
+|:--|:--|---:|:--|
+| CP1 / PP4 / EP16 / DP2 | 8·4·1·2 | **~40–48k tok** | single 40 960 fits (peak 110 GB); 49 152 OOMs. Long contiguous seq footprint ≫ equal-token pack of short seqs, so single-seq ceiling < packed 64k. |
+| **CP2 / PP4 / EP16 / DP1** | 8·4·2·1 | **~96k tok** | EP16 still valid (`EP \| TP·CP·DP = 16`); **single 98 304 FITS**, 131 072 OOMs. Keeps PP4's low weights (~38 GiB) and shards the seq 2×. Best long-context config. |
+| CP4 / PP2 / EP32 / DP1 | 8·2·4·1 | <128k | *valid* (`EP32 \| 8·4·1=32`) and loads, but **131 072 OOMs**: dropping to PP2 to free GPUs for CP4 doubles weights (~76 GiB) and eats the budget CP frees — worse than PP4/CP2. |
 
-**CP gives little net benefit here**: CP=2 forces PP2 (to keep EP16/DP2), whose 2× weights cancel CP's
-activation savings; CP=4 is infeasible (forces EP8-OOM or PP1-OOM). So with `remove_microbatch_padding`,
-**individual training sequences are capped at ~40–48k tokens** (CP1/PP4/DP2), or ~96k at CP2/PP2/DP2,
-on 64 GPUs — and the requested 60k±30k distribution (tail → 131k) must be truncated.
+So **CP roughly doubles the usable single-sequence length** (~40–48k → ~96k) via **PP4 + CP2**, at the cost of
+collapsing DP to 1 (≈ half the data-parallel throughput). The 60k±30k distribution is then **mostly trainable**:
+clamping at ~96k truncates only the ~10% upper tail (vs truncating ~half at CP1's ~40k clamp). The extreme
+131k tail still OOMs (the LM-head logits / non-CP-sharded buffers don't shrink enough); CP4 doesn't fix it
+because of the PP2 weight penalty.
 
 ### Throughput on a variable-length long-context distribution
 
@@ -124,10 +132,14 @@ longest single sequence** (clamp responses to ~40k), not by aggregate tokens.
 
 - **Short/medium sequences (≤~40k), max throughput:** `TP8 / PP2 / EP32 / ETP1 / DP4`, MTPM≈32k
   (~8.5k tok/s on uniform short seqs; ~11% over the PP4/DP2 baseline).
-- **Long context / largest single sequences:** `TP8 / PP4 / EP16 / ETP1 / DP2`, MTPM≈40–64k
-  (single-sequence ceiling ~40–48k; ~12k tok/s on a ~39k-mean distribution).
-- **Cap RL response length to ~40k tokens.** The full 60k±30k distribution is not trainable
-  per-sequence on 64×H200; CP cannot rescue it (CP=2 forces PP2, whose 2× weights cancel CP's savings).
+- **Long context, no CP:** `TP8 / PP4 / EP16 / ETP1 / DP2`, MTPM≈40–64k (single-sequence ceiling ~40–48k;
+  ~12k tok/s on a ~39k-mean distribution — long seqs are more throughput-efficient per token).
+- **Longest single sequences (up to ~96k):** `TP8 / PP4 / CP2 / EP16 / ETP1 / DP1` — CP2 ~doubles the
+  single-seq ceiling to ~96k (EP16 stays valid since `EP \| TP·CP·DP`). Costs DP→1 (≈ half the DP throughput),
+  so use it only when sequences actually exceed ~48k. Prefer **PP4+CP2** over PP2+CP4 (PP2's weights negate CP).
+- **For the 60k±30k distribution:** clamp responses to ~96k with PP4/CP2 (≈10% of samples truncated), or to
+  ~40k with PP4/DP2 (≈half truncated, but full DP throughput). The full untruncated 131k tail is not trainable
+  on 64×H200.
 - Keep `TP=8` (sequence parallelism shards activations by TP — TP4 doubles activation memory and OOMs),
   optimizer CPU-offload on, and `recompute_granularity=full`.
 
