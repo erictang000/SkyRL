@@ -48,6 +48,27 @@ def compute_minibatch_rollout_logprob_diff_metrics(
     }
 
 
+def ensure_minibatch_rollout_logprob_diff_keys(all_metrics: Dict[str, List[float]], has_rollout_logprobs: bool) -> None:
+    """Keep the logprob-diff metric keys DP-uniform across ranks, in place.
+
+    `rollout_logprobs` presence is uniform across DP ranks, but `compute_minibatch_rollout_logprob_diff_metrics`
+    omits these keys for a micro-batch with no unmasked tokens. A rank whose micro-batches are all
+    masked would therefore omit them entirely while other ranks emit them, desyncing the metric
+    all-reduce (a hang). When the batch carries rollout logprobs but no micro-batch produced the
+    keys, seed them with 0.0 so every rank agrees on the key set. This does not pollute the common
+    case -- it only fires when the keys are wholly absent.
+    """
+    if not has_rollout_logprobs or MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY in all_metrics:
+        return
+    for key in (
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY,
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY,
+    ):
+        all_metrics[key].append(0.0)
+
+
 def reduce_metrics(metrics: Dict[str, List[float]], sum_loss_metrics: bool = False) -> Dict[str, float]:
     """Reduce scalar metrics from a list of entries per key with the appropriate reduction.
 
