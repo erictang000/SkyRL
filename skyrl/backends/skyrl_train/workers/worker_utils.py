@@ -6,6 +6,7 @@ import torch.distributed as dist
 
 from skyrl.backends.skyrl_train.distributed.strategy import DistributedStrategy
 from skyrl.backends.skyrl_train.training_batch import TensorBatch, TrainingInputBatch
+from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
 from skyrl.train.dataset.bin_packing import make_seq_packer
 from skyrl.train.dataset.replay_buffer import Experience
 
@@ -30,43 +31,22 @@ def compute_minibatch_rollout_logprob_diff_metrics(
 
     Unlike the trainer's forward-pass `rollout_train_logprobs_abs_diff` metric, this uses the
     logprobs the loss actually optimizes against, so it reflects mini-batch drift when
-    ``train_batch_size > mini_batch_size``. Returns ``{}`` when rollout logprobs are unavailable
-    or every token is masked (e.g. fully-padding micro-batches from token-based batching).
+    ``train_batch_size > mini_batch_size``. Masked-out tokens are excluded via the same
+    ``masked_mean`` / ``* loss_mask`` pattern as the off-policy `is_ratio_*` metrics, so the keys
+    are emitted for every micro-batch (a fully-masked one contributes 0) -- keeping them present
+    on every DP rank. Returns ``{}`` only when rollout logprobs are unavailable, which is uniform
+    across DP ranks.
     """
     if rollout_logprobs is None:
         return {}
     abs_diff = (action_log_probs - rollout_logprobs).abs()
-    if loss_mask is not None:
-        abs_diff = abs_diff[loss_mask > 0]
-    if abs_diff.numel() == 0:
-        return {}
+    masked_abs_diff = abs_diff if loss_mask is None else abs_diff * loss_mask
     return {
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY: abs_diff.mean().item(),
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY: abs_diff.square().mean().item(),
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY: abs_diff.max().item(),
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY: abs_diff.min().item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY: masked_mean(abs_diff, loss_mask).item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY: masked_mean(abs_diff.square(), loss_mask).item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY: masked_abs_diff.max().item(),
+        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY: masked_abs_diff.min().item(),
     }
-
-
-def ensure_minibatch_rollout_logprob_diff_keys(all_metrics: Dict[str, List[float]], has_rollout_logprobs: bool) -> None:
-    """Keep the logprob-diff metric keys DP-uniform across ranks, in place.
-
-    `rollout_logprobs` presence is uniform across DP ranks, but `compute_minibatch_rollout_logprob_diff_metrics`
-    omits these keys for a micro-batch with no unmasked tokens. A rank whose micro-batches are all
-    masked would therefore omit them entirely while other ranks emit them, desyncing the metric
-    all-reduce (a hang). When the batch carries rollout logprobs but no micro-batch produced the
-    keys, seed them with 0.0 so every rank agrees on the key set. This does not pollute the common
-    case -- it only fires when the keys are wholly absent.
-    """
-    if not has_rollout_logprobs or MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY in all_metrics:
-        return
-    for key in (
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY,
-        MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY,
-    ):
-        all_metrics[key].append(0.0)
 
 
 def reduce_metrics(metrics: Dict[str, List[float]], sum_loss_metrics: bool = False) -> Dict[str, float]:

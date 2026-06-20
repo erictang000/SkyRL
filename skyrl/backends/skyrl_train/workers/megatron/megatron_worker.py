@@ -66,7 +66,6 @@ from skyrl.backends.skyrl_train.workers.worker_utils import (
     BatchIterator,
     TokenBasedBatchIterator,
     all_reduce_metrics,
-    ensure_minibatch_rollout_logprob_diff_keys,
     get_microbatch_iterator,
     reduce_metrics,
 )
@@ -1097,10 +1096,6 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                 continue
             for k, v in metrics.items():
                 all_metrics[k].append(v)
-
-        # Keep the train/rollout logprob-diff keys DP-uniform: a rank whose micro-batches are all
-        # masked emits none of them, which would desync the metric all-reduce across DP ranks.
-        ensure_minibatch_rollout_logprob_diff_keys(all_metrics, data.get("rollout_logprobs") is not None)
 
         # TODO: SFT path still averages metrics across microbatches and workers.
         # This needs to be unified with the RL path which sums.

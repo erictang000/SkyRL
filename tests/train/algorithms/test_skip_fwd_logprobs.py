@@ -5,8 +5,6 @@ and for the worker-side per-mini-batch train/rollout logprob diff metric.
 uv run --isolated --extra dev pytest tests/train/algorithms/test_skip_fwd_logprobs.py
 """
 
-from collections import defaultdict
-
 import pytest
 import torch
 
@@ -18,6 +16,7 @@ from skyrl.backends.skyrl_train.utils.ppo_utils import (
     dppo_policy_loss,
     rollout_is_policy_loss,
 )
+from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
 from skyrl.backends.skyrl_train.workers.worker_utils import (
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY,
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
@@ -25,7 +24,6 @@ from skyrl.backends.skyrl_train.workers.worker_utils import (
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
     MINIBATCH_ROLLOUT_LOGPROB_DIFF_STD_KEY,
     compute_minibatch_rollout_logprob_diff_metrics,
-    ensure_minibatch_rollout_logprob_diff_keys,
     reduce_metrics,
 )
 from skyrl.train.config import AlgorithmConfig, OffPolicyCorrectionConfig
@@ -82,54 +80,39 @@ def test_off_policy_correction_enabled():
 
 
 def test_minibatch_metric_values_match_manual():
-    """The worker metric reports the masked abs diff moments and extremes for one micro-batch."""
+    """The worker metric reports the masked abs diff moments/extremes via the same masked_mean /
+    `* loss_mask` pattern as the off-policy `is_ratio_*` metrics."""
     action_log_probs = torch.tensor([[-1.0, -2.0, -3.0], [-0.5, -1.5, -2.5]])
     rollout_logprobs = torch.tensor([[-1.5, -1.0, -3.0], [-0.5, -2.0, -1.0]])
     loss_mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
 
     metrics = compute_minibatch_rollout_logprob_diff_metrics(action_log_probs, rollout_logprobs, loss_mask)
 
-    abs_diff = (action_log_probs - rollout_logprobs).abs()[loss_mask > 0]
-    assert metrics["minibatch_rollout_logprobs_abs_diff_mean"] == abs_diff.mean().item()
-    assert metrics["minibatch_rollout_logprobs_abs_diff_sq_mean"] == abs_diff.square().mean().item()
-    assert metrics["minibatch_rollout_logprobs_abs_diff_max"] == abs_diff.max().item()
-    assert metrics["minibatch_rollout_logprobs_abs_diff_min"] == abs_diff.min().item()
+    abs_diff = (action_log_probs - rollout_logprobs).abs()
+    masked = abs_diff * loss_mask
+    assert metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY] == masked_mean(abs_diff, loss_mask).item()
+    assert metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY] == masked_mean(abs_diff.square(), loss_mask).item()
+    assert metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY] == masked.max().item()
+    assert metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY] == masked.min().item()
 
 
-def test_minibatch_metric_absent_without_rollout_or_tokens():
-    """No metric is emitted when rollout logprobs are missing or every token is masked."""
+def test_minibatch_metric_emitted_unconditionally_when_rollout_present():
+    """Metric is omitted only when rollout logprobs are absent (a DP-uniform condition). With
+    rollout logprobs present but every token masked, it still emits the keys as 0.0 so the key set
+    stays consistent across DP ranks."""
     alp = torch.tensor([[-1.0, -2.0]])
     rlp = torch.tensor([[-1.5, -1.0]])
     assert compute_minibatch_rollout_logprob_diff_metrics(alp, None, None) == {}
+
     fully_masked = torch.zeros_like(alp)
-    assert compute_minibatch_rollout_logprob_diff_metrics(alp, rlp, fully_masked) == {}
-
-
-def test_ensure_keys_seeds_only_when_rollout_present_and_absent():
-    """DP-uniformity guard: seed the keys with 0.0 only when the batch has rollout logprobs but no
-    micro-batch produced them (a fully-masked rank); never seed otherwise and never overwrite."""
-    all_keys = {
+    masked_metrics = compute_minibatch_rollout_logprob_diff_metrics(alp, rlp, fully_masked)
+    assert set(masked_metrics) == {
         MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY,
         MINIBATCH_ROLLOUT_LOGPROB_DIFF_SQ_MEAN_KEY,
         MINIBATCH_ROLLOUT_LOGPROB_DIFF_MAX_KEY,
         MINIBATCH_ROLLOUT_LOGPROB_DIFF_MIN_KEY,
     }
-
-    # Rollout present, keys absent (fully-masked rank) -> seed all four with 0.0.
-    metrics = defaultdict(list, {"policy_loss": [1.0]})
-    ensure_minibatch_rollout_logprob_diff_keys(metrics, has_rollout_logprobs=True)
-    assert all_keys <= set(metrics)
-    assert all(metrics[k] == [0.0] for k in all_keys)
-
-    # No rollout logprobs -> never seed (keys uniformly absent across ranks).
-    metrics = defaultdict(list, {"policy_loss": [1.0]})
-    ensure_minibatch_rollout_logprob_diff_keys(metrics, has_rollout_logprobs=False)
-    assert not (all_keys & set(metrics))
-
-    # Keys already present -> no-op (don't append a spurious 0.0).
-    metrics = defaultdict(list, {MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY: [0.5]})
-    ensure_minibatch_rollout_logprob_diff_keys(metrics, has_rollout_logprobs=True)
-    assert metrics[MINIBATCH_ROLLOUT_LOGPROB_DIFF_MEAN_KEY] == [0.5]
+    assert all(v == 0.0 for v in masked_metrics.values())
 
 
 def test_finalize_std_noop_without_moments():
