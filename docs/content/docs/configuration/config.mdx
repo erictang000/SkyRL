@@ -375,7 +375,7 @@ algorithm:
   # this adds training batch level normalization to advantages
   advantage_batch_normalize: false
   value_head_prefix: "value_head"
-  policy_loss_type: "regular" # "regular", "dual_clip", "gspo", "clip_cov", "kl_cov" or customizable with PolicyLossRegistry
+  policy_loss_type: "regular" # "regular", "dual_clip", "gspo", "clip_cov", "kl_cov", "cispo", "sapo", "rollout_is", "dppo", or customizable with PolicyLossRegistry
   loss_reduction: "token_mean" # "token_mean", "sequence_mean", "seq_mean_token_sum_norm", "prompt_mean"
   grpo_norm_by_std: true # set to false to disable normalization by std in GRPO (used in Dr. GRPO)
   zero_variance_filter: false # set to true to loss mask out prompts with zero variance rewards. only applicable when rewards are response-level.
@@ -490,6 +490,9 @@ algorithm:
   - `clip_cov`: Clip-Cov combines standard PPO clipping with covariance-based correction masking for improved stability. Based on [this paper](https://arxiv.org/abs/2505.22617).
   - `kl_cov`: KL-Cov applies KL regularization to tokens selected based on covariance values. Based on [this paper](https://arxiv.org/abs/2505.22617).
   - `cispo`: Clipped Importance Sampling Weight Policy Optimization (CISPO) proposed in [MiniMax-M1](https://arxiv.org/abs/2506.13585).
+  - `sapo`: Soft Adaptive Policy Optimization ([SAPO](https://arxiv.org/html/2511.20347v1)) proposed by the Qwen team 
+  - `rollout_is`: The agentic loss from section 4.1.2 of the [GLM-5 tech report](https://arxiv.org/pdf/2602.15763). Uses rollout logprobs and Icepop style clipping with additional stop gradient for masked tokens.
+  - `dppo`: DPPO algorithm from [Rethinking the Trust Region in LLM Reinforcement Learning](https://arxiv.org/pdf/2602.04879). Uses rollout logprobs and absolute probability divergences rather than probability ratios to improve over PPO clipping behavior.
   - Custom policy losses can be registered with the `PolicyLossRegistry`
 
 - `algorithm.loss_reduction`: Type of loss reduction to use. Options include:
