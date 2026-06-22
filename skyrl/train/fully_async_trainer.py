@@ -15,6 +15,7 @@ import asyncio
 import inspect
 import os
 import sys
+import time
 import traceback
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Set, Tuple
@@ -40,6 +41,8 @@ from skyrl.train.utils import Timer
 from skyrl.train.utils.trainer_utils import (
     ResumeMode,
     build_dataloader,
+    get_group_completion_metrics,
+    get_intra_group_completion_time_std_cv,
     zero_variance_filter,
 )
 
@@ -57,11 +60,16 @@ class GeneratedOutputGroup:
 
         global_step_when_scheduled (int): The global step when the group was scheduled for generation,
             used for validating the staleness control.
+
+        group_completion_time_s (Optional[float]): Wall-clock time (seconds) for the whole group to
+            finish generation, i.e. the time for the slowest trajectory in the group to complete.
+            None if generation timing was not captured.
     """
 
     generator_output: GeneratorOutput
     uid: str
     global_step_when_scheduled: int
+    group_completion_time_s: Optional[float] = None
 
 
 @dataclass
@@ -826,6 +834,7 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
                 # 3. Generate one rollout group
                 global_step_at_start = self.global_step  # for staleness control
 
+                group_start_time = time.monotonic()
                 if "disable_tqdm" in inspect.signature(self.generator.generate).parameters:
                     # A workaround to disable tqdm for the SkyRLGymGenerator.generate method which will
                     # blast the console with each worker's progress bar.
@@ -834,6 +843,7 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
                     )
                 else:
                     cur_generator_output: GeneratorOutput = await self.generator.generate(generator_input)
+                group_completion_time_s = time.monotonic() - group_start_time
 
                 # 4. Enqueue the completed group and mark accepted to free capacity slot.
                 try:
@@ -842,6 +852,7 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
                             generator_output=cur_generator_output,
                             uid=uids[0],
                             global_step_when_scheduled=global_step_at_start,
+                            group_completion_time_s=group_completion_time_s,
                         )
                     )
                 except asyncio.QueueFull:
@@ -892,10 +903,27 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
         uids = []
         stalenesses = []
         staleness_violation_count = 0
+        # Per-group completion times (seconds) and the intra-group spread (std and coefficient of
+        # variation) of per-trajectory completion times. Helpful to understand tail latency
+        group_completion_times: List[float] = []
+        intra_group_stds: List[float] = []
+        intra_group_cvs: List[float] = []
         for cur_generated_output_group in cur_generation_group_mini_batch:
             cur_staleness = self.global_step - cur_generated_output_group.global_step_when_scheduled
             stalenesses.append(cur_staleness)
             generator_outputs.append(cur_generated_output_group.generator_output)
+
+            # Collect per-group / per-trajectory completion-time stats for this group.
+            if cur_generated_output_group.group_completion_time_s is not None:
+                group_completion_times.append(cur_generated_output_group.group_completion_time_s)
+            intra_group_std, intra_group_cv = get_intra_group_completion_time_std_cv(
+                cur_generated_output_group.generator_output
+            )
+            if intra_group_std is not None:
+                intra_group_stds.append(intra_group_std)
+            if intra_group_cv is not None:
+                intra_group_cvs.append(intra_group_cv)
+
             # NOTE(Charlie): for step-wise training each group can contain a variable number of entries
             # (n_samples_per_prompt * variable turns_per_trajectory), so the uid fanout is per-group.
             group_size = len(cur_generated_output_group.generator_output["response_ids"])
@@ -936,6 +964,10 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
         rollout_metrics_source = metrics_generator_output if metrics_generator_output is not None else generator_output
         self.all_metrics.update(rollout_metrics_source["rollout_metrics"])
 
+        group_completion_metrics = get_group_completion_metrics(
+            group_completion_times, intra_group_stds, intra_group_cvs
+        )
+
         if dropped_groups:
             # Also split generation metrics by kept vs dropped, plus reward metrics for the dropped
             # groups. (Kept reward metrics are uninformative -- pass@n ~1 -- and loss/avg_final_rewards
@@ -947,6 +979,7 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
             self.all_metrics.update(self._reprefix_metrics(dropped_generator_output["rollout_metrics"], "dropped"))
             dropped_uids = [g.uid for g in dropped_groups for _ in range(len(g.generator_output["response_ids"]))]
             dropped_reward = get_metrics_from_generator_output(dropped_generator_output, dropped_uids)
+
             n_samples_per_prompt = self.cfg.generator.n_samples_per_prompt
             self.all_metrics.update(
                 {
@@ -956,6 +989,36 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
                 }
             )
             dropped_generator_output.pop("rollout_metrics", None)
+
+            # Per-group completion times and intra-group spread for dropped groups
+            dropped_group_completion_times = []
+            dropped_group_intra_group_stds = []
+            dropped_group_intra_group_cvs = []
+            for dropped_group in dropped_groups:
+                if dropped_group.group_completion_time_s is not None:
+                    dropped_group_completion_times.append(dropped_group.group_completion_time_s)
+                intra_group_std, intra_group_cv = get_intra_group_completion_time_std_cv(dropped_group.generator_output)
+                if intra_group_std is not None:
+                    dropped_group_intra_group_stds.append(intra_group_std)
+                if intra_group_cv is not None:
+                    dropped_group_intra_group_cvs.append(intra_group_cv)
+
+            dropped_metrics = get_group_completion_metrics(
+                dropped_group_completion_times, dropped_group_intra_group_stds, dropped_group_intra_group_cvs
+            )
+
+            self.all_metrics.update(self._reprefix_metrics(group_completion_metrics, "kept"))
+            self.all_metrics.update(self._reprefix_metrics(dropped_metrics, "dropped"))
+
+            merged_group_completion_times = group_completion_times + dropped_group_completion_times
+            merged_intra_group_stds = intra_group_stds + dropped_group_intra_group_stds
+            merged_intra_group_cvs = intra_group_cvs + dropped_group_intra_group_cvs
+            # get merged metrics with kept + dropped groups
+            group_completion_metrics = get_group_completion_metrics(
+                merged_group_completion_times, merged_intra_group_stds, merged_intra_group_cvs
+            )
+
+        self.all_metrics.update(group_completion_metrics)
 
         generator_output.pop("rollout_metrics", None)
         if metrics_generator_output is not None:
