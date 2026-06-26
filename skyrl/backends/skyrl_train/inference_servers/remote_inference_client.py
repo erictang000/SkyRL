@@ -384,6 +384,7 @@ class RemoteInferenceClient:
 
         session_ids = input_batch.get("session_ids")
         mm_features = input_batch.get("mm_features")
+        cache_salt = input_batch.get("cache_salt")
         get_logprobs = sampling_params.get("logprobs") is not None
 
         # Two semaphores decouple the generate and detokenize stages:
@@ -408,6 +409,7 @@ class RemoteInferenceClient:
                     session_id=session_ids[idx] if session_ids and idx < len(session_ids) else None,
                     mm_features=mm_features[idx] if mm_features and idx < len(mm_features) else None,
                     model=model,
+                    cache_salt=cache_salt,
                 )
             async with gen_sem:
                 return await self._generate_single(
@@ -416,6 +418,7 @@ class RemoteInferenceClient:
                     session_id=session_ids[idx] if session_ids and idx < len(session_ids) else None,
                     mm_features=mm_features[idx] if mm_features and idx < len(mm_features) else None,
                     model=model,
+                    cache_salt=cache_salt,
                 )
 
         async def _throttled_detokenize(token_ids: List[int]) -> str:
@@ -445,6 +448,7 @@ class RemoteInferenceClient:
         session_id: Optional[Any],
         model: str,
         mm_features: Optional[MultiModalFeatures] = None,
+        cache_salt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate completion for a single prompt.
@@ -469,6 +473,11 @@ class RemoteInferenceClient:
         }
         if mm_features:
             payload["features"] = mm_features
+        # `cache_salt` is a top-level request field (forwarded to vLLM's TokensPrompt), not a sampling
+        # param. The custom `/skyrl/v1/generate` endpoint honors it; the native data-plane endpoint
+        # forwards it when supported and otherwise ignores it.
+        if cache_salt is not None:
+            payload["cache_salt"] = cache_salt
 
         headers = {"Content-Type": "application/json"}
         if session_id:

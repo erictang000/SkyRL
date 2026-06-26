@@ -265,6 +265,20 @@ class SkyRLGymGenerator(GeneratorInterface):
         """
         return agent_loop_output
 
+    def _compute_cache_salt(self, batch_metadata) -> Optional[str]:
+        """Derive a prefix-cache salt from the current policy version.
+
+        When ``generator.use_cache_salt`` is enabled, returns a string that is stable within a single
+        ``generate`` batch (one policy version) but changes across weight updates, so vLLM's prefix cache
+        is shared within a version and isolated across versions. The policy model name is included so
+        distinct LoRA adapters / tenants do not collide. Returns ``None`` (no salting) when disabled or
+        when no ``batch_metadata`` is available (e.g. ad-hoc ``generate`` calls without a global step).
+        """
+        if not self.generator_cfg.use_cache_salt or batch_metadata is None:
+            return None
+        version = f"{self.policy_model_name}@" if self.policy_model_name is not None else ""
+        return f"{version}{batch_metadata.global_step}"
+
     async def agent_loop(
         self,
         prompt: ConversationType,
@@ -274,6 +288,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         max_input_length: int,
         sampling_params: Optional[Dict[str, Any]] = None,
         trajectory_id: Optional[TrajectoryID] = None,
+        cache_salt: Optional[str] = None,
     ) -> Union[TrajectoryOutput, StepWiseOutput]:
         """
         Multi-turn generation loop that executes a single trajectory.
@@ -391,6 +406,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                     prompt_token_ids=[agent_loop_state.input_ids],
                     session_ids=[session_id],
                     sampling_params=sampling_params,
+                    cache_salt=cache_salt,
                 )
                 engine_output = await self.inference_engine_client.generate(engine_input, model=self.policy_model_name)
                 output = engine_output["responses"][0]
@@ -707,6 +723,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         env_extras: List[Dict[str, Any]],
         max_tokens: int,
         sampling_params: Optional[Dict[str, Any]] = None,
+        cache_salt: Optional[str] = None,
     ) -> GeneratorOutput:
         """
         Single-turn batched generation (can use the synchronous offline engine)
@@ -738,7 +755,9 @@ class SkyRLGymGenerator(GeneratorInterface):
             tokenize=True,
             return_dict=False,
         )
-        engine_input = InferenceEngineInput(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
+        engine_input = InferenceEngineInput(
+            prompt_token_ids=prompt_token_ids, sampling_params=sampling_params, cache_salt=cache_salt
+        )
         engine_output = await self.inference_engine_client.generate(engine_input, model=self.policy_model_name)
         outputs = engine_output["responses"]
         responses = engine_output["response_ids"]
@@ -816,8 +835,14 @@ class SkyRLGymGenerator(GeneratorInterface):
         max_tokens = self.generator_cfg.sampling_params.max_generate_length
         max_input_length = self.generator_cfg.max_input_length
 
+        # Prefix-cache salt derived from the policy version. Captured once per `generate` call so every
+        # trajectory in this batch shares one salt (matches prime-rl's "version at start of group").
+        cache_salt = self._compute_cache_salt(input_batch.get("batch_metadata", None))
+
         if self.batched:
-            return await self.generate_batched(prompts, env_classes, env_extras, max_tokens, sampling_params)
+            return await self.generate_batched(
+                prompts, env_classes, env_extras, max_tokens, sampling_params, cache_salt=cache_salt
+            )
 
         # Async agent loop to generate trajectories in parallel.
         tasks = []
@@ -831,6 +856,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                     max_input_length,
                     sampling_params=sampling_params,
                     trajectory_id=trajectory_ids[i] if trajectory_ids is not None else None,
+                    cache_salt=cache_salt,
                 )
             )
 
