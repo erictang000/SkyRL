@@ -104,9 +104,7 @@ def _fused_lm_head_output_processor(**kwargs):
     if getattr(output_layer, "sequence_parallel", False):
         from megatron.core.tensor_parallel import gather_from_sequence_parallel_region
 
-        hidden_states = gather_from_sequence_parallel_region(
-            hidden_states, tensor_parallel_output_grad=True
-        )
+        hidden_states = gather_from_sequence_parallel_region(hidden_states, tensor_parallel_output_grad=True)
     # [s, b, h] -> [b, s, h], matching `logits.transpose(0, 1)` in the default path.
     return hidden_states.transpose(0, 1).contiguous()
 
@@ -189,10 +187,51 @@ class MegatronModelWrapper:
             tp_grp = mpu.get_tensor_model_parallel_group()
             tp_rank = mpu.get_tensor_model_parallel_rank()
 
-            if temperature != 1.0:
+            # Fused LM-head: `logits` is actually decoder hidden states [B, S, H]
+            # (the output_processor skipped the projection); fold the LM-head into
+            # the chunked log-prob so this forward-only pass never materializes the
+            # full [B, S, vocab//TP] logits (which would OOM at long context).
+            fused_lm_head = self._fused_lm_head and data.get("lm_head_weight") is not None
+            lm_head_weight = data.get("lm_head_weight")
+            if fused_lm_head:
+                _v_local = int(lm_head_weight.shape[0])
+                fused_vocab_start, fused_vocab_end = tp_rank * _v_local, (tp_rank + 1) * _v_local
+
+            # temperature normalization (the fused path applies it inside the op)
+            if temperature != 1.0 and not fused_lm_head:
                 logits.div_(temperature)
 
-            if packed_seq_params is not None and packed_targets is not None:
+            if fused_lm_head and packed_seq_params is not None and packed_targets is not None:
+                token_logprobs = from_parallel_hidden_to_logprobs_packed_sequences(
+                    logits,  # decoder hidden states [1, T, H]
+                    lm_head_weight,
+                    packed_targets,
+                    packed_seq_params.cu_seqlens_q_padded,
+                    sequences.shape[1],
+                    vocab_start_index=fused_vocab_start,
+                    vocab_end_index=fused_vocab_end,
+                    group=tp_grp,
+                    inference_only=True,
+                    cp_group=mpu.get_context_parallel_group(),
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                    attention_mask=data["attention_mask"],
+                    sub_seq_lengths=data.get("sub_seq_lengths_list"),
+                    temperature=temperature,
+                )
+            elif fused_lm_head:
+                token_logprobs = from_parallel_hidden_to_logprobs(
+                    logits,  # decoder hidden states [B, S, H]
+                    lm_head_weight,
+                    sequences,
+                    vocab_start_index=fused_vocab_start,
+                    vocab_end_index=fused_vocab_end,
+                    tp_group=tp_grp,
+                    inference_only=True,
+                    cp_group=None,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                    temperature=temperature,
+                )
+            elif packed_seq_params is not None and packed_targets is not None:
                 token_logprobs = from_parallel_logits_to_logprobs_packed_sequences(
                     logits,
                     packed_targets,
@@ -261,12 +300,30 @@ class MegatronModelWrapper:
                 )
                 packed_seq_params = None
 
-            outputs = model(
-                new_sequences,
-                new_position_ids,
-                new_attention_mask,
-                packed_seq_params=packed_seq_params,
-            )
+            if self._fused_lm_head:
+                # Fused LM-head inference: the output_processor returns decoder
+                # hidden states (not logits) and stashes the LM-head weight, so
+                # collection_func can fold the projection into the chunked
+                # log-prob op. Without this, a forward-only ref/old-logprob pass
+                # (e.g. PPO reference logprobs) at long context would still
+                # materialize the full [B, S, vocab//TP] logits and OOM.
+                _op_ctx: dict = {}
+                outputs = model(
+                    new_sequences,
+                    new_position_ids,
+                    new_attention_mask,
+                    packed_seq_params=packed_seq_params,
+                    output_processor=_fused_lm_head_output_processor,
+                    output_processor_context=_op_ctx,
+                )
+                batch["lm_head_weight"] = _op_ctx.get("lm_head_weight")
+            else:
+                outputs = model(
+                    new_sequences,
+                    new_position_ids,
+                    new_attention_mask,
+                    packed_seq_params=packed_seq_params,
+                )
 
             if not self.remove_microbatch_padding:
                 outputs = recover_left_padding(

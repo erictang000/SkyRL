@@ -110,7 +110,7 @@ def test_fused_matches_materialized_logits(tp_group, chunk_size, with_oov_target
     target_high = V + 1024 if with_oov_targets else V
 
     hidden = torch.randn(B, S, H, dtype=hidden_dtype, device=device)
-    weight = (torch.randn(V, H, dtype=weight_dtype, device=device) * (H**-0.5))
+    weight = torch.randn(V, H, dtype=weight_dtype, device=device) * (H**-0.5)
     target = torch.randint(0, target_high, (B, S), device=device, dtype=torch.long)
 
     _assert_equivalent(hidden, weight, target, 0, V, tp_group, chunk_size)
@@ -186,7 +186,7 @@ def _distributed_main():
     g = torch.Generator().manual_seed(1234)
     hidden = torch.randn(B, S, H, generator=g, dtype=torch.float32).to(dev, torch.bfloat16)
     target = torch.randint(0, V, (B, S), generator=g)
-    w_full = (torch.randn(V, H, generator=g, dtype=torch.float32) * (H**-0.5))
+    w_full = torch.randn(V, H, generator=g, dtype=torch.float32) * (H**-0.5)
     weight = w_full[vstart:vend].to(dev, torch.float32)
     target = target.to(dev)
 
@@ -210,8 +210,15 @@ def test_fused_linear_logprob_tp(nproc):
     if torch.cuda.device_count() < nproc:
         pytest.skip(f"needs >= {nproc} GPUs, have {torch.cuda.device_count()}")
     env = dict(os.environ, MASTER_ADDR="localhost", MASTER_PORT=str(get_free_port()))
-    cmd = [sys.executable, "-m", "torch.distributed.run", f"--nproc_per_node={nproc}",
-           "--master_port", env["MASTER_PORT"], __file__]
+    cmd = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        f"--nproc_per_node={nproc}",
+        "--master_port",
+        env["MASTER_PORT"],
+        __file__,
+    ]
     res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
     assert "RESULT: PASS" in (res.stdout + res.stderr), f"TP={nproc} failed:\n{res.stdout}\n{res.stderr}"
 

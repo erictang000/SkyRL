@@ -321,24 +321,28 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
             # Cast hidden to the weight dtype first (matches what the
             # ColumnParallelLinear output layer does: hidden may be bf16 while
             # the output weight is fp32, or vice versa).
-            logits = torch.matmul(
-                hidden[:, chunk_start:chunk_end, :].to(weight.dtype), weight.t()
-            ).to(dtype=torch.float32)
+            logits = torch.matmul(hidden[:, chunk_start:chunk_end, :].to(weight.dtype), weight.t()).to(
+                dtype=torch.float32
+            )
 
             log_probs = _compute_distributed_log_softmax(logits, group=tp_group)
-            log_probs = torch.gather(
-                log_probs, -1, masked_target[:, chunk_start:chunk_end].unsqueeze(-1)
-            ).squeeze(-1)
+            log_probs = torch.gather(log_probs, -1, masked_target[:, chunk_start:chunk_end].unsqueeze(-1)).squeeze(-1)
             log_probs[target_mask[:, chunk_start:chunk_end]] = 0.0
-
-            torch.distributed.all_reduce(
-                log_probs,
-                op=torch.distributed.ReduceOp.SUM,
-                group=tp_group,
-            )
             all_log_probs.append(log_probs)
 
+        # Defer the cross-TP combine to a single all_reduce over the full [B, S]
+        # log-prob tensor instead of one per chunk. Each rank holds the log-prob
+        # for targets in its own vocab shard (0 elsewhere), and SUM is
+        # associative across the sequence concat, so this is numerically
+        # identical to reducing per chunk while cutting the number of (blocking)
+        # collective calls from num_chunks to 1 (e.g. 256 -> 1 at S=262k,
+        # chunk=1024), removing the per-chunk launch/sync overhead.
         log_probs = torch.cat(all_log_probs, dim=1)
+        torch.distributed.all_reduce(
+            log_probs,
+            op=torch.distributed.ReduceOp.SUM,
+            group=tp_group,
+        )
 
         if not inference_only:
             ctx.save_for_backward(hidden, weight, target_mask, masked_target)
@@ -405,7 +409,13 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
             grad_hidden[:, chunk_start:chunk_end, :] = torch.matmul(grad_logits, weight)
             grad_logits_2d = grad_logits.reshape(-1, partition_vocab_size)
             h_2d = h_chunk.reshape(-1, hidden_size)
-            grad_weight.add_(torch.matmul(grad_logits_2d.t().to(torch.float32), h_2d.to(torch.float32)))
+            # Run the [V//TP, H] weight-grad matmul in the low-precision compute
+            # dtype (grad_logits.dtype == weight.dtype) so it hits Tensor Cores,
+            # then cast up to fp32 for the accumulator. This matches what
+            # ColumnParallelLinear's own backward does and is much faster / uses
+            # less memory than an fp32 matmul, while the cross-chunk accumulation
+            # still happens in fp32.
+            grad_weight.add_(torch.matmul(grad_logits_2d.t(), h_2d.to(dtype=grad_logits.dtype)).to(torch.float32))
 
         # forward args: hidden, weight, target, vocab_start, vocab_end, chunk_size, tp_group, inference_only
         return grad_hidden, grad_weight.to(weight.dtype), None, None, None, None, None, None

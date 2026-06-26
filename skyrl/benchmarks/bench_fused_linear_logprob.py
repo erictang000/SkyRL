@@ -46,7 +46,9 @@ MODES = ["baseline", "nvidia", "liger"]
 
 def _loss(mode, hidden, weight, target, vocab_local, chunk_size, tp_group):
     """Per-token CE summed to a scalar (so all modes produce identical grads)."""
-    from megatron.core.fusions.fused_cross_entropy import fused_vocab_parallel_cross_entropy
+    from megatron.core.fusions.fused_cross_entropy import (
+        fused_vocab_parallel_cross_entropy,
+    )
     from megatron.core.tensor_parallel.cross_entropy import vocab_parallel_cross_entropy
 
     from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
@@ -77,7 +79,9 @@ def _measure(mode, seq_len, vocab_local, chunk_size, tp_group, device, reps):
         torch.cuda.reset_peak_memory_stats(device)
         try:
             hidden = torch.randn(1, seq_len, HIDDEN, dtype=torch.bfloat16, device=device, requires_grad=True)
-            weight = (torch.randn(vocab_local, HIDDEN, dtype=torch.bfloat16, device=device) * (HIDDEN**-0.5)).requires_grad_(True)
+            weight = (
+                torch.randn(vocab_local, HIDDEN, dtype=torch.bfloat16, device=device) * (HIDDEN**-0.5)
+            ).requires_grad_(True)
             target = torch.randint(0, vocab_local, (1, seq_len), device=device)
             torch.cuda.synchronize(device)
             t0 = time.perf_counter()
@@ -134,10 +138,14 @@ def main():
 
     vocab_shards = [args.vocab // world] if args.vocab else VOCAB_SHARDS
     if rank0:
-        print(f"Device {torch.cuda.get_device_name(device)} | TP(world)={world} | hidden={HIDDEN} | chunk={args.chunk_size}")
-        print("baseline = megatron vocab_parallel_cross_entropy (eager) | "
-              "nvidia = fused_vocab_parallel_cross_entropy (@jit_fuser) | "
-              "liger = FusedLinearChunkedDistributedLogprob (no logits)")
+        print(
+            f"Device {torch.cuda.get_device_name(device)} | TP(world)={world} | hidden={HIDDEN} | chunk={args.chunk_size}"
+        )
+        print(
+            "baseline = megatron vocab_parallel_cross_entropy (eager) | "
+            "nvidia = fused_vocab_parallel_cross_entropy (@jit_fuser) | "
+            "liger = FusedLinearChunkedDistributedLogprob (no logits)"
+        )
         print("all: hidden+weight -> per-token CE -> sum -> backward\n")
         print("correctness (TP=%d, vocab=%d):" % (world, vocab_shards[0]))
         for line in _correctness(vocab_shards[0], tp_group, device):
@@ -148,7 +156,11 @@ def main():
     for vlocal in vocab_shards:
         if rank0:
             print(f"=== per-rank vocab shard = {vlocal:,} ===")
-            hdr = f"{'seq_len':>9} |" + "".join(f" {m + ' MB':>{cw}} |" for m in MODES) + "".join(f" {m + ' ms':>{cw}} |" for m in MODES)
+            hdr = (
+                f"{'seq_len':>9} |"
+                + "".join(f" {m + ' MB':>{cw}} |" for m in MODES)
+                + "".join(f" {m + ' ms':>{cw}} |" for m in MODES)
+            )
             print(hdr)
             print("-" * len(hdr))
         for s in SEQ_LENS:
@@ -158,13 +170,20 @@ def main():
                     _measure(mode, s, vlocal, args.chunk_size, tp_group, device, 1)
                 res[mode] = _measure(mode, s, vlocal, args.chunk_size, tp_group, device, BENCH_REPS)
             if rank0:
+
                 def mb(m):
                     p = res[m][1]
                     return "OOM" if p is None else f"{p / 1024**2:.0f}"
+
                 def ms(m):
                     t = res[m][0]
                     return "OOM" if t is None else f"{t:.0f}"
-                row = f"{s:>9} |" + "".join(f" {mb(m):>{cw}} |" for m in MODES) + "".join(f" {ms(m):>{cw}} |" for m in MODES)
+
+                row = (
+                    f"{s:>9} |"
+                    + "".join(f" {mb(m):>{cw}} |" for m in MODES)
+                    + "".join(f" {ms(m):>{cw}} |" for m in MODES)
+                )
                 print(row)
         if rank0:
             print()
