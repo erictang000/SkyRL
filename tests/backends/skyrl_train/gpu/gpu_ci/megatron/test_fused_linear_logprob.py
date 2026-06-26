@@ -34,6 +34,9 @@ from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
 )
 from skyrl.train.utils.utils import get_free_port
 
+# Run as part of the Megatron GPU CI suite (`-m megatron`, --extra megatron).
+pytestmark = pytest.mark.megatron
+
 H = 256  # hidden size for the unit tests
 
 
