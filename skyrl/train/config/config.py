@@ -664,6 +664,17 @@ class GeneratorConfig(BaseConfig):
     eval_n_samples_per_prompt: int = 1
     zero_reward_on_non_stop: bool = False
     """Set reward to 0 when ``stop_reason`` is not ``"stop"`` (i.e., generation was truncated or aborted)."""
+    use_cache_salt: bool = False
+    """Salt the inference engine prefix cache with the policy version (``batch_metadata.global_step``).
+
+    vLLM hashes prefix-cache blocks by token content alone, so two requests with an identical token
+    prefix share KV blocks even across a weight update -- where the cached KV is now stale. Setting
+    this to ``True`` mixes a per-policy-version string (``cache_salt``) into the block hash so requests
+    at the same policy version share cache (throughput) while requests across versions do not
+    (correctness). The salt is keyed on the inference engine's weight version (the number of weight
+    syncs broadcast to the engines), captured at the start of each ``generate`` batch. It is primarily
+    useful for fully-async RL, where the prefix cache is deliberately not fully cleared on every weight
+    sync. No-op unless prefix caching is enabled on the inference engine."""
     apply_overlong_filtering: bool = False
     """Apply DAPO Overlong Filtering: mask out all tokens in the loss mask for trajectories that
     exceed max length (truncated, no EOS token)."""
