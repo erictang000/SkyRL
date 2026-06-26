@@ -1,25 +1,29 @@
 """
-Benchmark: fused-linear (Liger-style) log-prob vs the materialize-logits path.
+Benchmark: LM-head training signal — baseline vs NVIDIA fused CE vs Liger-style fused linear.
 
-Compares the two ways SkyRL's MegatronModelWrapper can turn decoder hidden
-states into per-token log-probs for the RL/SFT loss:
+Three ways SkyRL's Megatron backend can turn decoder hidden states + the
+output-layer weight into the per-token cross-entropy / log-prob used by the
+RL/SFT loss (all run forward+backward so grads flow to hidden *and* weight):
 
-  baseline : logits = hidden @ weightᵀ  (the output layer), then the existing
-             ChunkedDistributedLogprob — materializes the full [B, S, vocab//TP]
-             logits and, in backward, a float32 gradient of the same shape.
-  fused    : FusedLinearChunkedDistributedLogprob — folds the projection into the
-             chunked, TP-parallel log-prob so neither is ever materialized.
+  baseline : logits = hidden @ weightᵀ, then megatron-core's eager
+             ``vocab_parallel_cross_entropy`` (materializes [B,S,vocab//TP]
+             logits + an fp32 grad of the same shape).
+  nvidia   : same logits, then megatron-core's ``fused_vocab_parallel_cross_entropy``
+             (the @jit_fuser / TorchScript "NVIDIA stack" fused CE — fuses the
+             softmax/CE *stages* but still materializes the logits).
+  liger    : FusedLinearChunkedDistributedLogprob — folds the projection into the
+             chunked, TP-parallel log-prob so the logits are *never* materialized.
 
-Both run forward+backward (grad flows to hidden and weight) so the comparison is
-apples-to-apples. Peak memory for the LM-head term drops from O(S · vocab//TP)
-to O(chunk · vocab//TP) + O(S · H), which is what lets very long contexts fit.
+Takeaway the table makes concrete: the NVIDIA fused CE is a *compute* optimization
+(faster than eager) but not a *memory* one — like the baseline it materializes the
+logits and OOMs at long context. Liger is the *memory* optimization: it fits long
+context (at a modest compute cost), which the NVIDIA path cannot.
 
 Usage (single GPU; per-rank vocab shard = `vocab`):
     uv run --isolated --extra megatron torchrun --nproc_per_node=1 \\
         skyrl/benchmarks/bench_fused_linear_logprob.py
-
-Run with --nproc_per_node=N for a real TP=N measurement (pass --vocab as the
-full vocab; each rank then holds vocab//N).
+Run with --nproc_per_node=N for a real TP=N measurement (pass --vocab as the full
+vocab; each rank then holds vocab//N).
 """
 
 import argparse
@@ -37,18 +41,38 @@ SEQ_LENS = [8192, 32768, 65536, 131072, 262144]
 CHUNK_SIZE = 1024
 WARMUP_REPS = 1
 BENCH_REPS = 3
+MODES = ["baseline", "nvidia", "liger"]
 
 
-def _measure(mode, seq_len, vocab_local, chunk_size, tp_group, device, reps):
-    """forward+backward through `mode` ('baseline'|'fused'); return (ms, peak_bytes) or (None, None) on OOM."""
+def _loss(mode, hidden, weight, target, vocab_local, chunk_size, tp_group):
+    """Per-token CE summed to a scalar (so all modes produce identical grads)."""
+    from megatron.core.fusions.fused_cross_entropy import fused_vocab_parallel_cross_entropy
+    from megatron.core.tensor_parallel.cross_entropy import vocab_parallel_cross_entropy
+
     from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
-        ChunkedDistributedLogprob,
         FusedLinearChunkedDistributedLogprob,
     )
 
+    if mode == "liger":
+        lp = FusedLinearChunkedDistributedLogprob.apply(
+            hidden, weight, target, 0, vocab_local, chunk_size, tp_group, False
+        )
+        return (-lp).sum()
+    logits = torch.matmul(hidden, weight.t())  # [B, S, vocab//TP]
+    if mode == "baseline":
+        ce = vocab_parallel_cross_entropy(logits, target, 0.0, tp_group)
+    elif mode == "nvidia":
+        ce = fused_vocab_parallel_cross_entropy(logits, target, tp_group)
+    else:
+        raise ValueError(mode)
+    return ce.sum()
+
+
+def _measure(mode, seq_len, vocab_local, chunk_size, tp_group, device, reps):
+    """forward+backward; return (mean_ms, mean_peak_bytes) or (None, None) on OOM."""
     times, peaks = [], []
     for _ in range(reps):
-        hidden = weight = target = logits = out = None
+        hidden = weight = target = loss = None
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
         try:
@@ -57,23 +81,38 @@ def _measure(mode, seq_len, vocab_local, chunk_size, tp_group, device, reps):
             target = torch.randint(0, vocab_local, (1, seq_len), device=device)
             torch.cuda.synchronize(device)
             t0 = time.perf_counter()
-            if mode == "baseline":
-                logits = torch.matmul(hidden, weight.t())
-                out = ChunkedDistributedLogprob.apply(logits, target, 0, vocab_local, chunk_size, tp_group, False)
-            else:
-                out = FusedLinearChunkedDistributedLogprob.apply(hidden, weight, target, 0, vocab_local, chunk_size, tp_group, False)
-            out.sum().backward()
+            loss = _loss(mode, hidden, weight, target, vocab_local, chunk_size, tp_group)
+            loss.backward()
             torch.cuda.synchronize(device)
             times.append((time.perf_counter() - t0) * 1000.0)
             peaks.append(torch.cuda.max_memory_allocated(device))
         except torch.OutOfMemoryError:
             return None, None
         finally:
-            # Explicit frees (incl. any autograd graph from an OOM) so the next
-            # rep's peak-memory reading isn't inflated by leftovers.
-            del hidden, weight, target, logits, out
+            del hidden, weight, target, loss
             torch.cuda.empty_cache()
     return sum(times) / len(times), sum(peaks) / len(peaks)
+
+
+def _correctness(vocab_local, tp_group, device):
+    """All three modes must produce the same loss + grad_hidden (fair comparison)."""
+    torch.manual_seed(0)
+    S = 64
+    h0 = torch.randn(1, S, HIDDEN, dtype=torch.bfloat16, device=device)
+    w0 = torch.randn(vocab_local, HIDDEN, dtype=torch.bfloat16, device=device) * (HIDDEN**-0.5)
+    tgt = torch.randint(0, vocab_local, (1, S), device=device)
+    ref = {}
+    for mode in MODES:
+        h = h0.clone().requires_grad_(True)
+        w = w0.clone().requires_grad_(True)
+        _loss(mode, h, w, tgt, vocab_local, CHUNK_SIZE, tp_group).backward()
+        ref[mode] = (h.grad.float().clone(),)
+    base = ref["baseline"][0]
+    out = []
+    for mode in MODES:
+        gh = ref[mode][0]
+        out.append(f"{mode}: max|dgrad_hidden vs baseline|={(gh - base).abs().max().item():.2e}")
+    return out
 
 
 def main():
@@ -91,31 +130,42 @@ def main():
     mpu.initialize_model_parallel(tensor_model_parallel_size=world)
     tp_group = mpu.get_tensor_model_parallel_group()
     device = torch.device("cuda", local_rank)
+    rank0 = dist.get_rank() == 0
 
     vocab_shards = [args.vocab // world] if args.vocab else VOCAB_SHARDS
-    rank0 = dist.get_rank() == 0
     if rank0:
         print(f"Device {torch.cuda.get_device_name(device)} | TP(world)={world} | hidden={HIDDEN} | chunk={args.chunk_size}")
-        print("baseline = matmul logits + ChunkedDistributedLogprob ; fused = FusedLinearChunkedDistributedLogprob (fwd+bwd)\n")
+        print("baseline = megatron vocab_parallel_cross_entropy (eager) | "
+              "nvidia = fused_vocab_parallel_cross_entropy (@jit_fuser) | "
+              "liger = FusedLinearChunkedDistributedLogprob (no logits)")
+        print("all: hidden+weight -> per-token CE -> sum -> backward\n")
+        print("correctness (TP=%d, vocab=%d):" % (world, vocab_shards[0]))
+        for line in _correctness(vocab_shards[0], tp_group, device):
+            print("  " + line)
+        print()
 
-    cw = 13
+    cw = 12
     for vlocal in vocab_shards:
         if rank0:
             print(f"=== per-rank vocab shard = {vlocal:,} ===")
-            print(f"{'seq_len':>9} | {'baseline MB':>{cw}} | {'fused MB':>{cw}} | {'mem saved':>{cw}} | {'baseline ms':>{cw}} | {'fused ms':>{cw}}")
-            print("-" * 80)
+            hdr = f"{'seq_len':>9} |" + "".join(f" {m + ' MB':>{cw}} |" for m in MODES) + "".join(f" {m + ' ms':>{cw}} |" for m in MODES)
+            print(hdr)
+            print("-" * len(hdr))
         for s in SEQ_LENS:
-            for _ in range(WARMUP_REPS):
-                _measure("fused", s, vlocal, args.chunk_size, tp_group, device, 1)
-            b_ms, b_peak = _measure("baseline", s, vlocal, args.chunk_size, tp_group, device, BENCH_REPS)
-            f_ms, f_peak = _measure("fused", s, vlocal, args.chunk_size, tp_group, device, BENCH_REPS)
+            res = {}
+            for mode in MODES:
+                for _ in range(WARMUP_REPS):
+                    _measure(mode, s, vlocal, args.chunk_size, tp_group, device, 1)
+                res[mode] = _measure(mode, s, vlocal, args.chunk_size, tp_group, device, BENCH_REPS)
             if rank0:
-                b_mb = "OOM" if b_peak is None else f"{b_peak / 1024**2:.0f}"
-                f_mb = "OOM" if f_peak is None else f"{f_peak / 1024**2:.0f}"
-                saved = "-" if (b_peak is None or f_peak is None) else f"{(b_peak - f_peak) / 1024**2:.0f} MB ({b_peak / f_peak:.1f}x)"
-                b_t = "-" if b_ms is None else f"{b_ms:.0f}"
-                f_t = "-" if f_ms is None else f"{f_ms:.0f}"
-                print(f"{s:>9} | {b_mb:>{cw}} | {f_mb:>{cw}} | {saved:>{cw}} | {b_t:>{cw}} | {f_t:>{cw}}")
+                def mb(m):
+                    p = res[m][1]
+                    return "OOM" if p is None else f"{p / 1024**2:.0f}"
+                def ms(m):
+                    t = res[m][0]
+                    return "OOM" if t is None else f"{t:.0f}"
+                row = f"{s:>9} |" + "".join(f" {mb(m):>{cw}} |" for m in MODES) + "".join(f" {ms(m):>{cw}} |" for m in MODES)
+                print(row)
         if rank0:
             print()
 
