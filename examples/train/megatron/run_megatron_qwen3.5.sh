@@ -25,8 +25,10 @@ INFERENCE_ENGINE_TP=1
 LANGUAGE_MODEL_ONLY=True  # qwen3-vl in megatron has a separate sequence packing path - if using language_model_only, use the native GPTModel + GDN thd packing path
 
 # On Blackwell, use the following env var:
-# export FLA_TILELANG=0   # force triton gdn backend since fla's default TileLang GDN backend aborts in the packed backward. leave unset on hopper, since Triton GDN backward is broken there: https://github.com/fla-org/flash-linear-attention/issues/640#issuecomment-4236520788
+export FLA_TILELANG=0   # force triton gdn backend since fla's default TileLang GDN backend aborts in the packed backward. leave unset on hopper, since Triton GDN backward is broken there: https://github.com/fla-org/flash-linear-attention/issues/640#issuecomment-4236520788
 
+FUSED_LM_HEAD_LOGPROB=false
+MAX_TOKENS_PER_MICROBATCH=2000
 
 uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -57,7 +59,8 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.policy_mini_batch_size=256 \
   trainer.micro_forward_batch_size_per_gpu=4 \
   trainer.micro_train_batch_size_per_gpu=4 \
-  trainer.ckpt_interval=10 \
+  trainer.max_tokens_per_microbatch=$MAX_TOKENS_PER_MICROBATCH \
+  trainer.ckpt_interval=-1 \
   trainer.max_prompt_length=512 \
   generator.sampling_params.max_generate_length=1024 \
   trainer.policy.optimizer_config.lr=1.0e-6 \
@@ -72,7 +75,8 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   generator.inference_engine.gpu_memory_utilization=0.6 \
   trainer.logger="$LOGGER" \
   trainer.project_name="qwen3.5-0.8b" \
-  trainer.run_name="qwen3.5-0.8b_megatron" \
+  trainer.run_name="qwen3.5-0.8b_megatron-fused-lm-head-logprob-${FUSED_LM_HEAD_LOGPROB}-MAX_TOKENS_PER_MICROBATCH-${MAX_TOKENS_PER_MICROBATCH}" \
   trainer.resume_mode=null \
   trainer.ckpt_path="$HOME/ckpts/gsm8k_megatron_ckpt" \
+  trainer.fused_lm_head_logprob=$FUSED_LM_HEAD_LOGPROB \
   $@
