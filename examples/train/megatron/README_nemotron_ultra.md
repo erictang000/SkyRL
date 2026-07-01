@@ -15,19 +15,53 @@ Staging helper: [`stage_nemotron_ultra.py`](./stage_nemotron_ultra.py).
 
 ## Replicating on a fresh cluster
 
-The cluster needs: 8 nodes × 8×H200-141GB, EFA, a Ray cluster, a large **node-local** disk at
-`/mnt/local_storage` (~28 TB), and a small shared `/home` (which the 1.1 TB model must NOT touch).
+The cluster needs: 8 nodes × 8×H200-141GB, EFA, a Ray cluster, and a large **node-local** disk at
+`/mnt/local_storage` (~28 TB) for the model + caches. On this cluster `/mnt/local_storage` is also the
+overlay filesystem on the worker nodes (a worker's `/` and `/home` sit on the same big 28 TB disk), so
+writing to `/home` on the *workers* is no longer a hazard. The recipe still keeps the model + all caches
+on `/mnt/local_storage` (node-local) so every rank reads locally, and the head node's `/home` is still
+small — keep the 1.1 TB model off it.
 
 ### 1. Make sure this PR's code is present
 The recipe depends on several fixes in this PR (see [Why these fixes](#why-these-fixes-are-needed)).
 On stock SkyRL/vLLM without them you get coherent-looking **garbage** generations and `reward=0`.
+
+### 1b. Prep the megatron uv env on every node (transformer-engine wheel)
+`uv run --isolated --extra megatron` builds `transformer-engine-torch==2.11.0` from its PyPI **sdist**
+(NVIDIA publishes no wheel for it), and that sdist cannot build standalone — it fails with
+`ModuleNotFoundError: No module named 'build_tools'`. The env only comes up if uv **reuses a prebuilt TE
+wheel** instead of rebuilding, which requires two things to line up:
+
+- **Use uv 0.9.x on every node, the head included** (matches `docker/Dockerfile.megatron`). uv 0.11.x
+  computes a different build cache-key and will *not* reuse the cached wheel → rebuild → the `build_tools`
+  failure. Pin the head with:
+  `curl -LsSf https://astral.sh/uv/0.9.6/install.sh | env UV_UNMANAGED_INSTALL=$HOME/.local/bin sh`
+- **This PR's `pyproject.toml`** adds `nvidia-cudnn-cu12` to transformer-engine's
+  `[tool.uv.extra-build-dependencies]` and an `[tool.uv.extra-build-variables]` cudnn
+  `CPATH`/`LIBRARY_PATH`/`CUDNN_PATH` block, so the build-key matches the prebuilt wheel.
+
+Cache the prebuilt wheel at `/mnt/local_storage/wheels/` on every node (build it once per
+`docker/Dockerfile.megatron`, or copy it around) and add to `~/.bashrc` on **every** node:
+
+```bash
+export XDG_CACHE_HOME=/mnt/local_storage/.cache   # uv cache -> /mnt/local_storage/.cache/uv
+export UV_FIND_LINKS=/mnt/local_storage/wheels
+```
+
+Then pre-warm the uv cache on every node so the first launch doesn't stall (or fail on an un-warmed node):
+```bash
+uv run --isolated --extra megatron python -c "import transformer_engine.pytorch, megatron.core, vllm; print('ok')"
+```
+Ray ships the working dir + this `uv run` invocation to the workers (`RAY_RUNTIME_ENV_HOOK`), so the
+`pyproject.toml` fix propagates cluster-wide automatically at launch.
 
 ### 2. Stage the model + data on every GPU node
 Everything lives on node-local `/mnt/local_storage` (the model is too big for `/home`, and every
 rank needs its data locally). One command does both, on all nodes, via Ray:
 
 ```bash
-export HF_TOKEN=$(cat ~/.HF_TOKEN)   # fast authenticated download; unauthenticated is throttled
+export HF_TOKEN=<your_hf_token>      # fast authenticated download; unauthenticated is throttled
+export HF_XET_HIGH_PERFORMANCE=1     # much faster Xet download of the ~1.1 TB/node snapshot
 uv run --isolated --with ray --with huggingface_hub --with hf_transfer --with datasets \
     python examples/train/megatron/stage_nemotron_ultra.py
 ```
@@ -35,6 +69,14 @@ uv run --isolated --with ray --with huggingface_hub --with hf_transfer --with da
 This downloads the HF snapshot to `/mnt/local_storage/hf_cache` **including `chat_template.jinja`**
 and writes the GSM8K parquets to `/mnt/local_storage/data/gsm8k` on each node. Re-run it if the
 autoscaler churns in a fresh (un-staged) node.
+
+> The staging script targets **GPU (worker) nodes** only. The **driver** (head) also loads the
+> tokenizer/config and the dataset, so it needs — on its own `/mnt/local_storage` — the model *metadata*
+> (`config.json` + `tokenizer*` + `chat_template.jinja`, no weights) at `/mnt/local_storage/hf_cache`
+> and the GSM8K parquets at `/mnt/local_storage/data/gsm8k`. Either run a metadata-only
+> `snapshot_download` (`allow_patterns=["*.json","tokenizer*","*.model","*.jinja","*.txt","*.py"]`) on the
+> head and copy the parquets over, or set `HF_HUB_OFFLINE=0` for the run so the driver fetches the small
+> metadata on demand.
 
 > The `*.jinja` is essential. The tokenizer ships **no** chat template inline; the official ChatML +
 > reasoning template lives in `chat_template.jinja`. Without it the instruct model is prompted
@@ -50,9 +92,12 @@ preemption, but it's disk).
 ### 4. Launch
 ```bash
 export WANDB_API_KEY=<your_key>
-export HF_TOKEN=$(cat ~/.HF_TOKEN)          # for churn resilience
+export HF_TOKEN=<your_hf_token>             # for churn resilience
 bash examples/train/megatron/run_megatron_nemotron_ultra.sh
 ```
+Prereq: uv 0.9.x + the staged TE wheel + `UV_FIND_LINKS`/`XDG_CACHE_HOME` on every node (see step 1b),
+otherwise the megatron env fails to build with `No module named 'build_tools'`.
+
 EFA + multi-node specifics (all set by the script): `LD_LIBRARY_PATH=/opt/amazon/efa/lib`,
 `SKYRL_LD_LIBRARY_PATH_EXPORT=1`, `VLLM_USE_RAY_V2_EXECUTOR_BACKEND=1`, `NVTE_FLASH_ATTN=0`, and
 raised placement-group / inference-server health timeouts (the 550B takes >600 s to come up).

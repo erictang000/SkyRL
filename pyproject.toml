@@ -244,11 +244,18 @@ override-dependencies = [
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{requirement = "torch", match-runtime = true}]
-transformer-engine = [{requirement = "torch", match-runtime = true}, "build_tools", "ninja"]
-transformer-engine-torch = [{requirement = "torch", match-runtime = true}, "build_tools", "ninja"]
+transformer-engine = [{requirement = "torch", match-runtime = true}, "build_tools", "ninja", "nvidia-cudnn-cu12"]
+transformer-engine-torch = [{requirement = "torch", match-runtime = true}, "build_tools", "ninja", "nvidia-cudnn-cu12"]
 
 [tool.uv.extra-build-variables]
 flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE"}
+# Point the C++ build env to anaconda's nvidia-cudnn-cu12 includes/libs.
+# AWS H200 nodes don't ship cudnn under /usr/local/cuda; without these
+# CPATH/LIBRARY_PATH/CUDNN_PATH entries, transformer-engine-torch's setup
+# can't find cudnn.h and the build fails. Anaconda is at the same path on
+# the head and all workers (Anyscale image).
+transformer-engine-torch = { CPATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn/include", LIBRARY_PATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn/lib", CUDNN_PATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn" }
+transformer-engine = { CPATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn/include", LIBRARY_PATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn/lib", CUDNN_PATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
