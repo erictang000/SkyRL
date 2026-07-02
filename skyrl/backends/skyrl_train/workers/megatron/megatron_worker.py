@@ -24,6 +24,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.megatron_strategy import (
     MegatronStrategy,
 )
 from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import (
+    _convert_moe_experts_lora_to_vllm,
     broadcast_object_across_pp_ranks,
     freeze_moe_router,
     get_model_config,
@@ -1033,12 +1034,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                 }
             )
 
-        # Count microbatches that carry real (non-padding) samples. Token-based batching
-        # appends fully-padding microbatches so every DP rank runs the same number of
-        # forward passes; those contribute 0 to KL/entropy and to mean metrics but would
-        # otherwise inflate the denominators. A real microbatch can still have an all-zero
-        # loss_mask (for example, DAPO overlong filtering), so use the iterator's padding
-        # count rather than inferring from loss_mask.
+        # Count real (non-padding) microbatches. Token-based batching appends padding
+        # microbatches so every DP rank runs the same number of forward passes; they must
+        # not inflate the KL/entropy denominators. Use the iterator's padding count rather
+        # than loss_mask, since a real microbatch can be all-zero (e.g. DAPO overlong filtering).
         num_padding_microbatches = (
             getattr(microbatch_iterator, "num_padding_microbatches", 0) if microbatch_iterator is not None else 0
         )
@@ -1242,7 +1241,15 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         if torch.distributed.get_rank() == 0:
             os.makedirs(lora_sync_path, exist_ok=True)
 
-            target_modules = infer_target_modules_from_adapter_weights(adapter_state.keys())
+            # Rewrite fused-MoE expert LoRA into vLLM's flat PEFT layout so
+            # merge_lora=False on-policy sync is accepted (otherwise
+            # load_lora_adapter rejects `experts.down_proj`). See
+            # _convert_moe_experts_lora_to_vllm for the layout details.
+            adapter_state = _convert_moe_experts_lora_to_vllm(adapter_state)
+
+            target_modules = sorted(
+                set(infer_target_modules_from_adapter_weights(adapter_state.keys())) - {"base_layer"}
+            )
             base_model_name_or_path = str(
                 getattr(self.bridge.hf_pretrained, "model_name_or_path", "")
                 or getattr(self.bridge.hf_pretrained, "name_or_path", "")
