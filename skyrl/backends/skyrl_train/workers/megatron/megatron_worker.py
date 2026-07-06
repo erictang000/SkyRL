@@ -342,10 +342,13 @@ class MegatronWorker:
         tokenizer = get_tokenizer(model_path, trust_remote_code=True)
         hf_config_original = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
 
-        # VLM detection mirrors the FSDP path: a non-null ``vision_config`` on the
-        # HF config means a vision tower is present. Megatron's TransformerConfig
-        # has no such field, so this must be read off the HF config.
-        self.is_vlm = hasattr(hf_config_original, "vision_config") and hf_config_original.vision_config is not None
+        if not language_model_only:
+            # VLM detection mirrors the FSDP path: a non-null ``vision_config`` on the
+            # HF config means a vision tower is present. Megatron's TransformerConfig
+            # has no such field, so this must be read off the HF config.
+            self.is_vlm = hasattr(hf_config_original, "vision_config") and hf_config_original.vision_config is not None
+        else:
+            self.is_vlm = False
 
         override_config_kwargs = {
             "bos_token_id": tokenizer.bos_token_id,
