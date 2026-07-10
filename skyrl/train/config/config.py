@@ -101,9 +101,52 @@ class SkyRLLoraConfig(BaseConfig):
 
 
 @dataclass
+class FakeInt4QatConfig(BaseConfig):
+    """Fake-INT4 quantization-aware training for MoE experts (Megatron only).
+
+    When the inference engine serves the MoE experts as real ``compressed-tensors``
+    INT4 (e.g. ``casperhansen/Qwen3.6-35B-A3B-INT4-RTN``) but the trainer holds
+    BF16 masters, enabling this fake-quantizes the frozen expert GEMMs onto the
+    same INT4 grid in the forward pass (straight-through backward), removing the
+    train/infer weight mismatch. See
+    ``skyrl.backends.skyrl_train.workers.megatron.fake_int4_qat``.
+    """
+
+    enabled: bool = False
+    group_size: int = 32
+    """Group size along the input dim; must match the served checkpoint (32)."""
+    symmetric: bool = True
+    scale_divisor: float = 7.5
+    """Symmetric-INT4 scale divisor ``scale = amax / scale_divisor``:
+    ``7.5`` = llm-compressor / compressed-tensors RTN (``[-8, 7]``; matches
+    ``casperhansen/Qwen3.6-35B-A3B-INT4-RTN``); ``7.0`` = Kimi K2-Thinking / K2.6 /
+    Miles (``[-7, 7]``). Set ``q_min`` consistently."""
+    q_min: float = -8.0
+    """Lower clamp of the INT4 code range: ``-8`` for llm-compressor RTN
+    (``scale_divisor=7.5``), ``-7`` for Kimi/Miles (``scale_divisor=7.0``, whose
+    QAT never emits ``-8``)."""
+    bf16_base_path: Optional[str] = None
+    """Megatron-Bridge cannot load a compressed-tensors INT4 checkpoint, so when
+    ``model.path`` points at the INT4 model the trainer loads its BF16 master
+    weights from this path instead. The INT4 ``model.path`` remains what the
+    inference engine serves and the logical name. When None, the trainer loads
+    weights from ``model.path`` directly (only valid if that path is already a
+    BF16 checkpoint)."""
+
+
+@dataclass
 class ModelConfig(BaseConfig):
     path: Optional[str] = None
     lora: SkyRLLoraConfig = field(default_factory=SkyRLLoraConfig)
+    fake_int4_qat: FakeInt4QatConfig = field(default_factory=FakeInt4QatConfig)
+
+    def __post_init__(self) -> None:
+        if self.fake_int4_qat.enabled:
+            assert self.lora.rank > 0, (
+                "`trainer.policy.model.fake_int4_qat.enabled=True` currently requires LoRA "
+                "(`trainer.policy.model.lora.rank > 0`) because full-weight sync exports "
+                "dense expert weights."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -897,6 +940,16 @@ class TrainerConfig(BaseConfig):
         # ref model defaults to the policy model
         if self.ref.model.path is None:
             self.ref.model.path = self.policy.model.path
+
+        if self.policy.model.fake_int4_qat.enabled:
+            assert (
+                self.strategy == "megatron"
+            ), "`trainer.policy.model.fake_int4_qat.enabled=True` is only supported with `trainer.strategy=megatron`."
+            assert not self.policy.megatron_config.lora_config.merge_lora, (
+                "`trainer.policy.model.fake_int4_qat.enabled=True` currently requires "
+                "`trainer.policy.megatron_config.lora_config.merge_lora=False` so weight "
+                "sync preserves the inference engine's INT4 base weights."
+            )
 
         if self.logprobs_chunk_size is not None and (
             not isinstance(self.logprobs_chunk_size, int) or self.logprobs_chunk_size <= 0
