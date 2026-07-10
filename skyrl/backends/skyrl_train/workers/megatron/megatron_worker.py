@@ -1203,6 +1203,11 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # token-based batching can reorder them back to the input-sample order below.
         per_microbatch_loss_fn_outputs = []
         for m_batch, metrics in zip(micro_buffer, metrics_list):
+            # metrics is None on non-last pipeline stages; append [] to keep the per-microbatch
+            # alignment with micro_buffer that the reorder below relies on.
+            if metrics is None:
+                per_microbatch_loss_fn_outputs.append([])
+                continue
             # Extract loss_fn_outputs before reduce_metrics (it's not a scalar metric)
             per_microbatch_loss_fn_outputs.append(metrics.pop("loss_fn_outputs", []))
             # Skip fully-padding microbatches: their metrics (clip_ratio=0, policy_entropy=0,
