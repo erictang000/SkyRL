@@ -16,6 +16,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import (
     preprocess_packed_seqs,
     recover_left_padding,
     remove_left_padding,
+    to_te_attention_mask,
 )
 from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
     _fused_vocab_parallel_entropy_from_hidden,
@@ -27,6 +28,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
     vocab_parallel_entropy,
     vocab_parallel_entropy_packed_sequences,
 )
+from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import is_fp8_enabled
 from skyrl.backends.skyrl_train.utils.ppo_utils import (
     PolicyLossRegistry,
     compute_approx_kl,
@@ -116,16 +118,19 @@ class MegatronModelWrapper:
         actor_module: List[nn.Module],
         actor_optimizer: Optional[torch.optim.Optimizer] = None,
         policy_loss_fn: Optional[Callable] = None,
+        is_vlm: bool = False,
     ):
         self.cfg = config
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
         self.policy_loss_fn = policy_loss_fn
         self.remove_microbatch_padding = self.cfg.remove_microbatch_padding
+        self.is_vlm = is_vlm
         # Fuse the LM-head projection into the chunked log-prob/entropy via the
         # GPTModel output_processor hook (avoids materializing the full
         # [B, S, vocab//TP] logits + its fp32 grad). See model_utils.
         self._fused_lm_head = bool(getattr(self.cfg, "fused_lm_head_logprob", False))
+        self._fused_lm_head_backend = getattr(self.cfg, "fused_lm_head_logprob_backend", "torch")
         # Some models (e.g. Qwen3.5 via the VL bridge -> Qwen3VLModel) pack
         # sequences inside their own forward; SkyRL sample packing would then
         # double-pack and corrupt the GDN cu_seqlens, so refuse it. For Qwen3.5,
@@ -158,6 +163,18 @@ class MegatronModelWrapper:
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
+    def _assert_vlm_supported(self):
+        """Guard the VLM parallelism constraints carried over from the FSDP path.
+
+        3D RoPE and multimodal token positions make sample/microbatch packing,
+        context parallelism, and sequence parallelism unsafe for VLMs today.
+        """
+        assert not self.remove_microbatch_padding, "VLM + microbatch padding removal unsupported"
+        assert mpu.get_context_parallel_world_size() == 1, "VLM + context parallelism unsupported"
+        assert (
+            mpu.get_tensor_model_parallel_world_size() == 1 or self.cfg.policy.sequence_parallel_size == 1
+        ), "VLM + sequence parallelism unsupported"
+
     def forward(
         self,
         micro_batches: List[dict],
@@ -178,6 +195,8 @@ class MegatronModelWrapper:
         Returns:
             torch.Tensor of concatenated log-probs across micro-batches (valid on pipeline last stage only).
         """
+        if self.is_vlm:
+            self._assert_vlm_supported()
         forward_backward_func = get_forward_backward_func()
 
         def collection_func(logits, data):
@@ -217,6 +236,7 @@ class MegatronModelWrapper:
                     attention_mask=data["attention_mask"],
                     sub_seq_lengths=data.get("sub_seq_lengths_list"),
                     temperature=temperature,
+                    fused_backend=self._fused_lm_head_backend,
                 )
             elif fused_lm_head:
                 token_logprobs = from_parallel_hidden_to_logprobs(
@@ -230,6 +250,7 @@ class MegatronModelWrapper:
                     cp_group=None,
                     chunk_size=self.cfg.logprobs_chunk_size,
                     temperature=temperature,
+                    fused_backend=self._fused_lm_head_backend,
                 )
             elif packed_seq_params is not None and packed_targets is not None:
                 token_logprobs = from_parallel_logits_to_logprobs_packed_sequences(
@@ -262,12 +283,14 @@ class MegatronModelWrapper:
         def forward_step(batch_iter, model):
             batch = next(batch_iter)
 
+            model_config = get_model_config(model)
+            fp8_enabled = is_fp8_enabled(getattr(model_config, "fp8", None))
             rollout_expert_indices = batch.pop("rollout_expert_indices", None)
             if rollout_expert_indices is not None:
                 setup_per_microbatch_replay_forward(
                     rollout_expert_indices,
                     batch["attention_mask"],
-                    model_config=get_model_config(model),
+                    model_config=model_config,
                     remove_microbatch_padding=self.remove_microbatch_padding,
                 )
 
@@ -278,12 +301,19 @@ class MegatronModelWrapper:
             sub_seq_lengths = [t.tolist() for t in sub_seq_lengths_field] if sub_seq_lengths_field is not None else None
             batch["sub_seq_lengths_list"] = sub_seq_lengths
 
+            vlm_inputs = {}
+            if batch.get("pixel_values") is not None and mpu.get_pipeline_model_parallel_rank() == 0:
+                vlm_inputs["pixel_values"] = torch.cat(batch["pixel_values"].tensors, dim=0)
+            if batch.get("image_grid_thw") is not None:
+                vlm_inputs["image_grid_thw"] = torch.cat(batch["image_grid_thw"].tensors, dim=0)
+
             if self.remove_microbatch_padding:
                 new_sequences, packed_seq_params = preprocess_packed_seqs(
                     sequences,
                     attention_mask,
-                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
+                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True) or self.is_vlm,
                     sub_seq_lengths=sub_seq_lengths,
+                    fp8_enabled=fp8_enabled,
                 )
                 batch["packed_seq_params"] = packed_seq_params
                 batch["packed_targets"] = _build_packed_targets(
@@ -296,9 +326,14 @@ class MegatronModelWrapper:
                     sequences,
                     attention_mask,
                     position_ids,
-                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
+                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True) or self.is_vlm,
+                    fp8_enabled=fp8_enabled,
                 )
                 packed_seq_params = None
+                # Qwen-style VLMs recompute 3D mRoPE positions internally from
+                # image_grid_thw and ignore any position_ids passed in.
+                if self.is_vlm:
+                    new_position_ids = None
 
             if self._fused_lm_head:
                 # Fused LM-head inference: the output_processor returns decoder
@@ -311,18 +346,20 @@ class MegatronModelWrapper:
                 outputs = model(
                     new_sequences,
                     new_position_ids,
-                    new_attention_mask,
+                    to_te_attention_mask(new_attention_mask),
                     packed_seq_params=packed_seq_params,
                     output_processor=_fused_lm_head_output_processor,
                     output_processor_context=_op_ctx,
+                    **vlm_inputs,
                 )
                 batch["lm_head_weight"] = _op_ctx.get("lm_head_weight")
             else:
                 outputs = model(
                     new_sequences,
                     new_position_ids,
-                    new_attention_mask,
+                    to_te_attention_mask(new_attention_mask),
                     packed_seq_params=packed_seq_params,
+                    **vlm_inputs,
                 )
 
             if not self.remove_microbatch_padding:
@@ -392,6 +429,8 @@ class MegatronModelWrapper:
         Returns:
             List[dict]: one metrics dict per micro-batch in order.
         """
+        if self.is_vlm:
+            self._assert_vlm_supported()
         forward_backward_func = get_forward_backward_func()
 
         # Resolve loss function
@@ -466,6 +505,7 @@ class MegatronModelWrapper:
                     attention_mask=data["attention_mask"],
                     sub_seq_lengths=data.get("sub_seq_lengths_list"),
                     temperature=temperature,
+                    fused_backend=self._fused_lm_head_backend,
                 )
             elif fused_lm_head:
                 token_logprobs = from_parallel_hidden_to_logprobs(
@@ -479,6 +519,7 @@ class MegatronModelWrapper:
                     cp_group=None,
                     chunk_size=self.cfg.logprobs_chunk_size,
                     temperature=temperature,
+                    fused_backend=self._fused_lm_head_backend,
                 )
             elif packed_seq_params is not None and packed_targets is not None:
                 token_logprobs = from_parallel_logits_to_logprobs_packed_sequences(
@@ -695,12 +736,14 @@ class MegatronModelWrapper:
             # after this PR https://github.com/NovaSky-AI/SkyRL/pull/1285.
             batch = next(batch_iter)
 
+            model_config = get_model_config(model)
+            fp8_enabled = is_fp8_enabled(getattr(model_config, "fp8", None))
             rollout_expert_indices = batch.pop("rollout_expert_indices", None)
             if rollout_expert_indices is not None:
                 setup_per_microbatch_replay_forward(
                     rollout_expert_indices,
                     batch["attention_mask"],
-                    model_config=get_model_config(model),
+                    model_config=model_config,
                     remove_microbatch_padding=self.remove_microbatch_padding,
                 )
 
@@ -719,12 +762,19 @@ class MegatronModelWrapper:
             sub_seq_lengths = [t.tolist() for t in sub_seq_lengths_field] if sub_seq_lengths_field is not None else None
             batch["sub_seq_lengths_list"] = sub_seq_lengths
 
+            vlm_inputs = {}
+            if batch.get("pixel_values") is not None and mpu.get_pipeline_model_parallel_rank() == 0:
+                vlm_inputs["pixel_values"] = torch.cat(batch["pixel_values"].tensors, dim=0)
+            if batch.get("image_grid_thw") is not None:
+                vlm_inputs["image_grid_thw"] = torch.cat(batch["image_grid_thw"].tensors, dim=0)
+
             if self.remove_microbatch_padding:
                 new_sequences, packed_seq_params = preprocess_packed_seqs(
                     sequences,
                     attention_mask,
-                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
+                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True) or self.is_vlm,
                     sub_seq_lengths=sub_seq_lengths,
+                    fp8_enabled=fp8_enabled,
                 )
                 batch["packed_seq_params"] = packed_seq_params
                 batch["packed_targets"] = _build_packed_targets(
@@ -737,9 +787,14 @@ class MegatronModelWrapper:
                     sequences,
                     attention_mask,
                     position_ids,
-                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
+                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True) or self.is_vlm,
+                    fp8_enabled=fp8_enabled,
                 )
                 packed_seq_params = None
+                # Qwen-style VLMs recompute 3D mRoPE positions internally from
+                # image_grid_thw and ignore any position_ids passed in.
+                if self.is_vlm:
+                    new_position_ids = None
 
             if self._fused_lm_head:
                 # output_processor returns decoder hidden states (not logits) and
@@ -748,18 +803,20 @@ class MegatronModelWrapper:
                 outputs = model(
                     new_sequences,
                     new_position_ids,
-                    new_attention_mask,
+                    to_te_attention_mask(new_attention_mask),
                     packed_seq_params=packed_seq_params,
                     output_processor=_fused_lm_head_output_processor,
                     output_processor_context=_op_ctx,
+                    **vlm_inputs,
                 )
                 batch["lm_head_weight"] = _op_ctx.get("lm_head_weight")
             else:
                 outputs = model(
                     new_sequences,
                     new_position_ids,
-                    new_attention_mask,
+                    to_te_attention_mask(new_attention_mask),
                     packed_seq_params=packed_seq_params,
+                    **vlm_inputs,
                 )
 
             if not self.remove_microbatch_padding:
