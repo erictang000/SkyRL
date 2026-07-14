@@ -47,18 +47,11 @@ class Tracking:
         if backend == "wandb":
             import wandb
 
-            wandb.init(
-                project=project_name,
-                name=experiment_name,
-                config=get_config_as_dict(config),
-                tags=tags,
-            )
-            self.logger["wandb"] = wandb
-
-        if backend == "mlflow":
-            self.logger["mlflow"] = _MlflowLoggingAdapter(project_name, experiment_name, config)
-
-        if backend == "swanlab":
+            wandb.init(project=project_name, name=experiment_name, config=get_config_as_dict(config), tags=tags)
+            self.logger: Any = wandb
+        elif backend == "mlflow":
+            self.logger = _MlflowLoggingAdapter(project_name, experiment_name, config)
+        elif backend == "swanlab":
             import os
 
             import swanlab

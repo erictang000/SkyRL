@@ -48,6 +48,7 @@ uv run --isolated --extra fsdp -m examples.train.fully_async.main_fully_async \
   trainer.policy.model.path="Qwen/Qwen2.5-1.5B-Instruct" \
   trainer.placement.colocate_all=false \
   trainer.strategy=fsdp \
+  trainer.num_logger_eval_samples=5 \
   trainer.placement.policy_num_gpus_per_node=$NUM_POLICY_GPUS \
   trainer.placement.critic_num_gpus_per_node=$NUM_POLICY_GPUS \
   trainer.placement.ref_num_gpus_per_node=$NUM_POLICY_GPUS \
