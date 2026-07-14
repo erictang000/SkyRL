@@ -925,7 +925,22 @@ class TrainerConfig(BaseConfig):
     """Optional list of tags to apply to the W&B run. Has no effect on other backends."""
     dump_data_batch: bool = False
     dump_eval_results: bool = True
-    log_example_interval: int = 1
+    print_example_interval: int = 1
+    """Pretty-print an example prompt/response/reward to stdout every N
+    training steps; ``0``/``-1`` disables. Renamed from ``log_example_interval``."""
+    num_logger_eval_samples: int = -1
+    """Number of evaluation trajectory (prompt, response, score) tuples to upload to a wandb
+    table on each eval. ``-1`` (default) or ``0`` disables. When positive,
+    up to this many samples are taken from the start of each eval pass and
+    logged via :class:`TrajectoryLogger`. Column count is fixed
+    by the first call, so keep the eval set size and this value stable."""
+    num_logger_train_samples: int = -1
+    """Number of training trajectory (prompt, response, score) tuples to upload to a wandb
+    table on each training step. ``-1`` (default) or ``0`` disables. When positive,
+    up to this many samples are taken from the start of each training step and
+    logged via :class:`TrajectoryLogger`. Column count is fixed
+    by the first call, so keep the training set size and this value stable."""
+    log_example_interval: int = -1
     """Log an example prompt every N training steps, ``0``/``-1`` to disable"""
     logprobs_chunk_size: Optional[int] = 1024
     """Chunk size along the sequence dimension when computing log-probs from logits.
@@ -945,6 +960,12 @@ class TrainerConfig(BaseConfig):
         # ref model defaults to the policy model
         if self.ref.model.path is None:
             self.ref.model.path = self.policy.model.path
+
+        if self.log_example_interval > 0:
+            print(
+                f"log_example_interval has been renamed, use print_example_interval instead. Setting print_example_interval to {self.log_example_interval}"
+            )
+            self.print_example_interval = self.log_example_interval
 
         if self.policy.model.fake_int4_qat.enabled:
             assert (
