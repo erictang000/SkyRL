@@ -594,7 +594,8 @@ def repo_r_rescale_advantages(
     log_probs: torch.Tensor,
     zeta: float,
 ) -> torch.Tensor:
-    """Entropy-aware REPO-R advantage rescaling (REPO paper, Appendix D.2).
+    """Entropy-aware REPO-R advantage rescaling (REPO paper, Appendix D.2;
+    https://arxiv.org/pdf/2603.11682).
 
     Uses the latest policy's log-probabilities with a stop-grad as a practical stand-in
     for the centered log-prob ``L(s, a)``. Positive advantages are scaled by
@@ -602,7 +603,9 @@ def repo_r_rescale_advantages(
     preserve its original sign. For ``zeta > 0`` this boosts rare correct actions and
     attenuates common ones, and softens penalties on rare incorrect actions.
     """
-    logp = log_probs.detach()
+    # Stop-grad, clamp -inf (masked/padded or extremely rare tokens) to a finite floor, and
+    # match `advantages`' dtype so the `torch.where` below never hits a dtype mismatch.
+    logp = log_probs.detach().clamp(min=-20.0).to(advantages.dtype)
     pos = (advantages * (1.0 - zeta * logp)).clamp_min(0.0)
     neg = (advantages * (1.0 + zeta * logp)).clamp_max(0.0)
     return torch.where(advantages > 0, pos, torch.where(advantages < 0, neg, advantages))
@@ -615,7 +618,8 @@ def repo_r_update_zeta(
     zeta_min: float,
     zeta_max: float,
 ) -> float:
-    """Adaptive REPO-R controller (REPO paper, Appendix D.2), run once per iteration.
+    """Adaptive REPO-R controller (REPO paper, Appendix D.2;
+    https://arxiv.org/pdf/2603.11682), run once per iteration.
 
     Halves/doubles ``|zeta|`` (flipping its sign at the ``zeta_min`` boundary) to drive the
     measured policy entropy toward ``target_entropy``.
@@ -629,7 +633,8 @@ def repo_r_update_zeta(
             zeta = max(-zeta_max, zeta * 2)
     elif current_entropy < target_entropy:
         if zeta >= 0:
-            zeta = min(zeta_max, zeta * 2)
+            # Doubling 0.0 stays 0.0, so bootstrap from zeta_min when growing from zero.
+            zeta = min(zeta_max, zeta * 2) if zeta > 0.0 else zeta_min
         else:
             zeta /= 2
             if zeta > -zeta_min:
@@ -653,11 +658,11 @@ def repo_r_policy_loss(
     channel (see ``RayPPOTrainer._execute_training_step``).
     """
     rescaled = repo_r_rescale_advantages(advantages, log_probs, config.repo.zeta)
-    # After rescaling, REPO-R uses the standard clipped PPO objective.
+    # After rescaling, REPO-R uses the standard clipped PPO objective. The current zeta is
+    # reported once by the trainer as ``policy/repo_r_zeta`` (see ``train_critic_and_policy``),
+    # so it is intentionally not duplicated in ``loss_metrics`` here.
     base_config = replace(config, policy_loss_type="regular")
-    loss, loss_metrics = ppo_policy_loss(log_probs, old_log_probs, rescaled, base_config, loss_mask, rollout_logprobs)
-    loss_metrics["repo_r_zeta"] = float(config.repo.zeta)
-    return loss, loss_metrics
+    return ppo_policy_loss(log_probs, old_log_probs, rescaled, base_config, loss_mask, rollout_logprobs)
 
 
 @register_policy_loss(PolicyLossType.SAPO)

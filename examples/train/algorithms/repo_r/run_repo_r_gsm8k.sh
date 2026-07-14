@@ -1,6 +1,7 @@
 # Colocated REPO-R training+generation for Qwen2.5-1.5B-Instruct on GSM8K.
 #
-# REPO-R (REPO paper, ICLR 2026, Appendix D.2) is entropy-aware advantage rescaling:
+# REPO-R (REPO paper, ICLR 2026, Appendix D.2; https://arxiv.org/pdf/2603.11682)
+# is entropy-aware advantage rescaling:
 #   A > 0:  A * (1 - zeta * logp)   (sign-clamped to >= 0)
 #   A < 0:  A * (1 + zeta * logp)   (sign-clamped to <= 0)
 # where `logp` is the latest policy's (stop-grad) log-prob of the taken token.
@@ -15,9 +16,10 @@
 set -x
 
 # REPO-R specific parameters
-ZETA=0.05            # initial rescaling coefficient
+# The REPO paper clips |zeta| to [1e-4, 0.05] for REPO-R.
+ZETA=0.001           # initial rescaling coefficient
 ZETA_MIN=1e-4
-ZETA_MAX=1.0
+ZETA_MAX=0.05
 TARGET_ENTROPY=0.3   # set to "null" to disable the adaptive controller (fixed zeta)
 
 bash examples/train/gsm8k/run_gsm8k.sh \
@@ -27,4 +29,5 @@ bash examples/train/gsm8k/run_gsm8k.sh \
   trainer.algorithm.repo.zeta_max=$ZETA_MAX \
   trainer.algorithm.repo.target_entropy=$TARGET_ENTROPY \
   trainer.run_name="repo_r_gsm8k" \
+  trainer.ckpt_interval=-1 \
   "$@"

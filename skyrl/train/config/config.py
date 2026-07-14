@@ -529,21 +529,31 @@ class DPPOConfig(BaseConfig):
 # REPO-R parameters (only used when policy_loss_type="repo_r").
 # Entropy-aware advantage rescaling: A_repo-r = A * (1 - zeta * logp) for A > 0
 # and A * (1 + zeta * logp) for A < 0, followed by a sign-preserving clamp.
-# See the REPO paper (ICLR 2026), Appendix D.2.
+# See the REPO paper (ICLR 2026), Appendix D.2: https://arxiv.org/pdf/2603.11682
 @dataclass
 class REPOConfig(BaseConfig):
-    zeta: float = 0.0
+    zeta: float = 1e-3
     """Initial/current REPO-R rescaling coefficient. Positive boosts rare correct actions and
     attenuates common ones; negative reverses the effect. When the adaptive controller is enabled
     (``target_entropy`` set), this is only the starting value and is updated each iteration."""
     zeta_min: float = 1e-4
-    """Minimum magnitude of ``|zeta|`` used by the adaptive controller before flipping its sign."""
-    zeta_max: float = 1.0
-    """Maximum magnitude of ``|zeta|`` the adaptive controller will grow to."""
+    """Minimum magnitude of ``|zeta|`` used by the adaptive controller before flipping its sign.
+    The REPO paper uses ``1e-4`` for REPO-R (and ``1e-3`` for REPO-D)."""
+    zeta_max: float = 0.05
+    """Maximum magnitude of ``|zeta|`` the adaptive controller will grow to.
+    The REPO paper clips ``|zeta|`` to ``[1e-4, 0.05]`` for REPO-R (and ``[1e-3, 10]`` for REPO-D)."""
     target_entropy: Optional[float] = None
     """If set, enables the adaptive controller: once per iteration ``zeta`` is halved/doubled
     (and sign-flipped at the bounds) to drive ``policy_entropy`` toward this target. ``None`` keeps
     ``zeta`` fixed at its configured value."""
+
+    def __post_init__(self):
+        if self.zeta_min <= 0:
+            raise ValueError(f"repo.zeta_min must be positive, got {self.zeta_min}")
+        if self.zeta_max < self.zeta_min:
+            raise ValueError(
+                f"repo.zeta_max ({self.zeta_max}) must be greater than or equal to " f"repo.zeta_min ({self.zeta_min})"
+            )
 
 
 # see https://docs.skyrl.ai/docs/algorithms/off_policy_correction for more details

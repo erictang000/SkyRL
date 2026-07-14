@@ -3,7 +3,7 @@
 REPO-R rescales per-token advantages using the latest policy's log-probabilities, boosting rare
 correct actions and attenuating common ones (and softening penalties on rare incorrect actions).
 It is derived from the general REPO advantage by setting the per-token penalty coefficient to
-`beta = zeta * |A(s, a)|`. See the REPO paper (ICLR 2026), Appendix D.2.
+`beta = zeta * |A(s, a)|`. See the [REPO paper (ICLR 2026), Appendix D.2](https://arxiv.org/pdf/2603.11682).
 
 ## Formula
 
@@ -36,8 +36,10 @@ measured `policy/policy_entropy` toward the target:
 ```bash
 trainer.algorithm.repo.target_entropy=0.3
 trainer.algorithm.repo.zeta_min=1e-4
-trainer.algorithm.repo.zeta_max=1.0
+trainer.algorithm.repo.zeta_max=0.05
 ```
+
+The REPO paper clips `|zeta|` to `[1e-4, 0.05]` for REPO-R (these are the defaults).
 
 Leave `target_entropy` unset (`null`) to keep `zeta` fixed. The current coefficient is logged as
 `policy/repo_r_zeta` each step.
