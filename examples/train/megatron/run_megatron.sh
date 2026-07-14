@@ -13,8 +13,8 @@ MODEL_NAME="Qwen/Qwen3-0.6B"
 
 INFERENCE_BACKEND="vllm" # currently only vllm is supported for megatron
 
-MEGATRON_TP=1
-MEGATRON_PP=1
+MEGATRON_TP=2
+MEGATRON_PP=2
 MEGATRON_CP=1
 
 # torch.profiler for policy training steps.
@@ -28,8 +28,6 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.algorithm.advantage_estimator="grpo" \
   trainer.policy.model.path=$MODEL_NAME \
   trainer.placement.colocate_all=true \
-  trainer.num_logger_eval_samples=5 \
-  trainer.num_logger_train_samples=5 \
   trainer.strategy=megatron \
   trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
@@ -48,7 +46,7 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   trainer.epochs=20 \
   trainer.eval_batch_size=1024 \
   trainer.eval_before_train=false \
-  trainer.eval_interval=1 \
+  trainer.eval_interval=5 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=128 \
   trainer.policy_mini_batch_size=64 \

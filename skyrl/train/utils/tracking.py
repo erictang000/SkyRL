@@ -163,7 +163,10 @@ class Tracking:
         if key not in self._sample_tables:
             self._sample_tables[key] = wandb.Table(columns=columns)
         # Workaround for https://github.com/wandb/wandb/issues/2981#issuecomment-1997445737
-        new_table = wandb.Table(columns=columns, data=self._sample_tables[key].data)
+        # Shallow-copy the previous table's rows: wandb.Table holds `data` by reference, so the
+        # subsequent add_data() calls would otherwise mutate the row list of the already-logged
+        # table (a data race with wandb's async upload of the prior step).
+        new_table = wandb.Table(columns=columns, data=list(self._sample_tables[key].data))
         for row in samples:
             new_table.add_data(*row)
         self.logger.log({key: new_table}, step=step)

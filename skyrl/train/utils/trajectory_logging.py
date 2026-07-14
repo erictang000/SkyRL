@@ -341,7 +341,10 @@ class TrajectoryLogger:
         turns = 0
         prev = 0
         for m in loss_mask:
-            if m == 1 and prev == 0:
+            # Detect any transition into an assistant token (mask == 1). Use `prev != 1` rather than
+            # `prev == 0` so non-assistant markers other than 0 (e.g. -100 for ignored/padding
+            # tokens) still count as a boundary between turns.
+            if m == 1 and prev != 1:
                 turns += 1
             prev = m
         return turns
