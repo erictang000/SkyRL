@@ -925,8 +925,6 @@ class TrainerConfig(BaseConfig):
     """Optional list of tags to apply to the W&B run. Has no effect on other backends."""
     dump_data_batch: bool = False
     dump_eval_results: bool = True
-    rope_scaling: Optional[Dict[str, Any]] = None
-    rope_theta: Optional[float] = None
     print_example_interval: int = 1
     """Pretty-print an example prompt/response/reward to stdout every N
     training steps; ``0``/``-1`` disables. Renamed from ``log_example_interval``."""
