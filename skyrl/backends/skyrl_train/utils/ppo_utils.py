@@ -17,6 +17,7 @@
 # limitations under the License.
 
 from collections import defaultdict
+from dataclasses import replace
 from enum import StrEnum
 from functools import wraps
 from typing import Callable, List, Optional, Tuple, Union
@@ -454,6 +455,7 @@ class PolicyLossType(StrEnum):
     CROSS_ENTROPY = "cross_entropy"
     IMPORTANCE_SAMPLING = "importance_sampling"
     DPPO = "dppo"
+    REPO_R = "repo_r"
 
 
 # Losses that optimize against rollout logprobs, so the "old" logprobs forward pass can be
@@ -471,6 +473,7 @@ LOSSES_WITH_OLD_LOGPROBS = frozenset(
         PolicyLossType.SAPO,
         PolicyLossType.CROSS_ENTROPY,
         PolicyLossType.IMPORTANCE_SAMPLING,
+        PolicyLossType.REPO_R,
     }
 )
 
@@ -506,6 +509,7 @@ class PolicyLossRegistry(BaseFunctionRegistry):
             "importance_sampling": [PolicyLossType.IMPORTANCE_SAMPLING, importance_sampling_loss],
             "dppo": [PolicyLossType.DPPO, dppo_policy_loss],
             "rollout_is": [PolicyLossType.ROLLOUT_IS, rollout_is_policy_loss],
+            "repo_r": [PolicyLossType.REPO_R, repo_r_policy_loss],
         }
 
         for pl_name, (pl_type, pl_func) in pl_types.items():
@@ -582,6 +586,77 @@ def ppo_policy_loss(
     loss_metrics.update(off_policy_metrics)
 
     loss = reduce_loss(loss, loss_mask)
+    return loss, loss_metrics
+
+
+def repo_r_rescale_advantages(
+    advantages: torch.Tensor,
+    log_probs: torch.Tensor,
+    zeta: float,
+) -> torch.Tensor:
+    """Entropy-aware REPO-R advantage rescaling (REPO paper, Appendix D.2).
+
+    Uses the latest policy's log-probabilities with a stop-grad as a practical stand-in
+    for the centered log-prob ``L(s, a)``. Positive advantages are scaled by
+    ``(1 - zeta * logp)`` and negative advantages by ``(1 + zeta * logp)``, each clamped to
+    preserve its original sign. For ``zeta > 0`` this boosts rare correct actions and
+    attenuates common ones, and softens penalties on rare incorrect actions.
+    """
+    logp = log_probs.detach()
+    pos = (advantages * (1.0 - zeta * logp)).clamp_min(0.0)
+    neg = (advantages * (1.0 + zeta * logp)).clamp_max(0.0)
+    return torch.where(advantages > 0, pos, torch.where(advantages < 0, neg, advantages))
+
+
+def repo_r_update_zeta(
+    zeta: float,
+    current_entropy: float,
+    target_entropy: float,
+    zeta_min: float,
+    zeta_max: float,
+) -> float:
+    """Adaptive REPO-R controller (REPO paper, Appendix D.2), run once per iteration.
+
+    Halves/doubles ``|zeta|`` (flipping its sign at the ``zeta_min`` boundary) to drive the
+    measured policy entropy toward ``target_entropy``.
+    """
+    if current_entropy > target_entropy:
+        if zeta >= 0:
+            zeta /= 2.0
+            if zeta < zeta_min:
+                zeta = -zeta_min  # flip the sign if needed
+        else:
+            zeta = max(-zeta_max, zeta * 2)
+    elif current_entropy < target_entropy:
+        if zeta >= 0:
+            zeta = min(zeta_max, zeta * 2)
+        else:
+            zeta /= 2
+            if zeta > -zeta_min:
+                zeta = zeta_min  # flip the sign
+    return zeta
+
+
+@register_policy_loss(PolicyLossType.REPO_R)
+def repo_r_policy_loss(
+    log_probs: torch.Tensor,
+    old_log_probs: torch.Tensor,
+    advantages: torch.Tensor,
+    config: AlgorithmConfig,
+    loss_mask: Optional[torch.Tensor] = None,
+    rollout_logprobs: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, dict[str, float]]:
+    """REPO-R: entropy-aware advantage rescaling followed by the standard PPO surrogate.
+
+    The rescaling coefficient ``config.repo.zeta`` is updated once per iteration by the
+    adaptive controller in the trainer and delivered here via the loss-config override
+    channel (see ``RayPPOTrainer._execute_training_step``).
+    """
+    rescaled = repo_r_rescale_advantages(advantages, log_probs, config.repo.zeta)
+    # After rescaling, REPO-R uses the standard clipped PPO objective.
+    base_config = replace(config, policy_loss_type="regular")
+    loss, loss_metrics = ppo_policy_loss(log_probs, old_log_probs, rescaled, base_config, loss_mask, rollout_logprobs)
+    loss_metrics["repo_r_zeta"] = float(config.repo.zeta)
     return loss, loss_metrics
 
 

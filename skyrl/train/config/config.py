@@ -526,6 +526,26 @@ class DPPOConfig(BaseConfig):
             raise ValueError("Invalid DPPO type")
 
 
+# REPO-R parameters (only used when policy_loss_type="repo_r").
+# Entropy-aware advantage rescaling: A_repo-r = A * (1 - zeta * logp) for A > 0
+# and A * (1 + zeta * logp) for A < 0, followed by a sign-preserving clamp.
+# See the REPO paper (ICLR 2026), Appendix D.2.
+@dataclass
+class REPOConfig(BaseConfig):
+    zeta: float = 0.0
+    """Initial/current REPO-R rescaling coefficient. Positive boosts rare correct actions and
+    attenuates common ones; negative reverses the effect. When the adaptive controller is enabled
+    (``target_entropy`` set), this is only the starting value and is updated each iteration."""
+    zeta_min: float = 1e-4
+    """Minimum magnitude of ``|zeta|`` used by the adaptive controller before flipping its sign."""
+    zeta_max: float = 1.0
+    """Maximum magnitude of ``|zeta|`` the adaptive controller will grow to."""
+    target_entropy: Optional[float] = None
+    """If set, enables the adaptive controller: once per iteration ``zeta`` is halved/doubled
+    (and sign-flipped at the bounds) to drive ``policy_entropy`` toward this target. ``None`` keeps
+    ``zeta`` fixed at its configured value."""
+
+
 # see https://docs.skyrl.ai/docs/algorithms/off_policy_correction for more details
 @dataclass
 class OffPolicyCorrectionConfig(BaseConfig):
@@ -581,7 +601,7 @@ class AlgorithmConfig(BaseConfig):
     advantage_batch_normalize: bool = False
     value_head_prefix: str = "value_head"
     policy_loss_type: str = "regular"
-    """``"regular"``, ``"dual_clip"``, ``"gspo"``, ``"clip_cov"``, ``"kl_cov"``, ``cispo``, ``sapo``, ``"rollout_is"``, ``"dppo"``, or custom via ``PolicyLossRegistry``."""
+    """``"regular"``, ``"dual_clip"``, ``"gspo"``, ``"clip_cov"``, ``"kl_cov"``, ``cispo``, ``sapo``, ``"rollout_is"``, ``"dppo"``, ``"repo_r"``, or custom via ``PolicyLossRegistry``."""
     loss_reduction: str = "token_mean"
     """``"token_mean"``, ``"sequence_mean"``, ``"prompt_mean"``, or ``"seq_mean_token_sum_norm"``. ``max_seq_len`` must be set explicitly for ``"seq_mean_token_sum_norm"``."""
     grpo_norm_by_std: bool = True
@@ -614,6 +634,8 @@ class AlgorithmConfig(BaseConfig):
     """Only used when ``policy_loss_type="cispo"``."""
     dppo: DPPOConfig = field(default_factory=DPPOConfig)
     """Only used when ``policy_loss_type="dppo"``."""
+    repo: REPOConfig = field(default_factory=REPOConfig)
+    """Only used when ``policy_loss_type="repo_r"``."""
     max_seq_len: Optional[int] = None
     """Used for ``seq_mean_token_sum_norm`` loss reduction.
     Must be set explicitly for that reduction mode; otherwise can remain ``None``."""
