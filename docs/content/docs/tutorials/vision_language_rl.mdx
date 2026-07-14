@@ -36,14 +36,14 @@ Two flags are what actually switch a training run into VLM mode:
 
 ```bash
 generator.vision_language_generator=true \
-trainer.use_sample_packing=false \
+trainer.remove_microbatch_padding=false \
 ```
 
 - **`generator.vision_language_generator=true`** — Switches from the default gym generator to a VLM generator, ensuring that visual content is correctly routed to the inference server.
-- **`trainer.use_sample_packing=false`** — sample packing is currently unsupported for VLM training (see callout below).
+- **`trainer.remove_microbatch_padding=false`** — sample packing is currently unsupported for VLM training (see callout below).
 
 <Callout type="info">
-**Sample packing is unsupported for VL models.** Each VLM family (Qwen-VL, InternVL, etc.) processes images and positional embeddings differently, and packing across heterogeneous image counts per sample would need per-model handling. Support is expected in a future release; until then, set `trainer.use_sample_packing=false` for any VLM run.
+**Sample packing is unsupported for VL models.** Each VLM family (Qwen-VL, InternVL, etc.) processes images and positional embeddings differently, and packing across heterogeneous image counts per sample would need per-model handling. Support is expected in a future release; until then, set `trainer.remove_microbatch_padding=false` for any VLM run.
 </Callout>
 
 ## Dataset record shape
@@ -85,7 +85,7 @@ The generator handles both patterns transparently once `generator.vision_languag
 Multimodal support in SkyRL is still early. The current VLM path runs on the FSDP backend and supports multi-image, multi-turn rollouts, but several features are not yet ready:
 
 - **Sample packing** — each VLM family handles images and positional embeddings differently, so packing needs per-model support or a different abstraction.
-- **Megatron backend** — the VLM path has not been wired through Megatron yet.
+- **Megatron backend** — the VLM path has not been wired through Megatron yet, but SFT is supported (see [`run_sft_megatron_vlm.sh`](https://github.com/NovaSky-AI/SkyRL/blob/main/skyrl-train/examples/train/sft/run_sft_megatron_vlm.sh))
 - **Context parallelism (CP)** — many VLM tasks are long context, long horizon tasks which get worse as more images are included.
 - **Step-wise training** — step-wise training is currently undergoing rapid development in SkyRL, and will eventually support multimodal models.
 

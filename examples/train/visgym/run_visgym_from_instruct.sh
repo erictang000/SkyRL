@@ -45,7 +45,7 @@ if [ ! -f "$EVAL_DATA_DIR/train.parquet" ]; then
     --output_dir "$EVAL_DATA_DIR"
 fi
 
-_SKYRL_USE_NEW_INFERENCE=1 uv run --isolated --extra fsdp \
+uv run --isolated --extra fsdp \
   python examples/train/visgym/entrypoint.py \
   --env_variant instruct \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -60,7 +60,6 @@ _SKYRL_USE_NEW_INFERENCE=1 uv run --isolated --extra fsdp \
   generator.inference_engine.num_engines=$NUM_GPUS \
   generator.inference_engine.tensor_parallel_size=1 \
   generator.inference_engine.gpu_memory_utilization=0.8 \
-  generator.inference_engine.async_engine=true \
   generator.inference_engine.engine_init_kwargs.max_model_len=60000 \
   trainer.epochs=20 \
   trainer.train_batch_size=32 \
@@ -88,7 +87,7 @@ _SKYRL_USE_NEW_INFERENCE=1 uv run --isolated --extra fsdp \
   trainer.export_path="$EXPORT_PATH" \
   trainer.dump_eval_results=true \
   trainer.ckpt_path="$HOME/ckpts/visgym_maze_2d_easy_from_instruct" \
-  trainer.use_sample_packing=false \
+  trainer.remove_microbatch_padding=false \
   trainer.eval_interval=10 \
   trainer.ckpt_interval=10 \
   trainer.algorithm.loss_reduction=token_mean_legacy \

@@ -9,23 +9,26 @@ The trainer interacts with the worker dispatch if all models are always on GPU.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import ray
+from loguru import logger
 from ray import ObjectRef
 
 from skyrl.backends.skyrl_train.distributed.dispatch import (
     MeshDispatch,
     WorkerOutput,
 )
-from skyrl.backends.skyrl_train.inference_engines.inference_engine_client import (
-    InferenceEngineClient,
-)
 from skyrl.backends.skyrl_train.training_batch import (
     TrainingInputBatch,
 )
 from skyrl.backends.skyrl_train.workers.worker import PPORayActorGroup
 from skyrl.train.config import SkyRLTrainConfig
+
+if TYPE_CHECKING:
+    from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
+        RemoteInferenceClient,
+    )
 
 
 @dataclass
@@ -49,7 +52,7 @@ class WorkerDispatch:
         policy_actor_group: PPORayActorGroup,
         critic_actor_group: Optional[PPORayActorGroup] = None,
         ref_actor_group: Optional[PPORayActorGroup] = None,
-        inference_engine_client: Optional[InferenceEngineClient] = None,
+        inference_engine_client: "Optional[RemoteInferenceClient]" = None,
     ):
         self.cfg = cfg
         self.colocate_all = cfg.trainer.placement.colocate_all
@@ -237,6 +240,51 @@ class WorkerDispatch:
 
         return WorkerOutput.cat(self._actor_groups[model].actor_infos, results)
 
+    def forward_from_staged(
+        self,
+        model: str,
+        chunk_refs: List[ObjectRef],
+        loss_fn: Optional[str] = None,
+        loss_fn_config: Optional[Dict[str, Any]] = None,
+        model_id: Optional[str] = None,
+    ) -> WorkerOutput:
+        """Run a forward pass using pre-staged per-DP chunks.
+
+        Consumes per-DP chunks already placed in the object store by :meth:`stage_data`, so
+        serialization of the per-mini-batch chunks is amortized off the dispatch critical path
+        across mini-batches (see :meth:`forward_backward_from_staged`). The chunks are produced
+        exactly as in :meth:`stage_data`, so the per-rank partition (and thus the microbatch packing)
+        matches what ``forward_backward`` sees for the same mini-batch.
+
+        Args:
+            model: Model identifier ("policy", "critic", or "ref")
+            chunk_refs: Pre-staged ObjectRefs, one per DP rank (from ``stage_data``)
+            loss_fn: Optional resolved loss function name. When set, the worker computes
+                     loss + per-sample outputs without backward (no_grad).
+            loss_fn_config: Optional config overrides for the loss function.
+            model_id: Optional Tinker model_id; selects the LoRA adapter before the forward.
+
+        Returns:
+            :class:`WorkerOutput` aggregated across DP ranks.
+        """
+        self._ensure_on_gpu(model, need_optimizer=False, need_model=True)
+        self.ensure_active_adapter(model, model_id)
+
+        kwargs = {}
+        if loss_fn is not None:
+            kwargs["loss_fn"] = loss_fn
+        if loss_fn_config is not None:
+            kwargs["loss_fn_config"] = loss_fn_config
+
+        refs = MeshDispatch.dispatch_from_staged(
+            self._actor_groups[model].actor_infos,
+            "forward",
+            chunk_refs=chunk_refs,
+            **kwargs,
+        )
+        results = ray.get(refs)
+        return WorkerOutput.cat(self._actor_groups[model].actor_infos, results)
+
     def stage_data(
         self,
         model: str,
@@ -372,6 +420,48 @@ class WorkerDispatch:
         self._ensure_on_gpu(model, need_optimizer=False, need_model=False)
         ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "set_algorithm_config", **kwargs))
 
+    # ------------------------------------------------------------------
+    # torch.profiler control. Avoid _ensure_on_gpu so profiling does not perturb
+    # the colocation offload state.
+    # ------------------------------------------------------------------
+
+    def start_profile(self, model: str) -> None:
+        """Start profiling on ``model`` workers."""
+        if model not in self._actor_groups:
+            return
+        try:
+            ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "start_profile"))
+        except Exception as e:
+            logger.warning(f"[profiler] start_profile dispatch for {model} failed: {e}")
+
+    def profile_step(self, model: str) -> None:
+        """Advance profiling by one global step."""
+        if model not in self._actor_groups:
+            return
+        try:
+            ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "profile_step"))
+        except Exception as e:
+            logger.warning(f"[profiler] profile_step dispatch for {model} failed: {e}")
+
+    def stop_profile(self, model: str) -> None:
+        """Stop profiling on ``model`` workers."""
+        if model not in self._actor_groups:
+            return
+        try:
+            ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "stop_profile"))
+        except Exception as e:
+            logger.warning(f"[profiler] stop_profile dispatch for {model} failed: {e}")
+
+    def dump_profiler_summary(self, model: str) -> Optional[List]:
+        """Collect per-rank last-window kernel summaries for ``model``."""
+        if model not in self._actor_groups:
+            return None
+        try:
+            return ray.get(self._actor_groups[model].async_run_ray_method("pass_through", "dump_profiler_summary"))
+        except Exception as e:
+            logger.warning(f"[profiler] dump_profiler_summary dispatch for {model} failed: {e}")
+            return None
+
     def _save_memory_snapshot(self, model: str, tag: str) -> None:
         """Save memory snapshot on workers."""
         ray.get(
@@ -439,7 +529,7 @@ class WorkerDispatch:
         self._gpu_state[model].model_on_gpu = True
         self._gpu_state[model].optimizer_on_gpu = model != "ref"  # ref has no optimizer
 
-    def set_inference_engine_client(self, inference_engine_client: InferenceEngineClient) -> None:
+    def set_inference_engine_client(self, inference_engine_client: "RemoteInferenceClient") -> None:
         """Set the inference engine client for weight sync.
 
         This can be called after construction if the client isn't available at init time.
@@ -556,3 +646,7 @@ class WorkerDispatch:
                     self._finish_weight_sync()
                 finally:
                     await self._inference_engine_client.resume_generation()
+
+        # Advance the policy version so prefix-cache salting isolates blocks from the previous weights
+        # (see `GeneratorConfig.use_cache_salt`).
+        self._inference_engine_client.increment_weight_version()

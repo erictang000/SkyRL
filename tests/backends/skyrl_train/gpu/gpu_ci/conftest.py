@@ -6,7 +6,7 @@ import pytest
 import ray
 from loguru import logger
 
-from skyrl.env_vars import _SKYRL_USE_NEW_INFERENCE, SKYRL_PYTHONPATH_EXPORT
+from skyrl.env_vars import SKYRL_PYTHONPATH_EXPORT
 from skyrl.train.utils.utils import peer_access_supported
 
 
@@ -21,7 +21,6 @@ def _build_ray_env_vars():
         "VLLM_USE_V1": "1",
         "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
         "VLLM_ALLOW_INSECURE_SERIALIZATION": "1",
-        "_SKYRL_USE_NEW_INFERENCE": "1" if _SKYRL_USE_NEW_INFERENCE else "0",
     }
 
     if not peer_access_supported(max_num_gpus_per_node=2):
@@ -36,6 +35,10 @@ def _build_ray_env_vars():
     # needed for megatron tests
     env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
     env_vars["NVTE_FUSED_ATTN"] = "0"
+
+    # Mirrors prepare_runtime_environment for the nccl weight-sync backend.
+    # Without this, NCCL 2.28's cuMem-based commAlloc SEGV's on this driver.
+    env_vars["NCCL_CUMEM_ENABLE"] = "0"
 
     if SKYRL_PYTHONPATH_EXPORT:
         pythonpath = os.environ.get("PYTHONPATH")

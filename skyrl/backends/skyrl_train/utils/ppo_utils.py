@@ -453,6 +453,26 @@ class PolicyLossType(StrEnum):
     SAPO = "sapo"
     CROSS_ENTROPY = "cross_entropy"
     IMPORTANCE_SAMPLING = "importance_sampling"
+    DPPO = "dppo"
+
+
+# Losses that optimize against rollout logprobs, so the "old" logprobs forward pass can be
+# skipped when nothing else needs them (see `RayPPOTrainer._skip_policy_forward`).
+LOSSES_WITHOUT_OLD_LOGPROBS = frozenset({PolicyLossType.ROLLOUT_IS, PolicyLossType.DPPO})
+
+LOSSES_WITH_OLD_LOGPROBS = frozenset(
+    {
+        PolicyLossType.REGULAR,
+        PolicyLossType.DUAL_CLIP,
+        PolicyLossType.GSPO,
+        PolicyLossType.CISPO,
+        PolicyLossType.CLIP_COV,
+        PolicyLossType.KL_COV,
+        PolicyLossType.SAPO,
+        PolicyLossType.CROSS_ENTROPY,
+        PolicyLossType.IMPORTANCE_SAMPLING,
+    }
+)
 
 
 class PolicyLossRegistry(BaseFunctionRegistry):
@@ -484,6 +504,7 @@ class PolicyLossRegistry(BaseFunctionRegistry):
             "sapo": [PolicyLossType.SAPO, sapo_policy_loss],
             "cross_entropy": [PolicyLossType.CROSS_ENTROPY, cross_entropy_loss],
             "importance_sampling": [PolicyLossType.IMPORTANCE_SAMPLING, importance_sampling_loss],
+            "dppo": [PolicyLossType.DPPO, dppo_policy_loss],
             "rollout_is": [PolicyLossType.ROLLOUT_IS, rollout_is_policy_loss],
         }
 
@@ -784,6 +805,78 @@ def rollout_is_policy_loss(
     return loss, loss_metrics
 
 
+@register_policy_loss(PolicyLossType.DPPO)
+def dppo_policy_loss(
+    log_probs: torch.Tensor,
+    old_log_probs: torch.Tensor,
+    advantages: torch.Tensor,
+    config: AlgorithmConfig,
+    loss_mask: Optional[torch.Tensor] = None,
+    rollout_logprobs: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, dict[str, float]]:
+    """
+    Divergence Proximal Policy Optimization (DPPO) policy loss.
+
+    Replaces PPO's ratio-based clipping with a divergence-based binary mask.
+    Supports Binary-TV and Binary-KL variants.
+    The paper also proposes Top-K TV/KL variants (Equations 15-16), but in
+    Section G.2 the authors find Top-K masking provides no significant benefit
+    over the simpler binary approximation, so we only implement binary here.
+
+    See: https://arxiv.org/abs/2602.04879
+    Reference impl: https://github.com/sail-sg/Stable-RL/blob/main/verl/trainer/ppo/core_algos.py#L1241
+    """
+    # Use rollout logprobs as behavior policy for both ratio and mask
+    # See Section 5.2 of paper
+    mu_log_probs = rollout_logprobs if rollout_logprobs is not None else old_log_probs
+    ratio = safe_exp_delta(log_probs - mu_log_probs, clip=20.0, out_dtype=log_probs.dtype)
+
+    dppo_type = config.dppo.dppo_type
+    delta_low = config.dppo.delta_low
+    delta_high = config.dppo.delta_high
+
+    # Compute DPPO mask
+    with torch.no_grad():
+        current_probs = torch.exp(log_probs)
+        mu_probs = torch.exp(mu_log_probs)
+        prob_diff = current_probs - mu_probs  # Use actual probabilities
+
+        if dppo_type == "binary_tv":
+            # Binary Total Variation (Equation 13)
+            mask = torch.ones_like(advantages)
+            mask[(advantages > 0) & (prob_diff > delta_high)] = 0.0
+            mask[(advantages < 0) & (-prob_diff > delta_low)] = 0.0
+
+        elif dppo_type == "binary_kl":
+            # Binary KL (Equation 14)
+            eps = 1e-8
+            binary_kl = mu_probs * (mu_log_probs - log_probs) + (1 - mu_probs) * torch.log(
+                (1 - mu_probs + eps) / (1 - current_probs + eps)
+            )
+
+            mask = torch.ones_like(advantages)
+            mask[(advantages > 0) & (prob_diff > 0) & (binary_kl > delta_high)] = 0.0
+            mask[(advantages < 0) & (prob_diff < 0) & (binary_kl > delta_low)] = 0.0
+
+        else:
+            raise ValueError(f"Unknown DPPO type: {dppo_type}. Must be 'binary_tv' or 'binary_kl'.")
+
+    # Surrogate loss with divergence-based mask
+    loss = -(ratio * advantages * mask)
+
+    clip_ratio = masked_mean((mask == 0).float(), loss_mask).mean().detach().item()
+    loss_metrics = {"clip_ratio": clip_ratio}
+
+    # Apply off-policy correction
+    loss, loss_mask, off_policy_metrics = apply_off_policy_correction(
+        loss, old_log_probs, rollout_logprobs, loss_mask, config.off_policy_correction
+    )
+    loss_metrics.update(off_policy_metrics)
+
+    loss = reduce_loss(loss, loss_mask)
+    return loss, loss_metrics
+
+
 @register_policy_loss(PolicyLossType.CLIP_COV)
 def compute_policy_loss_clip_cov(
     log_probs: torch.Tensor,
@@ -1004,6 +1097,7 @@ def apply_loss_reduction_to_advantages_minibatch(
     loss_reduction: str,
     micro_batch_size: int,
     max_seq_len: int,
+    prompt_boundaries: Optional[List[Tuple[int, int]]] = None,
 ) -> torch.Tensor:
     """Scale advantages so that summing produces the desired loss reduction.
 
@@ -1011,9 +1105,12 @@ def apply_loss_reduction_to_advantages_minibatch(
         advantages: Advantage tensor of shape (minibatch_size, seq_len).
             For step-wise training, minibatch_size can be variable.
         loss_mask: Mask of shape (minibatch_size, seq_len) indicating valid loss tokens.
-        loss_reduction: One of "token_mean", "token_mean_legacy", "sequence_mean", "seq_mean_token_sum_norm".
+        loss_reduction: One of "token_mean", "token_mean_legacy", "sequence_mean",
+            "seq_mean_token_sum_norm", "prompt_mean".
         micro_batch_size: Number of sequences per micro-batch
         max_seq_len: Maximum sequence length.
+        prompt_boundaries: Mini-batch-relative (start, end) slices grouping the sequences of
+            each prompt. Required for "prompt_mean"; ignored otherwise.
 
     Returns:
         Scaled advantages tensor.
@@ -1046,6 +1143,18 @@ def apply_loss_reduction_to_advantages_minibatch(
     # Option 3: Dr. GRPO style loss reduction to avoid length bias by normalizing by a constant
     elif loss_reduction == "seq_mean_token_sum_norm":
         normalized_advantages = advantages / (batch_size * max_seq_len)
+
+    # Option 4: Prompt level mean - token mean within each prompt, then average over all prompts.
+    # A "prompt" is a group of sequences sharing the same prompt (e.g. the n_samples_per_prompt
+    # GRPO responses). Scale token [i, t] in prompt p by 1 / (num_prompts * tokens_in_prompt_p)
+    # so that summing the per-token policy loss yields mean_p(token_mean within prompt p).
+    elif loss_reduction == "prompt_mean":
+        if prompt_boundaries is None:
+            raise ValueError("`prompt_mean` loss reduction requires `prompt_boundaries`")
+        num_prompts = len(prompt_boundaries)
+        for p_start, p_end in prompt_boundaries:
+            prompt_tokens = loss_mask[p_start:p_end].sum().clamp(min=1)
+            normalized_advantages[p_start:p_end] = advantages[p_start:p_end] / (num_prompts * prompt_tokens)
 
     else:
         raise ValueError(f"Invalid loss reduction type: {loss_reduction}")

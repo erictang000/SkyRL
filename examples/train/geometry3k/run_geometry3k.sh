@@ -19,7 +19,7 @@ fi
 : "${LOGGER:=console}"
 : "${EXPORT_PATH:="$HOME/exports/geometry3k_vlm"}"
 
-_SKYRL_USE_NEW_INFERENCE=1 uv run --isolated --extra fsdp --with pylatexenc \
+uv run --isolated --extra fsdp --with pylatexenc \
   python examples/train/geometry3k/geometry3k_entrypoint.py \
   data.train_data="['$DATA_DIR/train.parquet']" \
   data.val_data="['$DATA_DIR/test.parquet']" \
@@ -42,7 +42,7 @@ _SKYRL_USE_NEW_INFERENCE=1 uv run --isolated --extra fsdp --with pylatexenc \
   trainer.micro_forward_batch_size_per_gpu=4 \
   trainer.micro_train_batch_size_per_gpu=4 \
   trainer.ckpt_interval=5 \
-  trainer.use_sample_packing=false \
+  trainer.remove_microbatch_padding=false \
   trainer.max_prompt_length=1024 \
   generator.sampling_params.max_generate_length=2048 \
   generator.max_turns=3 \
@@ -51,7 +51,6 @@ _SKYRL_USE_NEW_INFERENCE=1 uv run --isolated --extra fsdp --with pylatexenc \
   generator.inference_engine.backend=vllm \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \
-  generator.inference_engine.async_engine=true \
   generator.batched=false \
   generator.vision_language_generator=true \
   environment.env_class=geometry3k \

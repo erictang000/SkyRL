@@ -57,7 +57,7 @@ Do:
 
 Don't:
 
-"Uses the start/update/finish lifecycle to enable chunked transfers. Per chunk, all tensors are packed into a single contiguous CUDA buffer (one dtype per chunk, guaranteed by the weight extractor) and one IPC handle is created for the packed buffer per rank. This mirrors the legacy path and avoids the one-handle-per-param ceiling of vLLM's default IPCWeightTransferEngine, which otherwise dominates latency for models with many small parameters."
+"Uses the start/update/finish lifecycle to enable chunked transfers. Per chunk, all tensors are packed into a single contiguous CUDA buffer (one dtype per chunk, guaranteed by the weight extractor) and one IPC handle is created for the packed buffer per rank. This avoids the one-handle-per-param ceiling of vLLM's default IPCWeightTransferEngine, which otherwise dominates latency for models with many small parameters."
 
 
 Do:
@@ -130,4 +130,27 @@ Don't:
   # Example (full epoch over the 5000 rows):
   #   bash examples/train/sft/run_sft_megatron_apigen_mt.sh num_epochs=1 num_steps=null
 
+```
+
+## Error messages
+
+The same holds true for error messages:
+
+Do:
+
+```python
+        if self._callback_handler.callbacks:
+            raise NotImplementedError(
+                "Callbacks are not yet supported by `FullyAsyncRayPPOTrainer`. "
+            )
+```
+
+Don't: 
+
+```python
+        if self._callback_handler.callbacks:
+            raise NotImplementedError(
+                "Callbacks are not yet supported by `FullyAsyncRayPPOTrainer`. "
+                "Track in a follow-up; the sync RayPPOTrainer and SFTTrainer do support them."
+            )
 ```

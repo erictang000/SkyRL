@@ -39,6 +39,7 @@ class Tracking:
         experiment_name,
         backend: str = "console",
         config: Optional[Union[SkyRLTrainConfig, DictConfig]] = None,
+        tags: Optional[List[str]] = None,
     ):
         assert backend in self.supported_backends, f"{backend} is not supported"
         self.backend = backend
@@ -46,11 +47,18 @@ class Tracking:
         if backend == "wandb":
             import wandb
 
-            wandb.init(project=project_name, name=experiment_name, config=get_config_as_dict(config))
-            self.logger: Any = wandb
-        elif backend == "mlflow":
-            self.logger = _MlflowLoggingAdapter(project_name, experiment_name, config)
-        elif backend == "swanlab":
+            wandb.init(
+                project=project_name,
+                name=experiment_name,
+                config=get_config_as_dict(config),
+                tags=tags,
+            )
+            self.logger["wandb"] = wandb
+
+        if backend == "mlflow":
+            self.logger["mlflow"] = _MlflowLoggingAdapter(project_name, experiment_name, config)
+
+        if backend == "swanlab":
             import os
 
             import swanlab

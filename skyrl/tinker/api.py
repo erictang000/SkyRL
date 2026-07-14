@@ -452,10 +452,11 @@ class ForwardBackwardInput(BaseModel):
         "ppo": {"clip_low_threshold", "clip_high_threshold", "value_clip"},
         "cispo": {"clip_low_threshold", "clip_high_threshold"},
         "ppo_critic": {"value_clip"},
+        "dppo": {"delta_low", "delta_high"},
     }
 
     data: list[Datum]
-    loss_fn: Literal["cross_entropy", "importance_sampling", "ppo", "cispo", "ppo_critic"]
+    loss_fn: Literal["cross_entropy", "importance_sampling", "ppo", "cispo", "ppo_critic", "dppo"]
     loss_fn_config: dict[str, float] | None = None
 
     @model_validator(mode="after")
@@ -681,6 +682,12 @@ class CreateSamplingSessionResponse(BaseModel):
     sampling_session_id: str
 
 
+class GetSamplerResponse(BaseModel):
+    sampler_id: str
+    base_model: str
+    model_path: str | None = None
+
+
 class SupportedModel(BaseModel):
     model_name: str
 
@@ -781,6 +788,28 @@ async def create_sampling_session(request: CreateSamplingSessionRequest, session
     session.add(sampling_db)
     await session.commit()
     return CreateSamplingSessionResponse(sampling_session_id=sampling_session_id)
+
+
+@app.get("/api/v1/samplers/{sampler_id}", response_model=GetSamplerResponse)
+async def get_sampler(sampler_id: str, session: AsyncSession = Depends(get_session)):
+    """Get sampler (sampling session) information."""
+    sampling_db = await session.get(SamplingSessionDB, sampler_id)
+    if sampling_db is None:
+        raise HTTPException(status_code=404, detail="Sampler not found")
+    if sampling_db.base_model is not None:
+        base_model = sampling_db.base_model
+    else:
+        # Sampling session was created from a model_path — resolve the
+        # underlying base model from the source training run so the SDK can
+        # load the matching tokenizer.
+        path = types.TinkerPath.parse(sampling_db.model_path)
+        model = await get_model(session, path.primary_id)
+        base_model = model.base_model
+    return GetSamplerResponse(
+        sampler_id=sampling_db.sampling_session_id,
+        base_model=base_model,
+        model_path=sampling_db.model_path,
+    )
 
 
 @app.post("/api/v1/create_model", response_model=CreateModelResponse)
@@ -1052,6 +1081,12 @@ async def get_sampling_model(request: SampleRequest, session: AsyncSession) -> (
 @app.post("/api/v1/asample", response_model=FutureResponse)
 async def asample(request: SampleRequest, req: Request, session: AsyncSession = Depends(get_session)):
     """Generates samples from the model (async version)."""
+    if request.sampling_session_id is not None and ":" in request.sampling_session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="sampling_session_id must not contain ':' (the routing-key delimiter)",
+        )
+
     base_model, model_path = await get_sampling_model(request, session)
 
     if base_model:
@@ -1087,6 +1122,8 @@ async def asample(request: SampleRequest, req: Request, session: AsyncSession = 
             num_samples=request.num_samples,
             checkpoint_id=checkpoint_id,
             prompt_logprobs=request.prompt_logprobs if request.prompt_logprobs is not None else False,
+            seq_id=request.seq_id,
+            sampling_session_id=request.sampling_session_id,
         ),
     )
 

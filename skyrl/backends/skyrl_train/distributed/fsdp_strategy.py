@@ -35,6 +35,7 @@ from skyrl.backends.skyrl_train.distributed.utils import ModelOrModelOptimPair
 from skyrl.backends.skyrl_train.utils.io import io
 from skyrl.backends.skyrl_train.workers.model_wrapper import HFModelWrapper
 from skyrl.train.config import FSDPConfig, ModelConfig, OptimizerConfig
+from skyrl.utils.tok import check_is_vlm, get_processor
 
 if version.parse(torch.__version__) >= version.parse("2.6"):
     from torch.distributed.fsdp import (
@@ -218,6 +219,33 @@ class FSDPStrategy(DistributedStrategy):
         }
         module = model.model if is_wrapped else model
         full_state = module.state_dict()
+
+        # Move the entire module to meta before apply_fsdp2 so the sharded
+        # DTensors are allocated directly on GPU at their final sharded size,
+        # rather than first materializing the full model on each rank.
+        # Reference: huggingface/accelerate fsdp2_prepare_model uses the
+        # same pattern.
+        #
+        # Non-persistent buffers (e.g. RotaryEmbedding.inv_freq) are not in
+        # state_dict, so they would be wiped by the meta swap. We snapshot
+        # rank 0's values before the swap and restore them on rank 0 after,
+        # so _sync_non_persistent_buffers (inside fsdp2_load_full_state_dict)
+        # can broadcast real values to the other ranks.
+        non_persistent_snapshot = {}
+        if dist.get_rank() == 0:
+            for sub_name, sub in module.named_modules():
+                for bname in getattr(sub, "_non_persistent_buffers_set", set()):
+                    buf = sub._buffers.get(bname)
+                    if buf is not None and not buf.is_meta:
+                        non_persistent_snapshot[(sub_name, bname)] = buf.detach().clone()
+
+        module.to(torch.device("meta"))
+
+        if dist.get_rank() == 0:
+            for (sub_name, bname), buf in non_persistent_snapshot.items():
+                sub = module.get_submodule(sub_name) if sub_name else module
+                sub._buffers[bname] = buf
+
         apply_fsdp2(module, fsdp_kwargs, self.fsdp_config)
         fsdp2_load_full_state_dict(module, full_state, cpu_offload)
         return module
@@ -449,10 +477,13 @@ class FSDPStrategy(DistributedStrategy):
         rank = self.get_rank()
         world_size = self.world_size
 
-        with io.local_read_dir(ckpt_dir) as read_dir:
-            model_path = os.path.join(read_dir, f"model_world_size_{world_size}_rank_{rank}.pt")
-            optim_path = os.path.join(read_dir, f"optim_world_size_{world_size}_rank_{rank}.pt")
-            extra_path = os.path.join(read_dir, f"extra_state_world_size_{world_size}_rank_{rank}.pt")
+        model_file = f"model_world_size_{world_size}_rank_{rank}.pt"
+        optim_file = f"optim_world_size_{world_size}_rank_{rank}.pt"
+        extra_file = f"extra_state_world_size_{world_size}_rank_{rank}.pt"
+        with io.local_read_files(ckpt_dir, [model_file, optim_file, extra_file]) as read_dir:
+            model_path = os.path.join(read_dir, model_file)
+            optim_path = os.path.join(read_dir, optim_file)
+            extra_path = os.path.join(read_dir, extra_file)
 
             # Check if checkpoint files exist
             if not io.exists(model_path):
@@ -552,6 +583,16 @@ class FSDPStrategy(DistributedStrategy):
                 # Save tokenizer if provided
                 if tokenizer is not None:
                     tokenizer.save_pretrained(work_dir)
+
+                # This export path bypasses save_hf_configs, so replicate its VLM handling:
+                # AutoProcessor/vLLM can't reload a VLM without preprocessor_config.json.
+                # Guarded so a resolution failure can't abort the save; no-op for text-only.
+                try:
+                    if check_is_vlm(model_to_save.config):
+                        processor = get_processor(model_to_save.config.name_or_path)
+                        processor.save_pretrained(work_dir)
+                except Exception as e:
+                    logger.warning(f"Could not save processor for '{model_to_save.config.name_or_path}'. Error: {e}")
 
             self.print(f"[rank-0]: Successfully saved model to {output_dir}")
 

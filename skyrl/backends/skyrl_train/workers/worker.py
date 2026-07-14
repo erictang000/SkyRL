@@ -3,9 +3,10 @@ import logging
 import os
 import socket
 from collections import defaultdict
+from contextlib import contextmanager
 from ctypes import CDLL, POINTER, Structure, c_char_p, c_int, c_ulong, c_void_p
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type
 
 import ray
 import torch
@@ -15,10 +16,10 @@ from loguru import logger
 from omegaconf import OmegaConf
 from ray import ObjectRef
 from ray.util.placement_group import (
-    PlacementGroupSchedulingStrategy,
     placement_group,
     placement_group_table,
 )
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import PreTrainedModel
@@ -35,9 +36,6 @@ from skyrl.backends.skyrl_train.distributed.ulysses import (
     apply_monkey_patch,
     set_ulysses_sequence_parallel_group,
 )
-from skyrl.backends.skyrl_train.inference_engines.inference_engine_client import (
-    InferenceEngineClient,
-)
 from skyrl.backends.skyrl_train.training_batch import (
     TrainingInputBatch,
     TrainingOutputBatch,
@@ -50,12 +48,14 @@ from skyrl.backends.skyrl_train.utils.ppo_utils import (
 )
 from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
 from skyrl.backends.skyrl_train.workers.worker_utils import (
+    BaseBatchIterator,
     BatchIterator,
     all_reduce_metrics,
+    compute_minibatch_rollout_logprob_diff_metrics,
+    get_microbatch_iterator,
     reduce_metrics,
 )
 from skyrl.env_vars import (
-    _SKYRL_USE_NEW_INFERENCE,
     SKYRL_RAY_PG_TIMEOUT_IN_S,
     SKYRL_WORKER_NCCL_TIMEOUT_IN_S,
 )
@@ -71,7 +71,7 @@ from skyrl.train.utils.utils import (
 _SET_AFFINITY = False
 
 if TYPE_CHECKING:
-    from skyrl.backends.skyrl_train.inference_engines.remote_inference_client import (
+    from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
         RemoteInferenceClient,
     )
     from skyrl.train.config.config import InferenceEngineConfig
@@ -233,6 +233,8 @@ class Worker(DistributedTorchRayActor):
         super().__init__(*args, **kwargs)
         self.cfg = cfg
         self._transfer_strategy_cls = None  # Set in init_weight_transfer_communicator
+        # Populated by init_model when torch profiling is enabled.
+        self.profiler = None
 
         if self.cfg.algorithm.temperature is None:
             raise ValueError("`cfg.algorithm.temperature` must be set")
@@ -245,9 +247,75 @@ class Worker(DistributedTorchRayActor):
         """Empty GPU memory cache on Worker's CUDA device"""
         torch.cuda.empty_cache()
 
+    def _set_expandable_segments(self, enabled: bool) -> None:
+        """Toggle PyTorch's CUDA ``expandable_segments`` allocator at runtime.
+
+        No-op when disabled via ``trainer.use_expandable_segments`` or when CUDA is
+        unavailable. Expandable segments reduce fragmentation across the offload/backload
+        and forward/backward cycles, but are incompatible with ``cudaIpcGetMemHandle``,
+        so callers turn this OFF around CUDA-IPC weight sync (see
+        :meth:`_expandable_segments_disabled_for_sync`) and back ON afterward.
+
+        Enabling is done *after* model init so the model weights stay in standard CUDA
+        memory (IPC-compatible); only later allocations use expandable segments.
+        """
+        if not self.cfg.use_expandable_segments:
+            return
+        if not torch.cuda.is_available():
+            return
+        setting = f"expandable_segments:{enabled}"
+        try:
+            # PyTorch 2.7+ exposes the accelerator-generic API; fall back otherwise.
+            if hasattr(torch._C, "_accelerator_setAllocatorSettings"):
+                torch._C._accelerator_setAllocatorSettings(setting)
+            else:
+                torch.cuda.memory._set_allocator_settings(setting)
+        except Exception as e:
+            logger.warning(f"Failed to set {setting!r}: {e}")
+
+    @contextmanager
+    def _expandable_segments_disabled_for_sync(self):
+        """Disable expandable_segments for the duration of CUDA-IPC weight sync.
+
+        Only toggles under ``colocate_all`` (the IPC path); under non-colocated runs
+        weight sync uses NCCL broadcast, which has its own buffers and is unaffected.
+        :meth:`_set_expandable_segments` itself no-ops when the feature is disabled.
+        """
+        toggle = self.cfg.placement.colocate_all and self.cfg.use_expandable_segments
+        if toggle:
+            self._set_expandable_segments(False)
+        try:
+            yield
+        finally:
+            if toggle:
+                self._set_expandable_segments(True)
+
     def set_algorithm_config(self, **kwargs) -> None:
         for key, value in kwargs.items():
             setattr(self.cfg.algorithm, key, value)
+
+    # ------------------------------------------------------------------
+    # torch.profiler RPCs, dispatched via WorkerDispatch pass_through.
+    # ------------------------------------------------------------------
+
+    def start_profile(self) -> None:
+        """Arm the profiler before the training loop (no-op when disabled)."""
+        if self.profiler is not None:
+            self.profiler.start()
+
+    def profile_step(self) -> None:
+        """Advance the profiler schedule by one global step."""
+        if self.profiler is not None:
+            self.profiler.step()
+
+    def stop_profile(self) -> None:
+        """Stop the profiler after the training loop, flushing any open window."""
+        if self.profiler is not None:
+            self.profiler.stop()
+
+    def dump_profiler_summary(self):
+        """Return this rank's last-window kernel summary, or None."""
+        return self.profiler.get_kernel_summary() if self.profiler is not None else None
 
     def _get_module_for_offload(self):
         """Return the model module(s) to be offloaded/backloaded. Megatron offloads `self.actor_module`. FSDP workers use `self.model` directly."""
@@ -330,7 +398,7 @@ class Worker(DistributedTorchRayActor):
 
     async def init_weight_sync_state(
         self,
-        inference_engine_client: "Union[InferenceEngineClient, RemoteInferenceClient]",
+        inference_engine_client: "RemoteInferenceClient",
         inference_engine_cfg: "InferenceEngineConfig",
     ):
         """Initialize state for weight syncing with Inference Engine Client
@@ -351,11 +419,8 @@ class Worker(DistributedTorchRayActor):
             colocate_all=self.cfg.placement.colocate_all,
         )
 
-        # For new inference path, fetch world_size from servers
-        # For legacy path, calculate from config
-        inference_world_size = None
-        if _SKYRL_USE_NEW_INFERENCE and hasattr(inference_engine_client, "get_world_size"):
-            inference_world_size, _ = await inference_engine_client.get_world_size()
+        # Fetch the total inference world size from the servers.
+        inference_world_size, _ = await inference_engine_client.get_world_size()
 
         # Create init info on all ranks (it's deterministic from cfg or fetched world_size)
         init_info = self._transfer_strategy_cls.create_init_info(
@@ -431,10 +496,13 @@ class Worker(DistributedTorchRayActor):
             tokenizer=tokenizer,
         )
 
-    def get_lr(self) -> float:
+    def get_lr(self) -> Optional[float]:
         """
-        Get current learning rate from optimizer.
+        Get current learning rate from optimizer. Returns None when the worker was
+        initialized with ``policy.inference_only_init=True`` (no optimizer constructed).
         """
+        if self.optimizer is None:
+            return None
         return self.optimizer.param_groups[0]["lr"]
 
     def set_lr(self, learning_rate: float) -> None:
@@ -442,8 +510,11 @@ class Worker(DistributedTorchRayActor):
         Set learning rate for the optimizer.
 
         This directly updates the optimizer's param_groups, bypassing the scheduler.
-        Useful for external learning rate schedules (e.g., from Tinker).
+        Useful for external learning rate schedules (e.g., from Tinker). No-op when
+        ``policy.inference_only_init=True`` (no optimizer constructed).
         """
+        if self.optimizer is None:
+            return
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = learning_rate
 
@@ -707,14 +778,19 @@ class PolicyWorkerBase(Worker):
             :class:`WorkerOutput` with per-sample ``loss_fn_outputs`` and scalar
             ``metrics`` (all-reduced across DP).
         """
-        micro_batch_size = self.cfg.micro_train_batch_size_per_gpu
+        microbatch_iterator = get_microbatch_iterator(
+            data,
+            micro_batch_size=self.cfg.micro_train_batch_size_per_gpu,
+            max_tokens_per_microbatch=self.cfg.max_tokens_per_microbatch,
+        )
         all_metrics = defaultdict(list)
         all_loss_fn_outputs = []  # Handle separately from scalar metrics
 
-        for micro_batch in BatchIterator(data, micro_batch_size, drop_last=False):
-            microbatch_weight = micro_batch_size / len(data)
+        for microbatch in microbatch_iterator:
+            experience = BaseBatchIterator.batch_to_experience(microbatch)
+            microbatch_weight = len(microbatch) / len(data)
             metrics = self._forward_backward_micro(
-                micro_batch, microbatch_weight, loss_fn=loss_fn, loss_fn_config=loss_fn_config
+                experience, microbatch_weight, loss_fn=loss_fn, loss_fn_config=loss_fn_config
             )
 
             # Extract loss_fn_outputs before reduce_metrics (it's not a scalar metric)
@@ -732,6 +808,15 @@ class PolicyWorkerBase(Worker):
         # Reduce across microbatches and all-reduce metrics across DP ranks
         # NOTE: Sum loss metrics because scaling is already applied at the advantage level
         result = reduce_metrics(all_metrics, sum_loss_metrics=sum_loss_metrics)
+
+        # Token-based batching diagnostics: total microbatches this rank ran and how many
+        # were purely-padding (added to equalize the microbatch count across DP ranks).
+        # Added before all-reduce so they are averaged across DP (num_microbatches is
+        # identical on every rank; num_padding_microbatches reports the per-rank average).
+        if self.cfg.max_tokens_per_microbatch > 0:
+            result["num_microbatches"] = float(len(microbatch_iterator))
+            result["num_padding_microbatches"] = float(getattr(microbatch_iterator, "num_padding_microbatches", 0))
+
         dp_group = self.device_mesh.get_group("dp")
         result = all_reduce_metrics(result, self.strategy, group=dp_group, sum_loss_metrics=sum_loss_metrics)
 
@@ -936,6 +1021,9 @@ class PolicyWorkerBase(Worker):
                 status["loss_metrics/" + k] = v
             if self.cfg.algorithm.use_kl_loss:
                 status["policy_kl"] = kl_loss.item()
+            status.update(
+                compute_minibatch_rollout_logprob_diff_metrics(action_log_probs, rollout_action_logprobs, loss_mask)
+            )
 
         return status
 
@@ -973,11 +1061,16 @@ class PolicyWorkerBase(Worker):
         """
         if loss_fn is None:
             # Inference forward path: run in micro batches and emit per-sample logprobs.
-            micro_batches = data.chunk(self.cfg.micro_forward_batch_size_per_gpu)
-            outputs = []
-            for micro_batch in micro_batches:
-                outputs.append(self._forward_micro_batch(micro_batch))
-            output = TrainingOutputBatch.cat(outputs)
+            # Uses token-based micro-batching when `max_tokens_per_microbatch > 0`, otherwise
+            # falls back to fixed sample-count chunking. `reorder_and_combine_batches` restores
+            # the original sample order (and strips padding) for the token-based iterator.
+            microbatch_iterator = get_microbatch_iterator(
+                data,
+                micro_batch_size=self.cfg.micro_forward_batch_size_per_gpu,
+                max_tokens_per_microbatch=self.cfg.max_tokens_per_microbatch,
+            )
+            outputs = [self._forward_micro_batch(micro_batch) for micro_batch in microbatch_iterator]
+            output = microbatch_iterator.reorder_and_combine_batches(outputs)
             if output.device is not None and output.device != torch.device("cpu"):
                 output = output.to("cpu")
             row_tensor = output["output"]
@@ -1124,6 +1217,62 @@ class PolicyWorkerBase(Worker):
         output.metadata = micro_batch.metadata
         return output
 
+    # ------------------------------------------------------------------
+    # Multi-LoRA / adapter-store interface
+    # ------------------------------------------------------------------
+
+    def _resolve_lora_sync_target(self, model_id: Optional[str]) -> tuple[str, str]:
+        """Return ``(lora_name, lora_sync_path)`` for a given Tinker ``model_id``.
+
+        The single-tenant fallback (``model_id is None``) uses the default
+        shared adapter name + shared sync path. Multi-tenant routes through
+        ``os.path.basename`` on ``lora_sync_path`` so each adapter is written to
+        its own subdir and registered on the inference engine under that name.
+        """
+        from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
+            SKYRL_LORA_ADAPTER_NAME,
+        )
+
+        base_sync_path = self.cfg.policy.model.lora.lora_sync_path
+        safe_model_id = os.path.basename(model_id) if model_id is not None else None
+        if safe_model_id:
+            return safe_model_id, os.path.join(base_sync_path, safe_model_id)
+        return SKYRL_LORA_ADAPTER_NAME, base_sync_path
+
+    def swap_to_adapter(self, model_id: str) -> None:
+        """Make ``model_id`` the live LoRA adapter on this worker."""
+        return None
+
+    def adapter_store_state(self) -> dict:
+        """Diagnostic snapshot of the adapter store. Backends without an
+        adapter store report it as disabled."""
+        return {"enabled": False}
+
+    def _adapter_store_unsupported(self, op: str) -> None:
+        raise NotImplementedError(
+            f"{type(self).__name__}.{op} is not implemented: multi-tenant LoRA "
+            "adapter management (the adapter store) is currently only supported "
+            "on the Megatron backend. The FSDP backend supports a single LoRA "
+            "adapter (or full fine-tuning) per worker group."
+        )
+
+    def prime_optimizer_state(self) -> None:
+        """Materialise optimizer state so it can be snapshotted into the
+        pristine adapter slot. Only meaningful for adapter-store backends."""
+        self._adapter_store_unsupported("prime_optimizer_state")
+
+    def register_pristine_adapter(self) -> None:
+        """Capture the freshly-initialised LoRA state as the pristine slot."""
+        self._adapter_store_unsupported("register_pristine_adapter")
+
+    def register_adapter(self, model_id: str) -> None:
+        """Register a new LoRA adapter slot keyed by ``model_id``."""
+        self._adapter_store_unsupported("register_adapter")
+
+    def delete_adapter(self, model_id: str) -> None:
+        """Remove the LoRA adapter slot keyed by ``model_id``."""
+        self._adapter_store_unsupported("delete_adapter")
+
 
 class CriticWorkerBase(Worker):
     def __init__(self, **kwargs):
@@ -1141,7 +1290,8 @@ class CriticWorkerBase(Worker):
         """
         Perform forward and backward passes for a batch, handling micro-batching internally.
 
-        The batch is split into micro batches based on micro_train_batch_size_per_gpu.
+        The batch is split into micro batches based on micro_train_batch_size_per_gpu,
+        or by token count if max_tokens_per_microbatch is configured.
         Gradients accumulate across micro batches. Gradient scaling happens at optim_step.
 
         Args:
@@ -1151,12 +1301,26 @@ class CriticWorkerBase(Worker):
             :class:`WorkerOutput` with empty ``loss_fn_outputs`` and scalar
             ``metrics`` (all-reduced across DP).
         """
-        micro_batch_size = self.cfg.micro_train_batch_size_per_gpu
+        use_token_batching = self.cfg.max_tokens_per_microbatch > 0
+        microbatch_iterator = get_microbatch_iterator(
+            data,
+            micro_batch_size=self.cfg.micro_train_batch_size_per_gpu,
+            max_tokens_per_microbatch=self.cfg.max_tokens_per_microbatch,
+        )
         all_metrics = defaultdict(list)
 
-        for micro_batch in BatchIterator(data, micro_batch_size, drop_last=False):
-            metrics = self._forward_backward_micro(micro_batch)
-            self._micro_batches_accumulated += 1
+        for microbatch in microbatch_iterator:
+            experience = BaseBatchIterator.batch_to_experience(microbatch)
+
+            if use_token_batching:
+                # With token-based batching, microbatches may have different sizes.
+                # Scale loss by microbatch_weight so gradients are correctly weighted.
+                microbatch_weight = len(microbatch) / len(data)
+                metrics = self._forward_backward_micro(experience, microbatch_weight=microbatch_weight)
+            else:
+                metrics = self._forward_backward_micro(experience)
+                self._micro_batches_accumulated += 1
+
             for k, v in metrics.items():
                 all_metrics[k].append(v)
 
@@ -1168,14 +1332,17 @@ class CriticWorkerBase(Worker):
 
         return WorkerOutput(metrics=result)
 
-    def _forward_backward_micro(self, experience: Experience) -> Dict[str, float]:
+    def _forward_backward_micro(
+        self, experience: Experience, microbatch_weight: Optional[float] = None
+    ) -> Dict[str, float]:
         """
         Perform forward and backward pass for one micro batch.
 
-        Loss is NOT scaled here - gradient scaling happens at optim_step time.
-
         Args:
             experience: Experience object for one micro batch
+            microbatch_weight: If provided, scale loss by this weight before backward.
+                Used with token-based batching where microbatches have variable sizes.
+                If None, loss is unscaled (gradient scaling happens at optim_step time).
 
         Returns:
             All-reduced metrics dict for this micro batch
@@ -1207,7 +1374,11 @@ class CriticWorkerBase(Worker):
                 config=self.cfg.algorithm,
                 loss_mask=loss_mask,
             )
-        # NO loss scaling here - gradient scaling happens at optim_step
+
+        if microbatch_weight is not None:
+            # Token-based batching: scale loss by weight so gradients are properly weighted
+            loss = loss * microbatch_weight
+        # else: NO loss scaling here - gradient scaling happens at optim_step
         self.strategy.backward(loss, self.model, self.optimizer)
 
         status = {
@@ -1227,6 +1398,8 @@ class CriticWorkerBase(Worker):
             The gradient norm (before scaling, after clipping)
         """
         # Scale accumulated gradients by 1/N to get correct average
+        # NOTE: When using token-based batching, loss is pre-scaled by microbatch_weight
+        # in forward_backward, so _micro_batches_accumulated stays 0 and no scaling needed.
         if self._micro_batches_accumulated > 0:
             scale = 1.0 / self._micro_batches_accumulated
             for param in self.model.parameters():
@@ -1275,11 +1448,15 @@ class CriticWorkerBase(Worker):
         per-sample dict with key ``"values"``.
         """
         # Run in micro batches and emit per-sample values.
-        micro_batches = data.chunk(self.cfg.micro_forward_batch_size_per_gpu)
-        outputs = []
-        for micro_batch in micro_batches:
-            outputs.append(self._forward_micro_batch(micro_batch))
-        output = TrainingOutputBatch.cat(outputs)
+        # Uses token-based micro-batching when `max_tokens_per_microbatch > 0`; otherwise fixed
+        # sample-count chunking. `reorder_and_combine_batches` restores original sample order.
+        microbatch_iterator = get_microbatch_iterator(
+            data,
+            micro_batch_size=self.cfg.micro_forward_batch_size_per_gpu,
+            max_tokens_per_microbatch=self.cfg.max_tokens_per_microbatch,
+        )
+        outputs = [self._forward_micro_batch(micro_batch) for micro_batch in microbatch_iterator]
+        output = microbatch_iterator.reorder_and_combine_batches(outputs)
         if output.device is not None and output.device != torch.device("cpu"):
             output = output.to("cpu")
         row_tensor = output["output"]
@@ -1302,11 +1479,15 @@ class RefWorkerBase(Worker):
         per-sample dict with key ``"logprobs"``.
         """
         # Run in micro batches and emit per-sample logprobs.
-        micro_batches = data.chunk(self.cfg.micro_forward_batch_size_per_gpu)
-        outputs = []
-        for micro_batch in micro_batches:
-            outputs.append(self._forward_micro_batch(micro_batch))
-        output = TrainingOutputBatch.cat(outputs)
+        # Uses token-based micro-batching when `max_tokens_per_microbatch > 0`; otherwise fixed
+        # sample-count chunking. `reorder_and_combine_batches` restores original sample order.
+        microbatch_iterator = get_microbatch_iterator(
+            data,
+            micro_batch_size=self.cfg.micro_forward_batch_size_per_gpu,
+            max_tokens_per_microbatch=self.cfg.max_tokens_per_microbatch,
+        )
+        outputs = [self._forward_micro_batch(micro_batch) for micro_batch in microbatch_iterator]
+        output = microbatch_iterator.reorder_and_combine_batches(outputs)
         if output.device is not None and output.device != torch.device("cpu"):
             output = output.to("cpu")
         row_tensor = output["output"]

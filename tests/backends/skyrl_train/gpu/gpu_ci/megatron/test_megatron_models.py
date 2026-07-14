@@ -12,7 +12,7 @@ from skyrl.backends.skyrl_train.distributed.dispatch import (
     WorkerOutput,
     loss_fn_outputs_to_tensor,
 )
-from skyrl.backends.skyrl_train.inference_engines.utils import (
+from skyrl.backends.skyrl_train.inference_servers.engine_utils import (
     get_sampling_params_for_backend,
 )
 from skyrl.backends.skyrl_train.training_batch import TrainingInputBatch
@@ -47,13 +47,13 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
     cfg.trainer.policy.model.path = model_name
     cfg.trainer.micro_forward_batch_size_per_gpu = 2
     cfg.trainer.micro_train_batch_size_per_gpu = 2
-    cfg.trainer.use_sample_packing = True
+    cfg.trainer.remove_microbatch_padding = True
     cfg.generator.inference_engine.distributed_executor_backend = "ray"
     # flash attn + mla works without sample packing, logprobs are crazy/wrong
     # but flash-attn correctly throws error with sample packing
-    # we should add an assert that if you set use_sample_packing=False flash attn can accidentally be used
-    # and that we enable nvte fused attn for moonlight models with use_sample_packing=True
-    # need to enable nvte fused attn for router replay tests when using moonlight models with use_sample_packing=True
+    # we should add an assert that if you set remove_microbatch_padding=False flash attn can accidentally be used
+    # and that we enable nvte fused attn for moonlight models with remove_microbatch_padding=True
+    # need to enable nvte fused attn for router replay tests when using moonlight models with remove_microbatch_padding=True
     cfg.trainer.logger = "console"
     is_mla_model = "moonlight" in model_name.lower() or "glm-4" in model_name.lower()
     if is_mla_model:
@@ -67,11 +67,27 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         # Hopper-only, so there is no viable TE attention backend for
         # MLA + sample_packing on Ada/Ampere.  Fall back to BSHD.
         if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] < 9:
-            cfg.trainer.use_sample_packing = False
+            cfg.trainer.remove_microbatch_padding = False
     if "qwen3.5" in model_name.lower():
-        # sample packing not yet supported for GDN
-        # https://github.com/NVIDIA/Megatron-LM/pull/2644
-        cfg.trainer.use_sample_packing = False
+        # Qwen3.5 hybrid GDN checkpoints report a ...ForConditionalGeneration arch
+        # and auto-dispatch to the VL bridge -> Qwen3VLModel, which self-packs and
+        # double-packs against SkyRL's sample packing (corrupting the GDN
+        # cu_seqlens). language_model_only routes them to the native GPTModel + GDN
+        # thd path instead, which supports packed sequences directly.
+        cfg.trainer.remove_microbatch_padding = True
+        cfg.trainer.policy.language_model_only = True
+        cfg.trainer.ref.language_model_only = True
+        # validate_cfg requires policy/ref/generator language_model_only to agree.
+        cfg.generator.inference_engine.language_model_only = True
+    # Large MoE models: Megatron's DistributedOptimizer eagerly materializes
+    # the fp32 master + AdamW state on GPU at init (~6x model size), which
+    # OOMs on 4xH100 before forward ever runs. These tests only forward +
+    # weight-sync, so skip optimizer construction entirely.
+    is_large_moe = ("qwen3.5-35b" in model_name.lower() and "tiny" not in model_name.lower()) or (
+        "nemotron-3-nano" in model_name.lower()
+    )
+    if is_large_moe:
+        cfg.trainer.policy.inference_only_init = True
     validate_cfg(cfg)
     return cfg
 
@@ -89,7 +105,13 @@ def _engine_overrides_for_model(model_name: str) -> dict:
     overrides = {"engine_init_kwargs": {}, "gpu_memory_utilization": 0.9}
     if "Nemotron-3-Nano" in model_name:
         overrides["engine_init_kwargs"]["max_model_len"] = 4096
-        overrides["gpu_memory_utilization"] = 0.6
+        # Megatron policy init also needs room alongside vLLM on the same
+        # GPU, so lower vLLM's pool footprint.
+        overrides["gpu_memory_utilization"] = 0.5
+    # Large MoE: Megatron policy init also needs room alongside vLLM on the
+    # same GPU, so lower vLLM's pool footprint.
+    if "qwen3.5-35b" in model_name.lower() and "tiny" not in model_name.lower():
+        overrides["gpu_memory_utilization"] = 0.5
     return overrides
 
 
@@ -122,7 +144,7 @@ async def generate_with_vllm(generator, client, model_name, tokenizer, return_tr
     if rewards and not isinstance(rewards[0], list):
         rewards = [[r] * len(resp) for r, resp in zip(rewards, responses)]
 
-    (sequences, attention_mask, response_mask, rewards_t, loss_mask_t, logprobs_t, _) = (
+    sequences, attention_mask, response_mask, rewards_t, loss_mask_t, logprobs_t, _ = (
         convert_prompts_responses_to_batch_tensors(
             tokenizer=tokenizer,
             prompts=generator_output["prompt_token_ids"],
@@ -205,19 +227,60 @@ async def construct_training_input_from_generator_output(generator_output, token
             id="qwen3.5-moe_tp2_ep2",
             marks=pytest.mark.skip(reason="running into correctness issues for tiny qwen3.5"),
         ),
+        # Qwen3.5-0.8B (dense hybrid GDN, real weights) via language_model_only ->
+        # native GPTModel + GDN thd packing path. TP=2 across 2 GPUs, sample
+        # packing on. Real weights, so logprobs should match vLLM tightly.
         pytest.param(
+            2,
             1,
             1,
             1,
-            8,
+            None,
+            2,
+            2,
+            "Qwen/Qwen3.5-0.8B",
+            1e-1,
+            5e-2,
+            id="qwen3.5-0.8b-dense_tp2",
+        ),
+        # Nemotron-3-Nano (30B MoE, bf16) on 4xH100-80G. Mesh: TP=4 EP=4
+        # ETP=1 -> DP=1. vLLM TP=4 across the same 4 GPUs (colocated).
+        # TP=1 OOMed in the EP alltoall because dense layers were replicated
+        # on every GPU; TP=4 shards them 4-way and matches the qwen3.5-35b
+        # layout below. AdamW optimizer is skipped entirely via is_large_moe
+        # in get_test_actor_config (forward-only test), and vLLM gmu is
+        # lowered to 0.5 so the policy shard + vLLM pool fit on each H100.
+        pytest.param(
+            4,
+            1,
             1,
             4,
-            8,
+            1,
+            4,
+            4,
             "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
             5e-1,
             5e-2,
-            id="nemotron3-nano_tp4_ep8",
-            marks=pytest.mark.skip(reason="skip full size nemotron3-nano test until we migrate to h100 CI"),
+            id="nemotron3-nano_tp4_ep4_h100",
+            marks=pytest.mark.h100,
+        ),
+        # Qwen3.5-35B-A3B (~35B MoE, ~3B activated) on 4xH100-80G. Mesh:
+        # TP=4 EP=4 ETP=1 -> DP=1. vLLM TP=4 across the same 4 GPUs
+        # (colocated). Thresholds mirror the GLM-4.7-Flash entry; tune as
+        # we find what the actual logprob diffs look like.
+        pytest.param(
+            4,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            "Qwen/Qwen3.5-35B-A3B",
+            3e-1,
+            5e-2,
+            id="qwen3.5-35b-a3b_h100_tp4_ep4",
+            marks=pytest.mark.h100,
         ),
     ],
 )
@@ -250,7 +313,7 @@ async def test_logprobs_matching_roundtrip(
             use_local=True,
             colocate_all=True,
             backend="vllm",
-            sleep_level=1,
+            sleep_level=2,  # full sleep — this test explicitly syncs weights
             gpu_memory_utilization=engine_overrides["gpu_memory_utilization"],
             engine_init_kwargs=engine_overrides["engine_init_kwargs"],
         ) as engines:
@@ -323,7 +386,7 @@ async def test_logprobs_matching_roundtrip(
             policy.offload_to_cpu(offload_optimizer=False, offload_model=True)
             await client.wake_up(tags=["kv_cache"])
 
-            (response_mask_2, logprobs_t_2) = await generate_with_vllm(
+            response_mask_2, logprobs_t_2 = await generate_with_vllm(
                 generator, client, model_name, tokenizer, return_training_input=False
             )
 
