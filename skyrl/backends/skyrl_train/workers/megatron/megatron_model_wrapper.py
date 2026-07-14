@@ -32,6 +32,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import is_fp8
 from skyrl.backends.skyrl_train.utils.ppo_utils import (
     PolicyLossRegistry,
     compute_approx_kl,
+    maybe_repo_r_rescale,
 )
 from skyrl.backends.skyrl_train.utils.replay_utils import (
     setup_per_microbatch_replay_backward,
@@ -550,6 +551,9 @@ class MegatronModelWrapper:
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
+            # Optional REPO-R: rescale advantages with the latest logprobs before the policy loss,
+            # so it composes with whatever policy_loss_type is configured.
+            advantages = maybe_repo_r_rescale(advantages, action_log_probs, loss_config)
             # policy loss should be calculated based on the selected token logprobs
             policy_loss, loss_metrics = current_loss_fn(
                 action_log_probs,

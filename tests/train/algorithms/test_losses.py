@@ -9,6 +9,7 @@ import torch
 
 from skyrl.backends.skyrl_train.utils.ppo_utils import (
     PolicyLossRegistry,
+    maybe_repo_r_rescale,
     repo_r_rescale_advantages,
     repo_r_update_zeta,
 )
@@ -617,28 +618,46 @@ def test_repo_r_rescale_advantages():
     assert clamped.item() == 0.0
 
 
-def test_repo_r_policy_loss_matches_regular_when_zeta_zero():
-    """With zeta=0, REPO-R leaves advantages untouched and reduces to the regular PPO loss."""
-    advantages = torch.tensor([[1.0, -1.0, 2.0]])
+def test_maybe_repo_r_rescale_gating_and_composition():
+    """maybe_repo_r_rescale is a no-op unless repo.enabled, and composes with any policy loss."""
+    advantages = torch.tensor([[2.0, -2.0, 1.0]])
+    log_probs = torch.tensor([[-3.0, -3.0, -3.0]])
+
+    # Disabled -> advantages returned unchanged (even with a non-zero zeta configured).
+    disabled = AlgorithmConfig(repo=REPOConfig(enabled=False, zeta=0.1))
+    torch.testing.assert_close(maybe_repo_r_rescale(advantages, log_probs, disabled), advantages)
+
+    # Enabled -> matches the standalone rescale helper.
+    enabled = AlgorithmConfig(repo=REPOConfig(enabled=True, zeta=0.1))
+    torch.testing.assert_close(
+        maybe_repo_r_rescale(advantages, log_probs, enabled),
+        repo_r_rescale_advantages(advantages, log_probs, 0.1),
+    )
+
+    # Composition: rescale-then-loss equals calling the loss on pre-rescaled advantages, for an
+    # arbitrary policy loss (here rollout_is, which REPO-R could not previously be combined with).
     old_log_probs = torch.tensor([[-1.0, -1.0, -3.0]])
-    log_probs = torch.tensor([[-1.2, -0.9, -2.5]])
-
+    rollout_logprobs = torch.tensor([[-1.1, -0.8, -2.9]])
     common = dict(eps_clip_low=0.2, eps_clip_high=0.2, off_policy_correction=NULL_OFF_POLICY_CORR)
-    repo_config = AlgorithmConfig(policy_loss_type="repo_r", repo=REPOConfig(zeta=0.0), **common)
-    regular_config = AlgorithmConfig(policy_loss_type="regular", **common)
+    loss_config = AlgorithmConfig(policy_loss_type="rollout_is", repo=REPOConfig(enabled=True, zeta=0.1), **common)
+    loss_fn = PolicyLossRegistry.get("rollout_is")
 
-    repo_fn = PolicyLossRegistry.get("repo_r")
-    regular_fn = PolicyLossRegistry.get("regular")
-
-    repo_loss, repo_metrics = repo_fn(
-        log_probs=log_probs, old_log_probs=old_log_probs, advantages=advantages, config=repo_config
+    rescaled = maybe_repo_r_rescale(advantages, log_probs, loss_config)
+    composed_loss, _ = loss_fn(
+        log_probs=log_probs,
+        old_log_probs=old_log_probs,
+        advantages=rescaled,
+        config=loss_config,
+        rollout_logprobs=rollout_logprobs,
     )
-    regular_loss, _ = regular_fn(
-        log_probs=log_probs, old_log_probs=old_log_probs, advantages=advantages, config=regular_config
+    expected_loss, _ = loss_fn(
+        log_probs=log_probs,
+        old_log_probs=old_log_probs,
+        advantages=repo_r_rescale_advantages(advantages, log_probs, 0.1),
+        config=loss_config,
+        rollout_logprobs=rollout_logprobs,
     )
-    torch.testing.assert_close(repo_loss, regular_loss, rtol=1e-6, atol=1e-8)
-    # zeta is reported by the trainer as policy/repo_r_zeta, not duplicated in loss_metrics.
-    assert "repo_r_zeta" not in repo_metrics
+    torch.testing.assert_close(composed_loss, expected_loss)
 
 
 def test_repo_r_update_zeta_controller():

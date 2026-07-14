@@ -17,7 +17,6 @@
 # limitations under the License.
 
 from collections import defaultdict
-from dataclasses import replace
 from enum import StrEnum
 from functools import wraps
 from typing import Callable, List, Optional, Tuple, Union
@@ -455,7 +454,6 @@ class PolicyLossType(StrEnum):
     CROSS_ENTROPY = "cross_entropy"
     IMPORTANCE_SAMPLING = "importance_sampling"
     DPPO = "dppo"
-    REPO_R = "repo_r"
 
 
 # Losses that optimize against rollout logprobs, so the "old" logprobs forward pass can be
@@ -473,7 +471,6 @@ LOSSES_WITH_OLD_LOGPROBS = frozenset(
         PolicyLossType.SAPO,
         PolicyLossType.CROSS_ENTROPY,
         PolicyLossType.IMPORTANCE_SAMPLING,
-        PolicyLossType.REPO_R,
     }
 )
 
@@ -509,7 +506,6 @@ class PolicyLossRegistry(BaseFunctionRegistry):
             "importance_sampling": [PolicyLossType.IMPORTANCE_SAMPLING, importance_sampling_loss],
             "dppo": [PolicyLossType.DPPO, dppo_policy_loss],
             "rollout_is": [PolicyLossType.ROLLOUT_IS, rollout_is_policy_loss],
-            "repo_r": [PolicyLossType.REPO_R, repo_r_policy_loss],
         }
 
         for pl_name, (pl_type, pl_func) in pl_types.items():
@@ -597,6 +593,9 @@ def repo_r_rescale_advantages(
     """Entropy-aware REPO-R advantage rescaling (REPO paper, Appendix D.2;
     https://arxiv.org/pdf/2603.11682).
 
+    This is a standalone advantage transform applied *before* the configured policy loss, so it
+    composes with any ``policy_loss_type`` (regular, dual_clip, gspo, rollout_is, ...).
+
     Uses the latest policy's log-probabilities with a stop-grad as a practical stand-in
     for the centered log-prob ``L(s, a)``. Positive advantages are scaled by
     ``(1 - zeta * logp)`` and negative advantages by ``(1 + zeta * logp)``, each clamped to
@@ -642,27 +641,22 @@ def repo_r_update_zeta(
     return zeta
 
 
-@register_policy_loss(PolicyLossType.REPO_R)
-def repo_r_policy_loss(
-    log_probs: torch.Tensor,
-    old_log_probs: torch.Tensor,
+def maybe_repo_r_rescale(
     advantages: torch.Tensor,
+    log_probs: torch.Tensor,
     config: AlgorithmConfig,
-    loss_mask: Optional[torch.Tensor] = None,
-    rollout_logprobs: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, dict[str, float]]:
-    """REPO-R: entropy-aware advantage rescaling followed by the standard PPO surrogate.
+) -> torch.Tensor:
+    """Apply REPO-R advantage rescaling when ``config.repo.enabled``, else return advantages as-is.
 
-    The rescaling coefficient ``config.repo.zeta`` is updated once per iteration by the
-    adaptive controller in the trainer and delivered here via the loss-config override
-    channel (see ``RayPPOTrainer._execute_training_step``).
+    Call this right before the configured policy loss so REPO-R composes with any
+    ``policy_loss_type``. The coefficient ``config.repo.zeta`` is updated once per iteration by
+    the adaptive controller in the trainer and delivered via the loss-config override channel
+    (see ``RayPPOTrainer._execute_training_step``); the current value is reported once as
+    ``policy/repo_r_zeta`` (see ``train_critic_and_policy``).
     """
-    rescaled = repo_r_rescale_advantages(advantages, log_probs, config.repo.zeta)
-    # After rescaling, REPO-R uses the standard clipped PPO objective. The current zeta is
-    # reported once by the trainer as ``policy/repo_r_zeta`` (see ``train_critic_and_policy``),
-    # so it is intentionally not duplicated in ``loss_metrics`` here.
-    base_config = replace(config, policy_loss_type="regular")
-    return ppo_policy_loss(log_probs, old_log_probs, rescaled, base_config, loss_mask, rollout_logprobs)
+    if not config.repo.enabled:
+        return advantages
+    return repo_r_rescale_advantages(advantages, log_probs, config.repo.zeta)
 
 
 @register_policy_loss(PolicyLossType.SAPO)

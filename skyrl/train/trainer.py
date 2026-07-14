@@ -1506,9 +1506,9 @@ class RayPPOTrainer:
         all_metrics: Dict[str, List[float]] = defaultdict(list)
 
         # REPO-R: deliver the current (possibly adaptively-controlled) zeta to the policy
-        # workers so the `repo_r` loss rescales advantages with an up-to-date coefficient.
+        # workers so the advantage rescaling uses an up-to-date coefficient.
         loss_fn_config = None
-        if model == "policy" and self.cfg.trainer.algorithm.policy_loss_type == "repo_r":
+        if model == "policy" and self.cfg.trainer.algorithm.repo.enabled:
             loss_fn_config = {"repo": {"zeta": self._repo_zeta}}
 
         # Pre-stage all per-DP mini-batch chunks in the object store so that
@@ -1559,7 +1559,7 @@ class RayPPOTrainer:
         # REPO-R adaptive controller: once per iteration, nudge zeta toward the entropy target.
         # Runs after the policy step so the update takes effect on the next iteration.
         repo_cfg = self.cfg.trainer.algorithm.repo
-        if self.cfg.trainer.algorithm.policy_loss_type == "repo_r":
+        if repo_cfg.enabled:
             self.all_metrics["policy/repo_r_zeta"] = self._repo_zeta
             if repo_cfg.target_entropy is not None and "policy_entropy" in policy_status:
                 self._repo_zeta = ppo_utils.repo_r_update_zeta(

@@ -15,16 +15,20 @@ log-prob after every gradient step):
 - `A < 0`:  `A * (1 + zeta * logp)`, then clamped to `<= 0`
 
 `logp` is detached (stop-grad) and taken from the current forward pass, so the rescaling only
-reshapes the advantage magnitude — the gradient still flows through the standard clipped PPO
-surrogate applied to the rescaled advantage.
+reshapes the advantage magnitude — the gradient still flows through the configured policy loss
+applied to the rescaled advantage.
 
 ## Usage
 
-REPO-R is a built-in policy loss. Enable it with:
+REPO-R is a **standalone advantage transform** applied before the configured policy loss, so it
+composes with any `policy_loss_type` (`regular`, `dual_clip`, `gspo`, `rollout_is`, ...). Enable it
+independently of the loss:
 
 ```bash
-trainer.algorithm.policy_loss_type="repo_r"
-trainer.algorithm.repo.zeta=0.05
+trainer.algorithm.repo.enabled=true
+trainer.algorithm.repo.zeta=0.001
+# optionally combine with a specific loss, e.g.:
+# trainer.algorithm.policy_loss_type="rollout_is"
 ```
 
 ### Adaptive controller (optional)

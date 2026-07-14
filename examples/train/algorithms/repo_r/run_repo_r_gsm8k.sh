@@ -6,6 +6,10 @@
 #   A < 0:  A * (1 + zeta * logp)   (sign-clamped to <= 0)
 # where `logp` is the latest policy's (stop-grad) log-prob of the taken token.
 #
+# REPO-R is a standalone advantage transform (trainer.algorithm.repo.enabled=true) applied on top
+# of any policy_loss_type. This example layers it on the default "regular" PPO loss; swap in e.g.
+# trainer.algorithm.policy_loss_type="rollout_is" to combine it with another loss.
+#
 # Set `trainer.algorithm.repo.target_entropy` to enable the adaptive controller, which
 # halves/doubles zeta each iteration (flipping its sign at the zeta_min boundary) to drive
 # `policy/policy_entropy` toward the target. Leave it unset (null) to keep zeta fixed.
@@ -23,7 +27,7 @@ ZETA_MAX=0.05
 TARGET_ENTROPY=0.3   # set to "null" to disable the adaptive controller (fixed zeta)
 
 bash examples/train/gsm8k/run_gsm8k.sh \
-  trainer.algorithm.policy_loss_type="repo_r" \
+  trainer.algorithm.repo.enabled=true \
   trainer.algorithm.repo.zeta=$ZETA \
   trainer.algorithm.repo.zeta_min=$ZETA_MIN \
   trainer.algorithm.repo.zeta_max=$ZETA_MAX \
