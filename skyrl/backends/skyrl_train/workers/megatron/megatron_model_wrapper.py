@@ -551,8 +551,7 @@ class MegatronModelWrapper:
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
-            # Optional REPO-R: rescale advantages with the latest logprobs before the policy loss,
-            # so it composes with whatever policy_loss_type is configured.
+            # potentially rescale advantages for adaptive entropy control using REPO-R
             advantages = maybe_repo_r_rescale(advantages, action_log_probs, loss_config)
             # policy loss should be calculated based on the selected token logprobs
             policy_loss, loss_metrics = current_loss_fn(

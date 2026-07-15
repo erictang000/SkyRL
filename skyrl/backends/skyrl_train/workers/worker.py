@@ -894,8 +894,7 @@ class PolicyWorkerBase(Worker):
                 pixel_values=experience.pixel_values,
                 image_grid_thw=experience.image_grid_thw,
             )
-            # Optional REPO-R: rescale advantages with the latest logprobs before the policy loss,
-            # so it composes with whatever policy_loss_type is configured.
+            # potentially rescale advantages for adaptive entropy control using REPO-R
             advantages = maybe_repo_r_rescale(advantages, action_log_probs, loss_config)
             # loss function
             # TODO: recompute advantages

@@ -17,7 +17,7 @@ LOGGER="wandb"  # change to "console" to print to stdout
 CLIP_RATIO_LOW=0.2
 CLIP_RATIO_HIGH=0.28
 # use token mean loss reduction
-LOSS_REDUCTION="token_mean"
+LOSS_REDUCTION="prompt_mean"
 # applies overlong filtering (but not soft overlong punishment)
 APPLY_OVERLONG_FILTERING=true
 # apply soft overlong punishment with custom trainer impl in main_dapo.py
@@ -65,6 +65,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$TEST_FILE']" \
   trainer.algorithm.advantage_estimator="grpo" \
+  trainer.algorithm.policy_loss_type="dual_clip" \
   trainer.algorithm.repo.enabled=true \
   trainer.algorithm.repo.zeta=$ZETA \
   trainer.algorithm.repo.zeta_min=$ZETA_MIN \
@@ -107,7 +108,8 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_forward_batch_size_per_gpu=8 \
   trainer.micro_train_batch_size_per_gpu=8 \
-  trainer.ckpt_interval=10 \
+  trainer.max_tokens_per_microbatch=$MAX_TOKENS_PER_MICROBATCH \
+  trainer.ckpt_interval=5 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
   trainer.policy.optimizer_config.lr=$LR \
@@ -123,11 +125,11 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.inference_engine.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="max_tokens_per_microbatch_dapo" \
-  trainer.run_name="dapo_qwen3_1.7b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
-  trainer.export_path="$HOME/exports/dapo_qwen3_1.7b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
-  trainer.hf_save_interval=25 \
+  trainer.project_name="repo_r_dapo" \
+  trainer.run_name="repo_r_dapo_qwen3_1.7b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
+  trainer.export_path="$HOME/exports/repo_r_dapo_qwen3_1.7b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
+  trainer.hf_save_interval=5 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_1.7b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
+  trainer.ckpt_path="$HOME/ckpts/repo_r_dapo_qwen3_1.7b_base_megatron_tp${MEGATRON_TP}_pp${MEGATRON_PP}_cp${MEGATRON_CP}" \
   $@
