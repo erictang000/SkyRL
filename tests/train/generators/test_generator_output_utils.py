@@ -29,6 +29,7 @@ def test_generator_output_concatenation():
         "rollout_metrics",
         "rollout_logprobs",
         "rollout_expert_indices",
+        "rollout_kept_token_ids",
         # optional but present in the signature
         "trajectory_ids",
         "trajectory_generation_times",

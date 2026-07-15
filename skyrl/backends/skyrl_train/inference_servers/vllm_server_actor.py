@@ -437,6 +437,15 @@ class VLLMServerActor(ServerActorProtocol):
                 else:
                     routed_experts = resp.routed_experts
 
+            # Kept-set sampling masks (top-p replay) are attached to the
+            # CompletionOutput by the kept-tokens output-capture patch as a
+            # list[np.ndarray] (one ragged row per completion token). Serialize as
+            # plain nested lists, exactly like routed_experts.
+            kept_tokens = None
+            kept_token_ids = getattr(resp, "kept_token_ids", None)
+            if kept_token_ids is not None:
+                kept_tokens = [row.tolist() if hasattr(row, "tolist") else list(row) for row in kept_token_ids]
+
             return {
                 "choices": [
                     {
@@ -444,6 +453,7 @@ class VLLMServerActor(ServerActorProtocol):
                         "finish_reason": finish_reason,
                         "logprobs": logprobs,
                         "routed_experts": routed_experts,
+                        "kept_tokens": kept_tokens,
                     }
                 ]
             }
@@ -489,6 +499,19 @@ async def _build_and_serve_vllm_server(
         stat_loggers=stat_loggers,
     )
     logger.info(f"Engine initialized on {cli_args.host}:{cli_args.port}, adding custom endpoints...")
+
+    # Kept-set sampling masks (top-p replay) ride the logprobs rows as a
+    # -1-separated extension appended by the worker-side sampler patch. Split it
+    # off in this API-server process before vLLM builds per-position logprob dicts
+    # and attach it to the finished CompletionOutput. No-op without
+    # SKYRL_RETURN_KEPT_TOKENS=1.
+    from skyrl.backends.skyrl_train.patches.vllm.kept_tokens import (
+        kept_tokens_enabled,
+        monkey_patch_kept_tokens_output_capture,
+    )
+
+    if kept_tokens_enabled():
+        monkey_patch_kept_tokens_output_capture()
 
     # Add custom SkyRL endpoints
     VLLMServerActor._add_custom_endpoints(app, engine, cli_args)

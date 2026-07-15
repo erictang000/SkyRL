@@ -866,6 +866,7 @@ class RayPPOTrainer:
         rollout_expert_indices: Optional[List[List[List[List[int]]]]] = generator_output.get(
             "rollout_expert_indices", None
         )
+        rollout_kept_token_ids: Optional[List[List[List[int]]]] = generator_output.get("rollout_kept_token_ids", None)
 
         pixel_values = generator_output.get("pixel_values", None)
         image_grid_thw = generator_output.get("image_grid_thw", None)
@@ -888,6 +889,7 @@ class RayPPOTrainer:
             loss_masks_tensor,
             rollout_logprobs_tensor,
             rollout_expert_indices_tensor,
+            rollout_kept_token_ids_tensor,
         ) = convert_prompts_responses_to_batch_tensors(
             self.tokenizer,
             prompt_ids,
@@ -896,6 +898,7 @@ class RayPPOTrainer:
             loss_masks,
             logprobs,
             rollout_expert_indices,
+            rollout_kept_token_ids,
             max_seq_len=self.cfg.trainer.algorithm.max_seq_len,
         )
 
@@ -919,6 +922,7 @@ class RayPPOTrainer:
                 "loss_mask": loss_masks_tensor,
                 "rollout_logprobs": rollout_logprobs_tensor,
                 "rollout_expert_indices": rollout_expert_indices_tensor,
+                "rollout_kept_token_ids": rollout_kept_token_ids_tensor,
                 "pixel_values": pixel_values,
                 "image_grid_thw": image_grid_thw,
             },

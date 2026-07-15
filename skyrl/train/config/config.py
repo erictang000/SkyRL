@@ -718,6 +718,14 @@ class InferenceEngineConfig(BaseConfig):
     enable_prefix_caching: bool = True
     enable_chunked_prefill: bool = True
     enable_return_routed_experts: bool = False
+    kept_tokens: Optional[int] = None
+    """Capture width for per-token kept-set sampling masks (top-p sampling replay).
+    ``None`` disables capture. When set, the vLLM server returns the kept token ids on
+    ``/skyrl/v1/generate`` responses and forces ``logprobs_mode=processed_logprobs`` so
+    rollout logprobs reflect the truncated distribution; a position whose kept set exceeds
+    this width falls back to full-vocab logprobs. Auto-set (to 512) in
+    ``SkyRLTrainConfig.__post_init__`` under nucleus (``top_p < 1``) Megatron sampling;
+    only set by hand for standalone-launched servers. Phase 1 covers top-p only."""
     max_num_batched_tokens: int = 8192
     enforce_eager: bool = False
     """Disable CUDA graphs for stability. Set to ``False`` for higher performance,
@@ -1159,6 +1167,31 @@ class SkyRLTrainConfig(BaseConfig):
                 "Automatically setting enforce_eager=false for better performance. "
             )
             ie_cfg.enforce_eager = False
+
+        self._setup_kept_tokens_capture()
+
+    def _setup_kept_tokens_capture(self):
+        """Enable kept-set capture for top-p (nucleus) sampling replay.
+
+        Nucleus (top-p) policy sampling renormalizes the rollout distribution over a
+        per-token kept set. For the trainer to replay that renormalization (Phase 2,
+        Megatron), the inference server must return the kept sets -- so we auto-enable
+        capture at a fixed width when ``top_p < 1``.
+
+        A position whose kept set exceeds the capture width falls back to full-vocab
+        logprobs (see ``inference_engine.kept_tokens``). Only wired for the Megatron
+        backend (the eventual replay consumer). Respects an explicitly set
+        ``kept_tokens``.
+        """
+        DEFAULT_KEPT_TOKENS = 512
+
+        ie_cfg = self.generator.inference_engine
+        sp = self.generator.sampling_params
+        if sp.top_p >= 1.0 or self.trainer.strategy != "megatron" or ie_cfg.backend != "vllm":
+            return
+
+        if ie_cfg.kept_tokens is None:
+            ie_cfg.kept_tokens = DEFAULT_KEPT_TOKENS
 
     @classmethod
     def from_cli_overrides(cls, args: Union[List[str], dict]) -> "SkyRLTrainConfig":

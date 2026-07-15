@@ -148,6 +148,31 @@ def build_vllm_cli_args(cfg: SkyRLTrainConfig) -> Namespace:
     for key, value in engine_kwargs.items():
         setattr(args, key, value)
 
+    # Kept-set sampling-mask capture (top-p replay). Stash the env vars on the
+    # namespace so ServerGroup can attach them to the engine Ray runtime_env, where the
+    # vLLM worker child tasks (which run the sampler patch) inherit them. Also force
+    # logprobs_mode so rollout logprobs reflect the truncated (renormalized) distribution
+    # -- the kept set is recovered from those processed logprobs.
+    args.skyrl_engine_env_vars = {}
+    if ie_cfg.kept_tokens is not None:
+        if getattr(args, "speculative_config", None):
+            raise ValueError(
+                "inference_engine.kept_tokens (sampling replay) is incompatible with speculative "
+                "decoding: vLLM's rejection sampler bypasses the patched Sampler.forward, so no kept "
+                "sets are ever emitted. Disable speculative decoding or unset kept_tokens."
+            )
+        if getattr(args, "logprobs_mode", "raw_logprobs") not in (None, "processed_logprobs"):
+            raise ValueError(
+                "inference_engine.kept_tokens (sampling replay) requires logprobs_mode="
+                "'processed_logprobs' (the kept set is recovered from the truncation-masked logprobs). "
+                f"Got logprobs_mode={args.logprobs_mode!r} (engine_init_kwargs override?)."
+            )
+        args.logprobs_mode = "processed_logprobs"
+        args.skyrl_engine_env_vars = {
+            "SKYRL_RETURN_KEPT_TOKENS": "1",
+            "SKYRL_KEPT_TOKENS_MAX": str(ie_cfg.kept_tokens),
+        }
+
     return args
 
 

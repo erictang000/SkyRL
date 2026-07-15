@@ -210,6 +210,11 @@ class RemoteInferenceClient(InferenceEngineInterface):
     enable_return_routed_experts: bool = False
     """Whether to return routed expert indices (R3 / rollout router replay)."""
 
+    kept_tokens_enabled: bool = False
+    """Whether the inference server returns per-token kept-set sampling masks (top-p
+    sampling replay). Set from ``inference_engine.kept_tokens``. When True, generate calls use
+    the custom ``/skyrl/v1/generate`` endpoint and parse ``kept_tokens`` off each choice."""
+
     uses_lora_weight_sync: bool = False
     """True when the trainer syncs LoRA adapters (rather than full/merged weights). When True,
     `sleep()` is forced to level=1: level=2 discards the base model from VRAM with no CPU backup,
@@ -449,12 +454,16 @@ class RemoteInferenceClient(InferenceEngineInterface):
         rollout_expert_indices = [r.get("routed_experts") for r in raw_results]
         has_routed_experts = any(x is not None for x in rollout_expert_indices)
 
+        rollout_kept_token_ids = [r.get("kept_tokens") for r in raw_results]
+        has_kept_tokens = any(x is not None for x in rollout_kept_token_ids)
+
         return InferenceEngineOutput(
             responses=responses,
             stop_reasons=[r["stop_reason"] for r in raw_results],
             response_ids=[r["response_ids"] for r in raw_results],
             response_logprobs=[r["response_logprobs"] for r in raw_results] if get_logprobs else None,
             rollout_expert_indices=rollout_expert_indices if has_routed_experts else None,
+            rollout_kept_token_ids=rollout_kept_token_ids if has_kept_tokens else None,
         )
 
     async def _generate_single(
@@ -478,7 +487,7 @@ class RemoteInferenceClient(InferenceEngineInterface):
         """
         url = (
             f"{self.proxy_url}/skyrl/v1/generate"
-            if self.enable_return_routed_experts
+            if (self.enable_return_routed_experts or self.kept_tokens_enabled)
             else f"{self.proxy_url}/inference/v1/generate"
         )
 
@@ -512,12 +521,14 @@ class RemoteInferenceClient(InferenceEngineInterface):
                 response_logprobs = [logprob_info["logprob"] for logprob_info in logprobs_content]
 
         routed_experts = choice.get("routed_experts")
+        kept_tokens = choice.get("kept_tokens")
 
         return {
             "stop_reason": stop_reason,
             "response_ids": token_ids,
             "response_logprobs": response_logprobs,
             "routed_experts": routed_experts,
+            "kept_tokens": kept_tokens,
         }
 
     async def _render_for_sample(

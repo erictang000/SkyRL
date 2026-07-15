@@ -74,7 +74,7 @@ def test_convert_prompts_responses_to_batch_tensors_exact(tokenizer):
     loss_masks = [[1, 1, 0], [1, 1, 1, 0, 0]]
     rewards = [torch.tensor([0, 1, 0]), torch.tensor([1, 0, 0, 0, 0])]
 
-    sequences, attention_mask, action_mask, ret_rewards, ret_loss_masks, ret_log_probs, _ = (
+    sequences, attention_mask, action_mask, ret_rewards, ret_loss_masks, ret_log_probs, _, _ = (
         convert_prompts_responses_to_batch_tensors(
             tokenizer,
             prompts,
@@ -110,7 +110,7 @@ def test_convert_prompts_responses_to_batch_tensors_different_lengths(tokenizer)
     rewards = [torch.tensor([1.0, 0.5, 0.3]), torch.tensor([0.8])]
     loss_masks = [[1, 1, 1], [1]]
 
-    sequences, attention_mask, action_mask, ret_rewards, ret_loss_masks, ret_log_probs, _ = (
+    sequences, attention_mask, action_mask, ret_rewards, ret_loss_masks, ret_log_probs, _, _ = (
         convert_prompts_responses_to_batch_tensors(
             tokenizer,
             prompts,
@@ -191,7 +191,7 @@ def test_unified_left_padding_layout(tokenizer):
     rewards = [[0.0] * 3, [0.0] * 2]
     loss_masks = [[1] * 3, [1] * 2]
 
-    seq, attn, action, rew, lm, _, _ = convert_prompts_responses_to_batch_tensors(
+    seq, attn, action, rew, lm, _, _, _ = convert_prompts_responses_to_batch_tensors(
         tokenizer,
         prompts,
         responses,
@@ -221,7 +221,7 @@ def test_right_aligned_response_data(tokenizer):
     prompts_copy = [p[:] for p in prompts]
     responses_copy = [r[:] for r in responses]
 
-    seq, attn, action, rew, lm, lp, _ = convert_prompts_responses_to_batch_tensors(
+    seq, attn, action, rew, lm, lp, _, _ = convert_prompts_responses_to_batch_tensors(
         tokenizer,
         prompts,
         responses,
@@ -256,7 +256,7 @@ def test_max_seq_len_warns_but_does_not_truncate(tokenizer):
     rewards = [[0.0] * 10, [0.0] * 50]
     loss_masks = [[1] * 10, [1] * 50]
 
-    seq, _, action, _, _, _, _ = convert_prompts_responses_to_batch_tensors(
+    seq, _, action, _, _, _, _, _ = convert_prompts_responses_to_batch_tensors(
         tokenizer,
         prompts,
         responses,
@@ -293,7 +293,7 @@ def test_rollout_expert_indices_shape_padding_and_alignment(tokenizer):
     rei_0 = [[[1, 2]] * num_layers for _ in range(5)]  # 5 tokens
     rei_1 = [[[3, 4]] * num_layers for _ in range(6)]  # 6 tokens
 
-    seq, attn, action, rew, lm, lp, rei_tensor = convert_prompts_responses_to_batch_tensors(
+    seq, attn, action, rew, lm, lp, rei_tensor, _ = convert_prompts_responses_to_batch_tensors(
         tokenizer,
         prompts,
         responses,
@@ -329,7 +329,7 @@ def test_rollout_expert_indices_none_when_not_provided(tokenizer):
     rewards = [[0.0], [0.0]]
     loss_masks = [[1], [1]]
 
-    *_, rei_tensor = convert_prompts_responses_to_batch_tensors(
+    *_, rei_tensor, _ = convert_prompts_responses_to_batch_tensors(
         tokenizer,
         prompts,
         responses,
@@ -349,7 +349,7 @@ def test_stepwise_anti_correlation_no_inflation(tokenizer):
     rewards = [[0.0] * 90, [0.0] * 10]
     loss_masks = [[1] * 90, [1] * 10]
 
-    seq, attn, action, rew, lm, _, _ = convert_prompts_responses_to_batch_tensors(
+    seq, attn, action, rew, lm, _, _, _ = convert_prompts_responses_to_batch_tensors(
         tokenizer,
         prompts,
         responses,
@@ -366,3 +366,69 @@ def test_stepwise_anti_correlation_no_inflation(tokenizer):
 
     # Response data right-aligned: sample 1 has 10 tokens -> [0]*80 + [1]*10
     assert action[1].tolist() == [0] * 80 + [1] * 10
+
+
+def test_rollout_kept_token_ids_packing_right_aligned(tokenizer):
+    """Kept-set sampling masks (top-p replay) pack right-aligned within
+    (batch, max_response, max_kept) with -1 fill, mirroring rollout_logprobs."""
+    # Sample 0: prompt=2, response=3 ; Sample 1: prompt=4, response=2
+    prompts = [[1, 2], [3, 4, 5, 6]]
+    responses = [[10, 11, 12], [20, 21]]
+    rewards = [[0.0] * 3, [0.0] * 2]
+    loss_masks = [[1] * 3, [1] * 2]
+
+    # Per-response-token ragged kept-id lists (empty list = no mask at that position).
+    kept_0 = [[10], [11, 12], []]  # 3 response tokens
+    kept_1 = [[20, 21], []]  # 2 response tokens
+
+    *_, kept_tensor = convert_prompts_responses_to_batch_tensors(
+        tokenizer,
+        prompts,
+        responses,
+        rewards,
+        loss_masks,
+        rollout_kept_token_ids=[kept_0, kept_1],
+    )
+
+    assert kept_tensor is not None
+    assert kept_tensor.dtype == torch.int32
+    # max_response=3, max_kept=2
+    assert kept_tensor.shape == (2, 3, 2)
+
+    # Sample 0 has 3 response tokens == max_response, so no leading pad rows.
+    assert kept_tensor[0, 0].tolist() == [10, -1]  # single kept id, -1 padded to max_kept
+    assert kept_tensor[0, 1].tolist() == [11, 12]  # two kept ids
+    assert kept_tensor[0, 2].tolist() == [-1, -1]  # empty kept set -> all -1
+
+    # Sample 1 has 2 response tokens, right-aligned -> first row is leading pad.
+    assert kept_tensor[1, 0].tolist() == [-1, -1]  # leading pad row
+    assert kept_tensor[1, 1].tolist() == [20, 21]
+    assert kept_tensor[1, 2].tolist() == [-1, -1]  # empty kept set
+
+
+def test_rollout_kept_token_ids_none_when_not_provided(tokenizer):
+    """No kept-token tensor when the field is absent or entirely empty."""
+    prompts = [[1, 2], [3, 4]]
+    responses = [[10], [20]]
+    rewards = [[0.0], [0.0]]
+    loss_masks = [[1], [1]]
+
+    *_, kept_tensor = convert_prompts_responses_to_batch_tensors(
+        tokenizer,
+        prompts,
+        responses,
+        rewards,
+        loss_masks,
+    )
+    assert kept_tensor is None
+
+    # All-empty kept sets (every position unmasked) also yield None.
+    *_, kept_tensor = convert_prompts_responses_to_batch_tensors(
+        tokenizer,
+        prompts,
+        responses,
+        rewards,
+        loss_masks,
+        rollout_kept_token_ids=[[[]], [[]]],
+    )
+    assert kept_tensor is None

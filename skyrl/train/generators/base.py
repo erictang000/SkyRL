@@ -47,6 +47,9 @@ class GeneratorOutput(TypedDict):
     # async trainer to compute per-group / intra-group completion-time metrics.
     trajectory_generation_times: Optional[List[float]]
     rollout_expert_indices: Optional[List[List[List[List[int]]]]]  # [batch_size, seq_len, layer_num, topk]
+    # Per-token kept-set sampling masks for top-p replay: [batch_size, seq_len, kept] (ragged
+    # innermost; an empty list means no mask -> full-vocab logprob fallback for that token).
+    rollout_kept_token_ids: Optional[List[List[List[int]]]]
     # Applicable only for step-wise training
     is_last_step: Optional[List[bool]]
     # Per-row env metrics (one dict per row in the flattened batch). Used by

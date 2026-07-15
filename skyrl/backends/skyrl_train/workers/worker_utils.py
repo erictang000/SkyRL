@@ -146,6 +146,7 @@ class BaseBatchIterator:
             num_actions=batch.metadata["response_length"],  # int
             rollout_logprobs=batch.get("rollout_logprobs"),
             rollout_expert_indices=batch.get("rollout_expert_indices"),
+            rollout_kept_token_ids=batch.get("rollout_kept_token_ids"),
             # additional info
             # can be used to log metrics etc for micro-batches in the worker
             info={},
@@ -311,6 +312,13 @@ class TokenBasedBatchIterator(BaseBatchIterator):
             ref_tensor = self.data["rollout_expert_indices"]
             data["rollout_expert_indices"] = torch.zeros(
                 (batch_size, *ref_tensor.shape[1:]), dtype=ref_tensor.dtype, device=device
+            )
+        if self.data.get("rollout_kept_token_ids") is not None:
+            # Fill with -1 (not 0): 0 is a valid token id, -1 marks "no kept set" so
+            # padding rows fall back to full-vocab logprobs.
+            ref_tensor = self.data["rollout_kept_token_ids"]
+            data["rollout_kept_token_ids"] = torch.full(
+                (batch_size, *ref_tensor.shape[1:]), -1, dtype=ref_tensor.dtype, device=device
             )
         data.metadata = {}
         if self.data.metadata:

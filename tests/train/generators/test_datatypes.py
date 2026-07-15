@@ -32,6 +32,7 @@ def test_turn_output(output_ids, observation_ids, output_logprobs, added_eos, ex
         new_obs=[],
         obs_ids=observation_ids,
         rollout_expert_indices=None,
+        rollout_kept_token_ids=None,
         added_eos=added_eos,
         reward=1.0,
     )
@@ -41,3 +42,34 @@ def test_turn_output(output_ids, observation_ids, output_logprobs, added_eos, ex
 
     # test rollout logprobs
     assert turn_output.get_turn_rollout_logprobs() == expected_logprobs
+
+
+def test_turn_output_kept_token_ids():
+    """get_turn_rollout_kept_token_ids pads observation (and added-EOS) tokens with []."""
+    # No added EOS: kept ids for each output token, then [] per obs token.
+    turn = TurnOutput(
+        output="Dummy",
+        output_ids=[1, 2, 3],
+        output_logprobs=[0.9, 0.8, 0.7],
+        new_obs=[],
+        obs_ids=[100, 101],
+        rollout_expert_indices=None,
+        rollout_kept_token_ids=[[1, 5], [2], []],
+        added_eos=False,
+        reward=1.0,
+    )
+    assert turn.get_turn_rollout_kept_token_ids() == [[1, 5], [2], [], [], []]
+
+    # None field -> None.
+    turn_none = TurnOutput(
+        output="Dummy",
+        output_ids=[1],
+        output_logprobs=[0.9],
+        new_obs=[],
+        obs_ids=[100],
+        rollout_expert_indices=None,
+        rollout_kept_token_ids=None,
+        added_eos=False,
+        reward=1.0,
+    )
+    assert turn_none.get_turn_rollout_kept_token_ids() is None

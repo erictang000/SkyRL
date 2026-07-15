@@ -590,3 +590,57 @@ class TestTorchProfilerConfigValidation:
         cfg.trainer.policy.torch_profiler_config.save_path = "/tmp/skyrl_prof_test"
         cfg.trainer.policy.fsdp_config.cpu_offload = True
         validate_cfg(cfg)
+
+
+def test_kept_tokens_autoenable_megatron_top_p():
+    """Nucleus (top_p<1) Megatron sampling auto-enables kept-token capture at the
+    default width, without touching top_k (Phase 1 is top-p only)."""
+    cfg = SkyRLTrainConfig.from_cli_overrides(
+        [
+            "trainer.strategy=megatron",
+            "generator.sampling_params.top_p=0.95",
+        ]
+    )
+    assert cfg.generator.inference_engine.kept_tokens == 512
+    # top_k is left untouched (no injection).
+    assert cfg.generator.sampling_params.top_k == -1
+
+
+def test_kept_tokens_respects_explicit_capture_width():
+    """An explicitly set kept_tokens is respected (not overridden)."""
+    cfg = SkyRLTrainConfig.from_cli_overrides(
+        [
+            "trainer.strategy=megatron",
+            "generator.sampling_params.top_p=0.95",
+            "generator.inference_engine.kept_tokens=256",
+        ]
+    )
+    assert cfg.generator.inference_engine.kept_tokens == 256
+
+
+def test_kept_tokens_not_triggered_by_top_k_only():
+    """Phase 1 is top-p only: top_k sampling alone does not enable replay capture."""
+    cfg = SkyRLTrainConfig.from_cli_overrides(
+        [
+            "trainer.strategy=megatron",
+            "generator.sampling_params.top_k=1000",
+        ]
+    )
+    assert cfg.generator.inference_engine.kept_tokens is None
+
+
+def test_kept_tokens_not_derived_for_fsdp():
+    """Phase 1 wires kept-token replay for Megatron only; FSDP leaves capture off."""
+    cfg = SkyRLTrainConfig.from_cli_overrides(
+        [
+            "trainer.strategy=fsdp",
+            "generator.sampling_params.top_p=0.95",
+        ]
+    )
+    assert cfg.generator.inference_engine.kept_tokens is None
+
+
+def test_kept_tokens_off_without_top_p():
+    """No nucleus truncation (top_p=1) -> no capture even on Megatron."""
+    cfg = SkyRLTrainConfig.from_cli_overrides(["trainer.strategy=megatron"])
+    assert cfg.generator.inference_engine.kept_tokens is None

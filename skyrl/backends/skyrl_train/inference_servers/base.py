@@ -48,6 +48,9 @@ class InferenceEngineOutput(TypedDict):
     response_logprobs: Optional[List[List[float]]]
     prompt_logprobs: Optional[List[List[float]]]  # per-prompt-token logprobs under the current model
     rollout_expert_indices: Optional[List[List[List[int]]]]  # [seq_len, layer_num, topk]
+    # Per-token kept-set sampling masks (top-p replay): [batch][resp_token][kept ids].
+    # A ragged inner list (empty = no mask at that position, falls back to full-vocab logprobs).
+    rollout_kept_token_ids: Optional[List[List[List[int]]]]
 
 
 class InferenceEngineInterface(ABC):

@@ -37,6 +37,7 @@ def convert_prompts_responses_to_batch_tensors(
     loss_masks: List[List[int]],
     logprobs: Optional[List[List[float]]] = None,
     rollout_expert_indices: Optional[List[List[List[List[int]]]]] = None,
+    rollout_kept_token_ids: Optional[List[List[List[int]]]] = None,
     max_seq_len: Optional[int] = None,
 ) -> Tuple[
     Float[torch.Tensor, "batch seq_len"],
@@ -46,6 +47,7 @@ def convert_prompts_responses_to_batch_tensors(
     Float[torch.Tensor, "batch response_len"],
     Optional[Float[torch.Tensor, "batch response_len"]],
     Optional[Integer[torch.Tensor, "batch seq_len layer_num topk"]],
+    Optional[Integer[torch.Tensor, "batch response_len kept"]],
 ]:
     """
     Convert prompts and responses to batch tensors for training.
@@ -179,6 +181,28 @@ def convert_prompts_responses_to_batch_tensors(
             elif rollout_expert_indices_tensor.max().item() < 2**15:
                 rollout_expert_indices_tensor = rollout_expert_indices_tensor.to(torch.int16)
 
+    # Kept-set sampling masks (top-p replay). Per-response-token ragged id lists,
+    # packed RIGHT-ALIGNED within (batch, max_response, max_kept) to match rollout_logprobs
+    # and the model's action-window slice. Padding (missing token positions and short kept
+    # sets) is -1: an all--1 row means "no mask", and the trainer falls back to full-vocab.
+    rollout_kept_token_ids_tensor = None
+    if rollout_kept_token_ids:
+        max_kept = max(
+            (len(kept) for sample in rollout_kept_token_ids if sample for kept in sample),
+            default=0,
+        )
+        if max_kept > 0:
+            padded = torch.full((len(rollout_kept_token_ids), max_response, max_kept), -1, dtype=torch.int32)
+            for i, sample_kept in enumerate(rollout_kept_token_ids):
+                if not sample_kept:
+                    continue
+                # Right-align to the last response_len_i positions (leading rows stay all -1).
+                offset = max_response - len(sample_kept)
+                for j, kept in enumerate(sample_kept):
+                    if kept:
+                        padded[i, offset + j, : len(kept)] = torch.tensor(kept, dtype=torch.int32)
+            rollout_kept_token_ids_tensor = padded
+
     return (
         sequences,
         attention_mask,
@@ -187,6 +211,7 @@ def convert_prompts_responses_to_batch_tensors(
         ret_loss_masks,
         logprobs_tensor,
         rollout_expert_indices_tensor,
+        rollout_kept_token_ids_tensor,
     )
 
 

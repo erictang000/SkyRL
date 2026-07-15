@@ -78,12 +78,14 @@ def build_training_input_from_text_samples(
         rewards.append([0.0] * len(response_ids))
         loss_masks.append([1] * len(response_ids))
 
-    sequences, attention_mask, response_mask, rewards_t, loss_mask_t, _, _ = convert_prompts_responses_to_batch_tensors(
-        tokenizer=tokenizer,
-        prompts=prompts,
-        responses=responses,
-        rewards=rewards,
-        loss_masks=loss_masks,
+    sequences, attention_mask, response_mask, rewards_t, loss_mask_t, _, _, _ = (
+        convert_prompts_responses_to_batch_tensors(
+            tokenizer=tokenizer,
+            prompts=prompts,
+            responses=responses,
+            rewards=rewards,
+            loss_masks=loss_masks,
+        )
     )
 
     num_actions = response_mask.shape[1]

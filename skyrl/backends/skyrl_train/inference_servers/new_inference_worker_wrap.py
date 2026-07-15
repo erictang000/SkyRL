@@ -158,3 +158,17 @@ class NewInferenceWorkerWrap(LayerwiseReloadWorkerMixin):
             )
 
         torch.accelerator.synchronize()
+
+
+# Install the kept-tokens sampler patch (top-p sampling replay) in the vLLM
+# worker process. This module is imported in every worker via
+# ``--worker-extension-cls``, which makes it the injection point for worker-side
+# patches. No-op unless ``SKYRL_RETURN_KEPT_TOKENS=1`` (stamped on the engine Ray
+# runtime env from ``inference_engine.kept_tokens`` and inherited by the worker
+# child tasks). Importing it in the driver too is harmless -- the patch self-gates
+# on the env var, which is unset there.
+from skyrl.backends.skyrl_train.patches.vllm.kept_tokens import (  # noqa: E402
+    monkey_patch_kept_tokens_sampler,
+)
+
+monkey_patch_kept_tokens_sampler()
