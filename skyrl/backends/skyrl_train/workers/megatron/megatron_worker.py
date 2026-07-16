@@ -495,6 +495,7 @@ class MegatronWorker:
 
         self.provider = provider
         self.bridge = bridge
+        self.megatron_config = megatron_config
         # Logical model identity (what the inference engine serves). Differs from
         # the bridge weights path only under fake-INT4 QAT (INT4 model.path, BF16
         # bridge weights); used so saved LoRA adapters reference the INT4 base.
@@ -767,11 +768,14 @@ class MegatronWorker:
 
     def save_hf_model(self, export_dir: str, tokenizer):
         # Save model in HuggingFace safetensors format
+        hf_export = self.megatron_config.hf_export_config
         self.strategy.save_hf_model(
             self.bridge,
             self.model,
             export_dir,
             tokenizer=tokenizer,
+            distributed_save=hf_export.distributed_save,
+            save_every_n_ranks=hf_export.save_every_n_ranks,
         )
 
     def _get_module_for_offload(self):
