@@ -379,6 +379,7 @@ class MegatronWorker:
         bf16=True,
         flash_attn=False,
         lora_config=None,
+        enable_mtp=False,
         language_model_only=False,
         bridge_weights_path=None,
     ):
@@ -440,11 +441,7 @@ class MegatronWorker:
 
         provider = bridge.to_megatron_provider()
 
-        # Disable MTP for training: its aux loss is unused, and under full
-        # recompute its checkpointed forward passes packed_seq_params positionally
-        # into tensor_parallel.checkpoint (tensors only), breaking packed-sequence
-        # backward. Mirrors the MTP-disable in model_bridges.py.
-        if getattr(provider, "mtp_num_layers", None):
+        if not enable_mtp and getattr(provider, "mtp_num_layers", None):
             logger.info(f"Disabling MTP for training (mtp_num_layers={provider.mtp_num_layers} -> None)")
             provider.mtp_num_layers = None
 
@@ -491,6 +488,41 @@ class MegatronWorker:
         # Apply any additional transformer config kwargs (can override the above).
         for k, v in transformer_config_kwargs.items():
             setattr(provider, k, v)
+
+        # MTP head count: megatron-bridge infers provider.mtp_num_layers from the model's HF config.
+        if not enable_mtp:
+            provider.mtp_num_layers = None
+        elif megatron_config.mtp_num_layers is not None:
+            provider.mtp_num_layers = megatron_config.mtp_num_layers or None
+        # MTP training requires the model to resolve to >= 1 head
+        mtp_cfg = getattr(self.cfg, "mtp", None)
+        if (
+            enable_mtp
+            and mtp_cfg is not None
+            and getattr(mtp_cfg, "enabled", False)
+            and not getattr(provider, "mtp_num_layers", None)
+        ):
+            raise ValueError(
+                "trainer.mtp.enabled=true but the model resolved to 0 MTP heads "
+                "(the checkpoint's HF config declares none and policy.megatron_config.mtp_num_layers "
+                "is unset). Use an MTP-capable checkpoint, or set "
+                "policy.megatron_config.mtp_num_layers to force-build fresh heads."
+            )
+        if getattr(provider, "mtp_num_layers", None):
+            # Disable Megatron's native in-forward MTP loss (must run before any forward)
+            # or it back-props into the policy trunk and collapses entropy. See native_loss_patch.py.
+            from skyrl.backends.skyrl_train.mtp.native_loss_patch import (
+                disable_native_mtp_loss,
+            )
+
+            disable_native_mtp_loss()
+            logger.info(
+                f"MTP enabled (decoupled): mtp_num_layers={provider.mtp_num_layers}, "
+                f"mtp_loss_weight={megatron_config.mtp_loss_weight}, "
+                f"mtp_loss_topk={megatron_config.mtp_loss_topk} "
+                "(native process_mtp_loss disabled)"
+            )
+
         provider.finalize()
 
         self.provider = provider
@@ -870,6 +902,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             flash_attn=self.cfg.flash_attn,
             language_model_only=self.cfg.policy.language_model_only,
             bridge_weights_path=bridge_weights_path,
+            enable_mtp=self.cfg.mtp.enabled,
         )
 
         if self.enable_router_replay:
@@ -926,6 +959,17 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                 config=self.cfg.policy.optimizer_config,
                 num_training_steps=num_training_steps,
             )
+
+            if getattr(self.provider, "mtp_num_layers", None):
+                from skyrl.backends.skyrl_train.mtp.grad_clip import (
+                    install_mtp_separate_grad_clip,
+                )
+
+                n_local = install_mtp_separate_grad_clip(self.optimizer, self.actor_module)
+                logger.info(
+                    f"MTP: draft head clipped separately from the policy "
+                    f"({n_local} head main params on rank {self._rank}; 0 is normal under DP sharding)"
+                )
 
         # create worker model
         self.model = MegatronModelWrapper(
@@ -1265,6 +1309,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         if self.optimizer is None:
             raise RuntimeError("optim_step called but policy.inference_only_init=True (no optimizer constructed)")
+
         grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
 
         # Reset counter for next accumulation cycle
@@ -1583,6 +1628,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
             self.cfg.ref.megatron_config.transformer_config_kwargs,
             bf16=self.cfg.bf16,
             flash_attn=self.cfg.flash_attn,
+            enable_mtp=False,
             language_model_only=self.cfg.ref.language_model_only,
             bridge_weights_path=bridge_weights_path,
         )
