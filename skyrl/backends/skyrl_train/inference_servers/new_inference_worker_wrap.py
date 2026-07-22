@@ -28,6 +28,7 @@ import torch
 
 from skyrl.backends.skyrl_train.inference_servers.layerwise_reload import (
     LayerwiseReloadWorkerMixin,
+    _empty_cuda_cache_rocm,
 )
 
 VLLM_NEW_INFERENCE_WORKER_EXTENSION_CLS = f"{__name__}.NewInferenceWorkerWrap"
@@ -176,3 +177,4 @@ class NewInferenceWorkerWrap(LayerwiseReloadWorkerMixin):
             )
 
         torch.accelerator.synchronize()
+        _empty_cuda_cache_rocm()
