@@ -1,13 +1,14 @@
-"""Publishes the training loop's current macro-phase to Prometheus via ``ray.util.metrics``.
+"""Prometheus metrics for the async training loop, published via ``ray.util.metrics``.
 
 Ray exports these to the same Prometheus that scrapes node GPU metrics, under the ``ray_`` prefix,
-so loop phase joins GPU utilization on one wall-clock axis and survives a cluster restart, e.g.
+so loop phase and generation-buffer depth join GPU utilization on one wall-clock axis and survive a
+cluster restart, e.g.
 
     avg(ray_node_gpus_utilization) and on() (ray_skyrl_training_phase{phase="eval"} == 1)
 """
 
 from contextlib import contextmanager
-from typing import Dict
+from typing import Dict, Optional
 
 from loguru import logger
 
@@ -63,3 +64,20 @@ class TrainingPhaseGauge:
         """Time the block as wandb ``timing/<name>`` and mark ``name`` the active phase for its duration."""
         with Timer(name, timings), self.phase(name):
             yield
+
+
+class ScalarGauges:
+    """Lazily creates a gauge per name on the first ``set``."""
+
+    def __init__(self) -> None:
+        self._gauges: Dict[str, object] = {}
+
+    def set(self, name: str, value: float, description: Optional[str] = None) -> None:
+        """Set gauge ``name``; ``description`` is used only when the gauge is first created."""
+        gauge = self._gauges.get(name)
+        if gauge is None:
+            from ray.util.metrics import Gauge
+
+            gauge = Gauge(name, description=description or name)
+            self._gauges[name] = gauge
+        gauge.set(float(value))
