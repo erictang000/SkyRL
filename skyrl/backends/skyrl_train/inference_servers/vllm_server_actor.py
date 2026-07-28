@@ -10,9 +10,11 @@ from argparse import Namespace
 from typing import List, Optional, Tuple
 
 import httpx
+import numpy as np
+import orjson
 import uvicorn
 import vllm.envs as envs
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from ray.util.placement_group import PlacementGroup
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -33,7 +35,14 @@ from skyrl.backends.skyrl_train.inference_servers.common import (
     find_and_reserve_port,
     get_node_ip,
 )
+from skyrl.backends.skyrl_train.inference_servers.logprobs_wire import (
+    CLAMPED_LOGPROB,
+    build_logprobs_content,
+)
 from skyrl.backends.skyrl_train.inference_servers.protocols import ServerActorProtocol
+from skyrl.backends.skyrl_train.inference_servers.routed_experts_wire import (
+    pack_routed_experts,
+)
 from skyrl.env_vars import (
     SKYRL_HTTP_CONNECTION_LIMIT,
     SKYRL_VLLM_DP_PORT_OFFSET,
@@ -437,23 +446,19 @@ class VLLMServerActor(ServerActorProtocol):
 
             logprobs = None
             if resp.logprobs is not None:
-                content = []
-                for tid, lp_dict in zip(token_ids_out, resp.logprobs):
-                    if lp_dict and tid in lp_dict:
-                        content.append({"logprob": lp_dict[tid].logprob})
-                    else:
-                        # -9999.0 is the default in vLLM's ChatCompletionLogProb
-                        content.append({"logprob": -9999.0})
+                content, num_clamped = build_logprobs_content(token_ids_out, resp.logprobs)
+                if num_clamped:
+                    logger.warning(
+                        f"request {request_id}: clamped {num_clamped}/{len(token_ids_out)} missing or "
+                        f"non-finite sampled logprobs to {CLAMPED_LOGPROB}"
+                    )
                 logprobs = {"content": content}
 
             routed_experts = None
             if resp.routed_experts is not None:
-                if hasattr(resp.routed_experts, "tolist"):
-                    routed_experts = resp.routed_experts.tolist()
-                else:
-                    routed_experts = resp.routed_experts
+                routed_experts = pack_routed_experts(np.asarray(resp.routed_experts))
 
-            return {
+            payload = {
                 "choices": [
                     {
                         "token_ids": token_ids_out,
@@ -463,6 +468,7 @@ class VLLMServerActor(ServerActorProtocol):
                     }
                 ]
             }
+            return Response(content=orjson.dumps(payload), media_type="application/json")
 
     async def shutdown(self) -> None:
         """Gracefully shutdown the server."""
