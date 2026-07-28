@@ -1674,11 +1674,12 @@ class SFTTrainer:
             # was 0/1 before scaling. Recover the count from the batch by counting positive entries.
             # Padded rows have loss_mask=0 so they are excluded here.
             nonpad_tokens = int((batch["loss_mask"] > 0).sum().item())
+            # Eval consumes metrics only; skip per-token loss_fn_outputs.
             output = self.dispatch.forward(
                 "policy",
                 batch,
                 loss_fn="cross_entropy",
-                loss_fn_config=None,
+                return_per_token_outputs=False,
             )
             batch_loss = float(output.metrics.get("loss", float("nan")))
             total_loss_weighted += batch_loss * nonpad_tokens
@@ -1699,7 +1700,13 @@ class SFTTrainer:
         """
         timings: dict[str, float] = {}
         with Timer("forward_backward", timings):
-            output = self.dispatch.forward_backward("policy", batch, loss_fn="cross_entropy")
+            # SFT consumes metrics only; skip per-token loss_fn_outputs.
+            output = self.dispatch.forward_backward(
+                "policy",
+                batch,
+                loss_fn="cross_entropy",
+                return_per_token_outputs=False,
+            )
         with Timer("optim_step", timings):
             grad_norm = self.dispatch.optim_step("policy")
 
