@@ -12,7 +12,7 @@ import typing
 from abc import ABC
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional, Type, TypeVar, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Type, TypeVar, Union
 
 import yaml
 from omegaconf import DictConfig, OmegaConf
@@ -760,6 +760,61 @@ class ChatTemplateConfig(BaseConfig):
 
 
 @dataclass
+class DeltaWeightSyncConfig(BaseConfig):
+    """Disk/cloud checkpoint-delta weight sync configuration."""
+
+    sync_dir: str
+    """Shared directory/URI where the trainer publishes per-version delta payloads.
+    Supports local paths, ``gs://`` URIs, and ``s3://`` URIs."""
+
+    local_checkpoint_dir: Optional[str] = None
+    """Receiver-side directory used to cache patched checkpoint versions.
+    If unset, resolved in ``__post_init__`` to a ``sync_dir``-derived path under
+    ``/tmp/skyrl_delta_checkpoints``."""
+
+    publish_staging_dir: Optional[str] = None
+    """Trainer-side local directory used to stage cloud payload files before upload.
+    If unset, resolved in ``__post_init__`` to a ``sync_dir``-derived path under
+    ``/tmp/skyrl_delta_publish_staging``."""
+
+    max_file_size_in_gb: float = 1.0
+    """Maximum compressed payload file size before starting a new safetensors file."""
+
+    cloud_download_workers: int = 4
+    """Maximum number of payload files to download concurrently for ``gs://`` and ``s3://`` sync dirs."""
+
+    publish_num_workers: Optional[int] = None
+    """Number of trainer-side worker threads used to compute and compress delta payloads.
+    If unset, the publisher uses ``min(8, os.cpu_count())``."""
+
+    checkpoint_load_format: Literal["vllm_multi_thread_safetensors", "vllm_fastsafetensors"] = (
+        "vllm_multi_thread_safetensors"
+    )
+    """Receiver reload iterator for the prepared local checkpoint.
+    
+    `vllm_multi_thread_safetensors` loads safetensor files from disk to CPU storage with N parallel workers using vLLM's native safetensors iterator. Tensors are then loaded onto GPU memory iterately.
+
+    `vllm_fastsafetensors` loads tensors from safetensor files on disk directly into GPU memory in a highly parallelized way.
+    This setting is currently not recommended for large models because of large memory requirements.
+    See: https://github.com/vllm-project/vllm/issues/48644 for more details
+    """
+
+    multi_thread_safetensors_max_workers: int = 8
+    """Number of worker threads for ``vllm_multi_thread_safetensors``."""
+
+    def __post_init__(self) -> None:
+        from skyrl.backends.skyrl_train.weight_sync.delta_checkpoint import (
+            _default_local_checkpoint_dir,
+            _default_publish_staging_dir,
+        )
+
+        if self.local_checkpoint_dir is None:
+            self.local_checkpoint_dir = str(_default_local_checkpoint_dir(self.sync_dir))
+        if self.publish_staging_dir is None:
+            self.publish_staging_dir = str(_default_publish_staging_dir(self.sync_dir))
+
+
+@dataclass
 class InferenceEngineConfig(BaseConfig):
     """Configuration for inference engine instantiation and management."""
 
@@ -772,6 +827,7 @@ class InferenceEngineConfig(BaseConfig):
     weight_sync_backend: str = "nccl"
     weight_transfer_threshold_cuda_ipc_GB: float = 1.0
     """When using ``cuda_ipc``, send weights in batches of this size (GB)."""
+    delta_weight_sync: Optional[DeltaWeightSyncConfig] = None
     tensor_parallel_size: int = 1
     pipeline_parallel_size: int = 1
     expert_parallel_size: int = 1
