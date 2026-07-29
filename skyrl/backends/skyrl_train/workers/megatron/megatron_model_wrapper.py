@@ -29,6 +29,9 @@ from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
     vocab_parallel_entropy_packed_sequences,
 )
 from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import is_fp8_enabled
+from skyrl.backends.skyrl_train.distributed.megatron.token_metadata import (
+    build_token_metadata_layout,
+)
 from skyrl.backends.skyrl_train.mtp.adapter import project_mtp_hidden_to_logits
 from skyrl.backends.skyrl_train.mtp.hidden_capture import maybe_capture_mtp_hidden
 from skyrl.backends.skyrl_train.mtp.soft_ce import (
@@ -44,6 +47,7 @@ from skyrl.backends.skyrl_train.utils.ppo_utils import (
     compute_approx_kl,
 )
 from skyrl.backends.skyrl_train.utils.replay_utils import (
+    router_replay_schedule,
     setup_per_microbatch_replay_backward,
     setup_per_microbatch_replay_forward,
 )
@@ -350,13 +354,7 @@ class MegatronModelWrapper:
             model_config = get_model_config(model)
             fp8_enabled = is_fp8_enabled(getattr(model_config, "fp8", None))
             rollout_expert_indices = batch.pop("rollout_expert_indices", None)
-            if rollout_expert_indices is not None:
-                setup_per_microbatch_replay_forward(
-                    rollout_expert_indices,
-                    batch["attention_mask"],
-                    model_config=model_config,
-                    remove_microbatch_padding=self.remove_microbatch_padding,
-                )
+            router_padding_mask = batch.pop("router_padding_mask", None)
 
             sequences = batch["sequences"]
             attention_mask = batch["attention_mask"].to(bool)
@@ -399,6 +397,27 @@ class MegatronModelWrapper:
                 if self.is_vlm:
                     new_position_ids = None
 
+            metadata_layout = None
+            if rollout_expert_indices is not None:
+                metadata_layout = build_token_metadata_layout(
+                    attention_mask,
+                    attention_mask.device,
+                    packed=packed_seq_params is not None,
+                    fp8_enabled=fp8_enabled,
+                )
+
+            model_replay_kwargs = {}
+            if rollout_expert_indices is not None:
+                model_replay_kwargs = setup_per_microbatch_replay_forward(
+                    rollout_expert_indices,
+                    router_padding_mask,
+                    attention_mask,
+                    model=model,
+                    model_config=model_config,
+                    metadata_layout=metadata_layout,
+                    remove_microbatch_padding=self.remove_microbatch_padding,
+                )
+
             if self._fused_lm_head:
                 # Fused LM-head inference: the output_processor returns decoder
                 # hidden states (not logits) and stashes the LM-head weight, so
@@ -414,6 +433,7 @@ class MegatronModelWrapper:
                     packed_seq_params=packed_seq_params,
                     output_processor=_fused_lm_head_output_processor,
                     output_processor_context=_op_ctx,
+                    **model_replay_kwargs,
                     **vlm_inputs,
                 )
                 batch["lm_head_weight"] = _op_ctx.get("lm_head_weight")
@@ -423,6 +443,7 @@ class MegatronModelWrapper:
                     new_position_ids,
                     to_te_attention_mask(new_attention_mask),
                     packed_seq_params=packed_seq_params,
+                    **model_replay_kwargs,
                     **vlm_inputs,
                 )
 
@@ -439,15 +460,17 @@ class MegatronModelWrapper:
 
         batch_generator = make_batch_generator(micro_batches, vpp_size=len(self.actor_module))
 
-        output = forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=batch_generator,
-            model=self.actor_module,
-            num_microbatches=len(micro_batches),
-            seq_length=seq_len,
-            micro_batch_size=micro_batch_size,
-            forward_only=True,
-        )
+        replay_enabled = any(batch["rollout_expert_indices"] is not None for batch in micro_batches)
+        with router_replay_schedule(replay_enabled):
+            output = forward_backward_func(
+                forward_step_func=forward_step,
+                data_iterator=batch_generator,
+                model=self.actor_module,
+                num_microbatches=len(micro_batches),
+                seq_length=seq_len,
+                micro_batch_size=micro_batch_size,
+                forward_only=True,
+            )
 
         if mpu.is_pipeline_last_stage(ignore_virtual=True):
             log_probs = [o["log_probs"] for o in output]
@@ -932,13 +955,7 @@ class MegatronModelWrapper:
             model_config = get_model_config(model)
             fp8_enabled = is_fp8_enabled(getattr(model_config, "fp8", None))
             rollout_expert_indices = batch.pop("rollout_expert_indices", None)
-            if rollout_expert_indices is not None:
-                setup_per_microbatch_replay_forward(
-                    rollout_expert_indices,
-                    batch["attention_mask"],
-                    model_config=model_config,
-                    remove_microbatch_padding=self.remove_microbatch_padding,
-                )
+            router_padding_mask = batch.pop("router_padding_mask", None)
 
             sequences = batch["sequences"]
             attention_mask = batch["attention_mask"].to(bool)
@@ -1002,6 +1019,27 @@ class MegatronModelWrapper:
 
             is_last_stage = mpu.is_pipeline_last_stage(ignore_virtual=True)
 
+            metadata_layout = None
+            if rollout_expert_indices is not None:
+                metadata_layout = build_token_metadata_layout(
+                    attention_mask,
+                    attention_mask.device,
+                    packed=packed_seq_params is not None,
+                    fp8_enabled=fp8_enabled,
+                )
+
+            model_replay_kwargs = {}
+            if rollout_expert_indices is not None:
+                model_replay_kwargs = setup_per_microbatch_replay_forward(
+                    rollout_expert_indices,
+                    router_padding_mask,
+                    attention_mask,
+                    model=model,
+                    model_config=model_config,
+                    metadata_layout=metadata_layout,
+                    remove_microbatch_padding=self.remove_microbatch_padding,
+                )
+
             # Recover [batch, seq_len, ...] from Megatron's internal (left-removed) layout. Only used
             # on the non-packed path: with sample packing (remove_microbatch_padding) the logits stay
             # packed ([1, T, vocab]) and loss_func consumes packed_targets instead. MTP draft training
@@ -1054,6 +1092,7 @@ class MegatronModelWrapper:
                         packed_seq_params=packed_seq_params,
                         output_processor=_fused_lm_head_output_processor,
                         output_processor_context=_op_ctx,
+                        **model_replay_kwargs,
                         **vlm_inputs,
                     )
                     batch["lm_head_weight"] = _op_ctx.get("lm_head_weight")
@@ -1063,6 +1102,7 @@ class MegatronModelWrapper:
                         new_position_ids,
                         to_te_attention_mask(new_attention_mask),
                         packed_seq_params=packed_seq_params,
+                        **model_replay_kwargs,
                         **vlm_inputs,
                     )
                 # Replay the MTP block on *detached* trunk hidden states (decoupled draft forward)
@@ -1096,15 +1136,17 @@ class MegatronModelWrapper:
         # batch should be a list of micro-batches
         batch_generator = make_batch_generator(micro_batches, vpp_size=len(self.actor_module))
 
-        metrics_list = forward_backward_func(
-            forward_step_func=forward_step,
-            data_iterator=batch_generator,
-            model=self.actor_module,
-            num_microbatches=len(micro_batches),
-            seq_length=seq_len,
-            micro_batch_size=micro_batch_size,
-            forward_only=forward_only,
-        )
+        replay_enabled = any(batch["rollout_expert_indices"] is not None for batch in micro_batches)
+        with router_replay_schedule(replay_enabled):
+            metrics_list = forward_backward_func(
+                forward_step_func=forward_step,
+                data_iterator=batch_generator,
+                model=self.actor_module,
+                num_microbatches=len(micro_batches),
+                seq_length=seq_len,
+                micro_batch_size=micro_batch_size,
+                forward_only=forward_only,
+            )
 
         # The decoupled MTP/draft loss is computed and logged per-microbatch inside loss_func
         # (metric key "mtp_loss"); no MTPLossLoggingHelper plumbing is needed.
