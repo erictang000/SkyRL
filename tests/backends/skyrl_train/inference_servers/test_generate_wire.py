@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import orjson
 import pytest
+import torch
 
 from skyrl.backends.skyrl_train.inference_servers.generate_wire import (
     CLAMPED_LOGPROB,
@@ -57,6 +58,11 @@ def test_empty_logprobs_input():
     assert build_logprobs_content([], []) == ([], 0)
 
 
+def test_null_logprob_entry_is_clamped_not_raised():
+    # An entry present but None must take the floor rather than raise AttributeError.
+    assert build_logprobs_content([7], [{7: None}]) == ([{"logprob": CLAMPED_LOGPROB}], 1)
+
+
 @pytest.mark.parametrize(
     "routes,expected_dtype",
     [
@@ -94,8 +100,55 @@ def test_pack_rejects_invalid_routes(routes):
 
 
 def test_pack_rejects_nested_lists():
+    # The coercion in pack_routed_experts must not turn the old nested-list
+    # format into a valid payload.
     with pytest.raises(TypeError, match="NumPy array"):
         pack_routed_experts([[[1, 2]]])
+
+
+def test_pack_accepts_torch_tensors():
+    routes = torch.arange(12, dtype=torch.int64).reshape(3, 2, 2)
+
+    decoded = decode_packed_routed_experts(pack_routed_experts(routes))
+
+    assert decoded.dtype == np.uint8
+    assert np.array_equal(decoded, routes.numpy())
+
+
+def test_pack_moves_device_tensors_to_host():
+    """np.asarray raises on a CUDA tensor, so packing must detach/cpu/numpy first.
+
+    Simulated rather than GPU-gated: the coercion is duck-typed, so the call
+    sequence is identical to the real CUDA path.
+    """
+    calls = []
+
+    class _DeviceTensor:
+        def __init__(self, array):
+            self._array = array
+
+        def detach(self):
+            calls.append("detach")
+            return self
+
+        def cpu(self):
+            calls.append("cpu")
+            return self
+
+        def numpy(self):
+            calls.append("numpy")
+            return self._array
+
+    routes = np.arange(12, dtype=np.int64).reshape(3, 2, 2)
+    decoded = decode_packed_routed_experts(pack_routed_experts(_DeviceTensor(routes)))
+
+    assert calls == ["detach", "cpu", "numpy"]
+    assert np.array_equal(decoded, routes)
+
+
+@pytest.mark.parametrize("shape", [[1, 1, 1], [np.int64(1), np.int32(1), 1]])
+def test_decode_accepts_numpy_integer_dims(shape):
+    assert decode_packed_routed_experts({"data": "AQ==", "shape": shape, "dtype": "uint8"}).shape == (1, 1, 1)
 
 
 def test_decode_rejects_incorrect_byte_count():
@@ -108,7 +161,11 @@ def test_decode_rejects_incorrect_byte_count():
     [
         {"data": "AQ==", "shape": [1, 1, 1], "dtype": "uint16"},
         {"data": "!", "shape": [1, 1, 1], "dtype": "uint8"},
+        # bool is a subclass of int, so widening the dim check must not admit it.
         {"data": "AQ==", "shape": [True, 1, 1], "dtype": "uint8"},
+        {"data": "AQ==", "shape": [np.bool_(True), 1, 1], "dtype": "uint8"},
+        {"data": "AQ==", "shape": [1.0, 1, 1], "dtype": "uint8"},
+        {"data": "AQ==", "shape": [-1, 1, 1], "dtype": "uint8"},
     ],
 )
 def test_decode_rejects_malformed_payloads(payload):

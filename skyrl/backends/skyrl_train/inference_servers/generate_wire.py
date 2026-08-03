@@ -45,7 +45,10 @@ def build_logprobs_content(
     content: list[dict[str, float]] = []
     num_clamped = 0
     for tid, lp_dict in zip(token_ids, resp_logprobs):
-        logprob = lp_dict[tid].logprob if (lp_dict and tid in lp_dict) else None
+        # .get over `tid in lp_dict`: an entry present but None would otherwise
+        # raise AttributeError instead of taking the floor below.
+        entry = lp_dict.get(tid) if lp_dict else None
+        logprob = entry.logprob if entry is not None else None
         if logprob is None or not math.isfinite(logprob):
             num_clamped += 1
             logprob = CLAMPED_LOGPROB
@@ -53,8 +56,24 @@ def build_logprobs_content(
     return content, num_clamped
 
 
+def _to_host_array(routed_experts: Any) -> Any:
+    """Bring a framework tensor into host memory, leaving anything else alone.
+
+    vLLM hands back a torch tensor that may still live on a CUDA device, where
+    ``np.asarray`` raises instead of transferring. Duck-typed so this module
+    stays framework-agnostic, and deliberately not a blanket ``np.asarray``:
+    objects without these methods (notably the nested lists this endpoint used
+    to send) fall through to ``compact_routed_expert_indices`` and are rejected.
+    """
+    for method in ("detach", "cpu", "numpy"):
+        op = getattr(routed_experts, method, None)
+        if callable(op):
+            routed_experts = op()
+    return routed_experts
+
+
 def pack_routed_experts(routed_experts: RoutedExpertIndices) -> dict[str, Any]:
-    compact = compact_routed_expert_indices(routed_experts)
+    compact = compact_routed_expert_indices(_to_host_array(routed_experts))
     return {
         "data": pybase64.b64encode(memoryview(compact)).decode("ascii"),
         "shape": list(compact.shape),
@@ -71,7 +90,11 @@ def decode_packed_routed_experts(payload: dict[str, Any]) -> RoutedExpertIndices
         data = pybase64.b64decode_as_bytearray(payload["data"], validate=True)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("invalid packed routed_experts payload") from exc
-    if len(shape) != 3 or any(type(dim) is not int or dim < 0 for dim in shape):
+    # bool is a subclass of int, so it needs an explicit rejection; np.integer is
+    # accepted for in-process callers, since orjson only ever yields plain ints.
+    if len(shape) != 3 or any(
+        not isinstance(dim, (int, np.integer)) or isinstance(dim, bool) or dim < 0 for dim in shape
+    ):
         raise ValueError(f"invalid packed routed_experts shape: {shape}")
     expected_size = math.prod(shape) * dtype.itemsize
     if len(data) != expected_size:

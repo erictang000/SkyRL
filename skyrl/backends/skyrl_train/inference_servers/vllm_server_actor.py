@@ -10,7 +10,6 @@ from argparse import Namespace
 from typing import List, Optional, Tuple
 
 import httpx
-import numpy as np
 import orjson
 import uvicorn
 import vllm.envs as envs
@@ -454,7 +453,7 @@ class VLLMServerActor(ServerActorProtocol):
 
             routed_experts = None
             if resp.routed_experts is not None:
-                routed_experts = pack_routed_experts(np.asarray(resp.routed_experts))
+                routed_experts = pack_routed_experts(resp.routed_experts)
 
             payload = {
                 "choices": [
