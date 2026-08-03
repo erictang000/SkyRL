@@ -97,6 +97,8 @@ skyrl-train = [
     "s5cmd>=0.3.3; sys_platform == 'linux'",
     "gcsfs",
     "fastapi",
+    "orjson>=3.11.9",
+    "pybase64>=1.4.2",
     "uvicorn",
     "vllm-router; sys_platform == 'linux'",
     "pybind11",
