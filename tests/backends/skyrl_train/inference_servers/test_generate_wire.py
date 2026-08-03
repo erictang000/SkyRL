@@ -1,13 +1,60 @@
+"""Tests for the /skyrl/v1/generate payload contract."""
+
 import base64
+import math
+from dataclasses import dataclass
 
 import numpy as np
+import orjson
 import pytest
 
-from skyrl.backends.skyrl_train.inference_servers.routed_experts_wire import (
+from skyrl.backends.skyrl_train.inference_servers.generate_wire import (
+    CLAMPED_LOGPROB,
+    build_logprobs_content,
     decode_packed_routed_experts,
     pack_routed_experts,
 )
-from skyrl.backends.skyrl_train.utils.routed_experts import compact_routed_expert_indices
+
+
+@dataclass
+class _Logprob:
+    logprob: float
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {7: _Logprob(float("-inf"))},
+        {7: _Logprob(float("inf"))},
+        {7: _Logprob(float("nan"))},
+        None,
+        {},
+        {99: _Logprob(-0.5)},  # present, but not for the sampled token
+    ],
+)
+def test_bad_logprob_is_clamped(entry):
+    assert build_logprobs_content([7], [entry]) == ([{"logprob": CLAMPED_LOGPROB}], 1)
+
+
+def test_finite_logprobs_pass_through_and_count_only_bad_tokens():
+    token_ids = [10, 11, 12, 13]
+    resp = [{10: _Logprob(-0.25)}, {11: _Logprob(float("-inf"))}, None, {13: _Logprob(-12.3456789)}]
+    content, num_clamped = build_logprobs_content(token_ids, resp)
+    # Length must match token_ids: callers assert len(logprobs) == len(response_ids).
+    assert [e["logprob"] for e in content] == [-0.25, CLAMPED_LOGPROB, CLAMPED_LOGPROB, -12.3456789]
+    assert num_clamped == 2
+
+
+def test_clamped_payload_round_trips_through_orjson():
+    # orjson emits `null` for non-finite and then rejects it on the way back in,
+    # so a non-finite logprob must never reach the wire.
+    assert orjson.dumps({"logprob": float("-inf")}) == b'{"logprob":null}'
+    content, _ = build_logprobs_content([7], [{7: _Logprob(float("-inf"))}])
+    assert math.isfinite(orjson.loads(orjson.dumps(content))[0]["logprob"])
+
+
+def test_empty_logprobs_input():
+    assert build_logprobs_content([], []) == ([], 0)
 
 
 @pytest.mark.parametrize(
@@ -49,17 +96,6 @@ def test_pack_rejects_invalid_routes(routes):
 def test_pack_rejects_nested_lists():
     with pytest.raises(TypeError, match="NumPy array"):
         pack_routed_experts([[[1, 2]]])
-
-
-def test_compaction_makes_read_only_arrays_writable():
-    routes = np.arange(12, dtype=np.uint8).reshape(3, 2, 2)
-    routes.flags.writeable = False
-
-    compact = compact_routed_expert_indices(routes)
-
-    assert compact.dtype == np.uint8
-    assert compact.flags.c_contiguous
-    assert compact.flags.writeable
 
 
 def test_decode_rejects_incorrect_byte_count():
