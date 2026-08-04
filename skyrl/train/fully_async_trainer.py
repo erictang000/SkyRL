@@ -30,7 +30,10 @@ from skyrl.backends.skyrl_train.inference_servers.engine_utils import (
 )
 from skyrl.backends.skyrl_train.training_batch import TrainingInputBatch
 from skyrl.backends.skyrl_train.utils.io import io
-from skyrl.backends.skyrl_train.utils.ppo_utils import LOSSES_WITH_OLD_LOGPROBS
+from skyrl.backends.skyrl_train.utils.ppo_utils import (
+    LOSSES_WITH_OLD_LOGPROBS,
+    PolicyLossType,
+)
 from skyrl.train.generators.base import GeneratorOutput
 from skyrl.train.generators.utils import (
     concatenate_generator_outputs,
@@ -387,11 +390,17 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
         ), "batched is not supported for fully async training since a batched generate() call does not support pause/continue."
         # TODO(Charlie): we can support it, just multi-turn partial rollout but synchronous.
         assert not self.colocate_all, "colocate_all is not supported for async training yet."
-        assert self.cfg.trainer.algorithm.policy_loss_type not in LOSSES_WITH_OLD_LOGPROBS, (
-            f"Found trainer.algorithm.policy_loss_type={self.cfg.trainer.algorithm.policy_loss_type} in "
+        # Ensure we're using a policy loss that doesn't depend on pi_old ~= pi_rollout
+        loss_type = self.cfg.trainer.algorithm.policy_loss_type
+        if loss_type == PolicyLossType.CISPO and self.cfg.trainer.algorithm.cispo.cispo_anchor == "rollout":
+            optimizes_against_rollout = True
+        else:
+            optimizes_against_rollout = loss_type not in LOSSES_WITH_OLD_LOGPROBS
+        assert optimizes_against_rollout, (
+            f"Found trainer.algorithm.policy_loss_type={loss_type} in "
             f"{sorted([loss.value for loss in LOSSES_WITH_OLD_LOGPROBS])}. Fully async training should use "
-            "rollout logprobs (i.e. rollout_is or dppo) instead of recomputing logprobs, since stale "
-            "policies are not kept for logprob computation."
+            "rollout logprobs (i.e. rollout_is, dppo, or cispo with cispo.cispo_anchor='rollout') instead "
+            "of recomputing logprobs, since stale policies are not kept for logprob computation."
         )
 
         # TODO(Charlie): need to assert we are doing TIS and returning logprobs
