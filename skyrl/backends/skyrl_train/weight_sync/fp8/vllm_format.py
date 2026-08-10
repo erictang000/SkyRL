@@ -15,7 +15,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import (
     use_power_2_scales_default,
 )
 
-SERIALIZED_BLOCKWISE_FP8 = "serialized_blockwise"
+BLOCKWISE_FP8 = "blockwise"
 # Internal wire-format marker for Qwen3.5 MoE tensors that remain batched over
 # experts. The receiver strips this marker and routes the tensor directly to
 # vLLM's fused-MoE parameter loader instead of the ordinary HF-name loader.

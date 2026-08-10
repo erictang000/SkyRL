@@ -16,7 +16,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import (
     use_power_2_scales_default,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8.vllm_format import (
-    SERIALIZED_BLOCKWISE_FP8,
+    BLOCKWISE_FP8,
     SKYRL_BATCHED_MOE_FP8_PREFIX,
     SerializedFp8Config,
     get_serialized_fp8_quantization_config,
@@ -26,7 +26,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.vllm_format import (
 )
 
 __all__ = [
-    "SERIALIZED_BLOCKWISE_FP8",
+    "BLOCKWISE_FP8",
     "SKYRL_BATCHED_MOE_FP8_PREFIX",
     "ModelFp8Spec",
     "MoeExpertSpec",

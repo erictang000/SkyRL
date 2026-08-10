@@ -5,7 +5,7 @@ uv run --isolated --extra dev --extra megatron -- pytest -s tests/backends/skyrl
 The *_full_fp8 / *_fp8_param rows are Hopper-only (pytest.mark.h100): they run
 blockwise FP8 on both Megatron (fp8=e4m3 + fp8_recipe=blockwise, plus
 fp8_param=true persistent params for the fp8_param row) and vLLM
-(quantization=fp8 fed by fp8_weight_sync_mode=serialized_blockwise), with FP32
+(quantization=fp8 fed by fp8_weight_sync_mode=blockwise), with FP32
 block scales (NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1, set by
 _extra_env_vars_for_model). Select them with: -k "full_fp8 or fp8_param".
 """
@@ -409,7 +409,7 @@ async def test_logprobs_matching_roundtrip(
             # (_apply_serialized_fp8_weight_sync_defaults injects
             # quantization=fp8, load_format=dummy and the blockwise
             # quantization_config into the engine kwargs).
-            cfg.generator.inference_engine.fp8_weight_sync_mode = "serialized_blockwise"
+            cfg.generator.inference_engine.fp8_weight_sync_mode = "blockwise"
             # The validated FP8 production runs use the mp executor; with the
             # ray executor, vLLM 0.23's ray_executor_v2 ignores
             # VLLM_RAY_BUNDLE_INDICES, so multi-engine colocate (e.g. the 35B

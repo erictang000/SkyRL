@@ -12,7 +12,7 @@ from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import
 )
 from skyrl.backends.skyrl_train.weight_sync import get_transfer_strategy
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
-    SERIALIZED_BLOCKWISE_FP8,
+    BLOCKWISE_FP8,
     get_serialized_fp8_quantization_config,
     registered_fp8_spec_names,
     resolve_fp8_spec,
@@ -28,20 +28,19 @@ logger = logging.getLogger(__name__)
 
 def _serialized_fp8_ignored_layers(model_path: Optional[str]) -> list[str]:
     if not model_path:
-        raise ValueError("A model path is required when serialized FP8 weight sync is enabled")
+        raise ValueError("A model path is required when FP8 weight sync is enabled")
     try:
         from transformers import AutoConfig
 
         hf_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     except Exception as exc:
         raise RuntimeError(
-            "Could not inspect the model config required to derive serialized FP8 ignored layers: "
-            f"model_path={model_path!r}"
+            "Could not inspect the model config required to derive FP8 ignored layers: " f"model_path={model_path!r}"
         ) from exc
     spec = resolve_fp8_spec(hf_config)
     if spec is None:
         raise ValueError(
-            "Serialized FP8 weight sync has no registered model spec for this checkpoint layout "
+            "FP8 weight sync has no registered model spec for this checkpoint layout "
             f"(registered specs: {', '.join(registered_fp8_spec_names())}); model_path={model_path!r}"
         )
     return spec.ignored_layers(hf_config)
@@ -50,7 +49,7 @@ def _serialized_fp8_ignored_layers(model_path: Optional[str]) -> list[str]:
 def _set_or_validate(mapping: Dict[str, Any], key: str, expected: Any, *, context: str) -> None:
     if key in mapping and mapping[key] != expected:
         raise ValueError(
-            f"{context}.{key} must be {expected!r} when serialized FP8 weight sync is enabled, " f"got {mapping[key]!r}"
+            f"{context}.{key} must be {expected!r} when FP8 weight sync is enabled, " f"got {mapping[key]!r}"
         )
     mapping[key] = copy.deepcopy(expected)
 
@@ -65,10 +64,8 @@ def _apply_serialized_fp8_weight_sync_defaults(
     mode = ie_cfg.fp8_weight_sync_mode
     if mode is None:
         return
-    if mode != SERIALIZED_BLOCKWISE_FP8:
-        raise ValueError(
-            f"Unsupported fp8_weight_sync_mode={mode!r}. " f"Supported value: {SERIALIZED_BLOCKWISE_FP8!r}."
-        )
+    if mode != BLOCKWISE_FP8:
+        raise ValueError(f"Unsupported fp8_weight_sync_mode={mode!r}. " f"Supported value: {BLOCKWISE_FP8!r}.")
 
     _set_or_validate(engine_kwargs, "quantization", "fp8", context="engine_init_kwargs")
     # Build FP8 modules without a bootstrap checkpoint; the first full-weight
@@ -78,21 +75,19 @@ def _apply_serialized_fp8_weight_sync_defaults(
     hf_overrides_value = engine_kwargs.get("hf_overrides")
     hf_overrides = {} if hf_overrides_value is None else copy.deepcopy(hf_overrides_value)
     if not isinstance(hf_overrides, dict):
-        raise ValueError("engine_init_kwargs.hf_overrides must be a dict when serialized FP8 weight sync is enabled")
+        raise ValueError("engine_init_kwargs.hf_overrides must be a dict when FP8 weight sync is enabled")
 
     qcfg_value = hf_overrides.get("quantization_config")
     qcfg = {} if qcfg_value is None else copy.deepcopy(qcfg_value)
     if not isinstance(qcfg, dict):
         raise ValueError(
-            "engine_init_kwargs.hf_overrides.quantization_config must be a dict "
-            "when serialized FP8 weight sync is enabled"
+            "engine_init_kwargs.hf_overrides.quantization_config must be a dict " "when FP8 weight sync is enabled"
         )
 
     ignored_layers = _serialized_fp8_ignored_layers(model_path)
     if ignored_layers:
         logger.info(
-            "Serialized FP8 weight sync will leave %d vLLM modules unquantized "
-            "to match the model's serialized FP8 quantization spec.",
+            "FP8 weight sync will leave %d vLLM modules unquantized " "to match the model's FP8 quantization spec.",
             len(ignored_layers),
         )
 

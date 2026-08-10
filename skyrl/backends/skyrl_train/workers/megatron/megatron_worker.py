@@ -55,7 +55,7 @@ from skyrl.backends.skyrl_train.weight_sync import (
     WeightExtractor,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
-    SERIALIZED_BLOCKWISE_FP8,
+    BLOCKWISE_FP8,
     SerializedFp8Config,
     iter_serialized_fp8_tensors,
     registered_fp8_spec_names,
@@ -133,11 +133,11 @@ class MegatronWeightExtractor(WeightExtractor):
         self.training_dtype = training_dtype
         if fp8_weight_sync_mode is None:
             self.serialized_fp8_config = None
-        elif fp8_weight_sync_mode == SERIALIZED_BLOCKWISE_FP8:
+        elif fp8_weight_sync_mode == BLOCKWISE_FP8:
             spec = resolve_fp8_spec(hf_config) if hf_config is not None else None
             if spec is None:
                 raise ValueError(
-                    "Serialized FP8 weight sync requires a registered model spec for the "
+                    "FP8 weight sync requires a registered model spec for the "
                     f"checkpoint layout (registered specs: {', '.join(registered_fp8_spec_names())}); "
                     "no spec matches the provided hf_config"
                 )

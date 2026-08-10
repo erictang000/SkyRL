@@ -1139,7 +1139,7 @@ class InferenceEngineConfig(BaseConfig):
     Also used during full-weight sync, where policy weights are cast to this dtype before being sent
     to the inference engine. The LoRA-adapter sync path exports fp32 instead."""
     fp8_weight_sync_mode: Optional[str] = None
-    """Optional rollout weight format. ``"serialized_blockwise"`` sends FP8 checkpoint weights and
+    """Optional rollout weight format. ``"blockwise"`` sends FP8 checkpoint weights and
     scales (one FP32 scale per 128x128 block) instead of ``model_dtype`` tensors, halving transfer
     volume and letting vLLM serve FP8. Requires ``trainer.strategy="megatron"`` and a model with a
     registered FP8 spec (see ``skyrl/backends/skyrl_train/weight_sync/fp8/models/README.md``). The

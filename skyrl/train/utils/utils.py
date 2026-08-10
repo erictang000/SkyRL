@@ -27,7 +27,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     resolve_auto_fp8_recipe,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
-    SERIALIZED_BLOCKWISE_FP8,
+    BLOCKWISE_FP8,
 )
 from skyrl.env_vars import (
     SKYRL_DUMP_INFRA_LOG_TO_STDOUT,
@@ -588,18 +588,17 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
     """
     ie_cfg = cfg.generator.inference_engine
 
-    if ie_cfg.fp8_weight_sync_mode not in (None, SERIALIZED_BLOCKWISE_FP8):
+    if ie_cfg.fp8_weight_sync_mode not in (None, BLOCKWISE_FP8):
         raise ValueError(
-            f"Unsupported fp8_weight_sync_mode={ie_cfg.fp8_weight_sync_mode!r}; "
-            f"expected {SERIALIZED_BLOCKWISE_FP8!r} or None"
+            f"Unsupported fp8_weight_sync_mode={ie_cfg.fp8_weight_sync_mode!r}; " f"expected {BLOCKWISE_FP8!r} or None"
         )
-    if ie_cfg.fp8_weight_sync_mode == SERIALIZED_BLOCKWISE_FP8:
+    if ie_cfg.fp8_weight_sync_mode == BLOCKWISE_FP8:
         if cfg.trainer.strategy != "megatron":
-            raise ValueError("serialized_blockwise FP8 weight sync requires trainer.strategy='megatron'")
+            raise ValueError("blockwise FP8 weight sync requires trainer.strategy='megatron'")
         lora_cfg = cfg.trainer.policy.model.lora
         if lora_cfg.rank > 0 and not cfg.trainer.policy.megatron_config.lora_config.merge_lora:
             raise ValueError(
-                "serialized_blockwise FP8 weight sync requires full-weight updates; "
+                "blockwise FP8 weight sync requires full-weight updates; "
                 "Megatron LoRA with merge_lora=false syncs adapters only"
             )
 
@@ -907,7 +906,7 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
     # scales; Blackwell (SM100+) defaults to power-of-two scales, the only mode TE
     # supports for blockwise quantization there (it emulates Float8BlockScaling on
     # the MX datapath).
-    serialized_fp8 = cfg.generator.inference_engine.fp8_weight_sync_mode == SERIALIZED_BLOCKWISE_FP8
+    serialized_fp8 = cfg.generator.inference_engine.fp8_weight_sync_mode == BLOCKWISE_FP8
     use_ref_model = cfg.trainer.algorithm.use_kl_loss or cfg.trainer.algorithm.use_kl_in_reward
     policy_megatron_config = getattr(cfg.trainer.policy, "megatron_config", None)
     ref_megatron_config = getattr(cfg.trainer.ref, "megatron_config", None)
