@@ -5,7 +5,9 @@ from typing import Any
 
 import torch
 
-from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import is_fp8_enabled
+from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
+    is_fp8_enabled,
+)
 
 
 def is_fp8_param_enabled(transformer_config_kwargs: Mapping[str, Any]) -> bool:

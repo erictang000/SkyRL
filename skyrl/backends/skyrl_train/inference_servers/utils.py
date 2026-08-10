@@ -16,7 +16,6 @@ from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     get_serialized_fp8_quantization_config,
     registered_fp8_spec_names,
     resolve_fp8_spec,
-    should_use_serialized_fp8,
 )
 from skyrl.train.config import (
     InferenceEngineConfig,
@@ -66,7 +65,7 @@ def _apply_serialized_fp8_weight_sync_defaults(
     mode = ie_cfg.fp8_weight_sync_mode
     if mode is None:
         return
-    if not should_use_serialized_fp8(mode):
+    if mode != SERIALIZED_BLOCKWISE_FP8:
         raise ValueError(
             f"Unsupported fp8_weight_sync_mode={mode!r}. " f"Supported value: {SERIALIZED_BLOCKWISE_FP8!r}."
         )

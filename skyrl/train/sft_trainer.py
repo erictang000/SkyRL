@@ -863,7 +863,7 @@ class SFTTrainer:
         from skyrl.train.dataset.collators import DefaultCollator, PackedDataCollator
 
         if self.sft_cfg.use_sequence_packing:
-            from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import (
+            from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
                 is_fp8_enabled,
             )
 

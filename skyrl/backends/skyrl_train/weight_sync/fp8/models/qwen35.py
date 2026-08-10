@@ -39,7 +39,15 @@ _QWEN35_LINEAR_ATTN_PREFIX_TEMPLATES = (
     "{model_prefix}.layers.{layer_idx}.linear_attn",
     "{model_prefix}.language_model.layers.{layer_idx}.linear_attn",
 )
-_QWEN35_VISION_ATTN_PROJ_PREFIX_TEMPLATES = ("{model_prefix}.visual.blocks.{block_idx}.attn.proj",)
+# Vision attention output and both vision MLP linears carry dims (e.g. 4304)
+# that stop being 128-divisible once vLLM TP-shards them, so all three must be
+# ignored for the engine to build at TP>1. The weight-sync spec keeps the
+# vision tower BF16 regardless.
+_QWEN35_VISION_BLOCK_PREFIX_TEMPLATES = (
+    "{model_prefix}.visual.blocks.{block_idx}.attn.proj",
+    "{model_prefix}.visual.blocks.{block_idx}.mlp.linear_fc1",
+    "{model_prefix}.visual.blocks.{block_idx}.mlp.linear_fc2",
+)
 
 _MOE_GATE = MoeProjection(hf_name="gate_proj", vllm_param="w13_weight", shard_id="w1")
 _MOE_UP = MoeProjection(hf_name="up_proj", vllm_param="w13_weight", shard_id="w3")
@@ -81,9 +89,9 @@ def get_qwen35_fp8_ignored_layers(hf_config: Any, model_prefix: str = "model") -
             for suffix in _QWEN35_UNQUANTIZED_LINEAR_SUFFIXES:
                 ignored.append(f"{layer_prefix}{suffix}")
 
-    # vLLM 0.23 may instantiate the vision tower for text-only runs. Its TP2
-    # attention output is incompatible with 128-wide blocks, and ignore matching
-    # requires each block's exact module prefix.
+    # vLLM instantiates the vision tower even for text-only runs
+    # (language_model_only only affects multimodal weight loading), and ignore
+    # matching requires each block's exact module prefix.
     vision_config = getattr(hf_config, "vision_config", None) or getattr(hf_config, "visual_config", None)
     vision_depth = 0
     if vision_config is not None:
@@ -93,7 +101,7 @@ def get_qwen35_fp8_ignored_layers(hf_config: Any, model_prefix: str = "model") -
                 vision_depth = value
                 break
     for block_idx in range(vision_depth):
-        for template in _QWEN35_VISION_ATTN_PROJ_PREFIX_TEMPLATES:
+        for template in _QWEN35_VISION_BLOCK_PREFIX_TEMPLATES:
             ignored.append(template.format(model_prefix=model_prefix, block_idx=block_idx))
     return ignored
 

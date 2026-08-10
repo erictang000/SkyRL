@@ -20,7 +20,7 @@ from ray.util.placement_group import (
 )
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import (
+from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     is_blackwell_or_newer,
     is_fp8_enabled,
     is_mxfp8_recipe,
@@ -960,7 +960,6 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
 
     for var_name in (
         "NVTE_FP8_BLOCK_SCALING_FP32_SCALES",
-        "NVTE_FP8_BLOCK_AMAX_EPSILON",
         "VLLM_USE_DEEP_GEMM_E8M0",
     ):
         if value := os.environ.get(var_name, fp8_env_defaults.get(var_name)):

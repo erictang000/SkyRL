@@ -37,7 +37,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.optimizer import (
     get_megatron_optimizer_param_scheduler,
     init_megatron_optim_config,
 )
-from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import (
+from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     resolve_auto_fp8_recipe,
 )
 from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
@@ -55,11 +55,11 @@ from skyrl.backends.skyrl_train.weight_sync import (
     WeightExtractor,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
+    SERIALIZED_BLOCKWISE_FP8,
     SerializedFp8Config,
     iter_serialized_fp8_tensors,
     registered_fp8_spec_names,
     resolve_fp8_spec,
-    should_use_serialized_fp8,
 )
 from skyrl.backends.skyrl_train.workers.megatron.adapter_store import (
     AdapterStore,
@@ -68,9 +68,6 @@ from skyrl.backends.skyrl_train.workers.megatron.adapter_store import (
 )
 from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
     MegatronModelWrapper,
-)
-from skyrl.backends.skyrl_train.workers.megatron.quantization.amax_epsilon_patch import (
-    apply_fp8_block_amax_epsilon_patch,
 )
 from skyrl.backends.skyrl_train.workers.megatron.quantization.fp8_param import (
     initialize_fp8_param_optimizer_masters,
@@ -136,7 +133,7 @@ class MegatronWeightExtractor(WeightExtractor):
         self.training_dtype = training_dtype
         if fp8_weight_sync_mode is None:
             self.serialized_fp8_config = None
-        elif should_use_serialized_fp8(fp8_weight_sync_mode):
+        elif fp8_weight_sync_mode == SERIALIZED_BLOCKWISE_FP8:
             spec = resolve_fp8_spec(hf_config) if hf_config is not None else None
             if spec is None:
                 raise ValueError(
@@ -452,7 +449,6 @@ class MegatronWorker:
         masters and fake-quantizes them in the forward pass. Tokenizer + HF config
         (the logical model identity) still come from ``model_path``.
         """
-        apply_fp8_block_amax_epsilon_patch()
         tokenizer = get_tokenizer(model_path, trust_remote_code=True)
         hf_config_original = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
 

@@ -497,6 +497,24 @@ class MegatronConfig(BaseConfig):
     https://docs.skyrl.ai/docs/examples/megatron for the accepted names and per-field checks.
     ``use_precision_aware_optimizer=True`` can cause checkpointing to fail
     (https://github.com/nvidia/megatron-lm/issues/1820); leaving it ``False`` is recommended."""
+    fp8: Optional[str] = None
+    """TransformerEngine FP8 compute format for linear-layer GEMMs, e.g. ``"e4m3"`` or
+    ``"hybrid"``. ``None`` (default) trains without FP8. Folded into
+    ``transformer_config_kwargs["fp8"]``; an explicit kwarg takes precedence."""
+    fp8_recipe: Optional[str] = None
+    """TransformerEngine FP8 scaling recipe. ``"auto"`` resolves to the architecture-native
+    recipe — ``blockwise``/FP32 scales on Hopper, native MXFP8 on Blackwell/SM100+ (where TE
+    also requires every weight dim to be divisible by 32). Folded into
+    ``transformer_config_kwargs["fp8_recipe"]``; an explicit kwarg takes precedence."""
+    fp8_param: Optional[bool] = None
+    """Store Megatron primary parameters in FP8 (E4M3). Supported with
+    ``fp8_recipe=blockwise`` + FP32 block scales only and requires
+    ``ddp_config.fp8_param_gather=true``. Folded into
+    ``transformer_config_kwargs["fp8_param"]``; an explicit kwarg takes precedence."""
+    fp8_amax_compute_algo: Optional[str] = None
+    """TransformerEngine amax history reduction, e.g. ``"most_recent"`` or ``"max"``. Folded
+    into ``transformer_config_kwargs["fp8_amax_compute_algo"]``; an explicit kwarg takes
+    precedence."""
     transformer_config_kwargs: Dict[str, Any] = field(
         default_factory=lambda: copy.deepcopy(DEFAULT_TRANSFORMER_CONFIG_KWARGS)
     )
@@ -505,13 +523,10 @@ class MegatronConfig(BaseConfig):
     Also the place to put HuggingFace config overrides (e.g. ``rope_parameters``) for the Megatron
     backend, where FSDP would use ``model_config_kwargs``.
 
-    FP8 training is configured here: ``fp8`` (TransformerEngine compute format, e.g. ``"e4m3"`` or
-    ``"hybrid"``), ``fp8_recipe`` (``"auto"`` resolves to the architecture-native recipe —
-    ``blockwise``/FP32 scales on Hopper, native MXFP8 on Blackwell/SM100+, where TE also requires
-    every weight dim to be divisible by 32), ``fp8_param`` (store Megatron params in FP8; supported
-    with ``fp8_recipe=blockwise`` + FP32 block scales only and requires
-    ``ddp_config.fp8_param_gather=true``), and ``fp8_amax_compute_algo``. The block-scale env
-    contract (``NVTE_FP8_BLOCK_SCALING_FP32_SCALES``, ``VLLM_USE_DEEP_GEMM_E8M0``) is defaulted and
+    FP8 training is configured through the top-level ``fp8``, ``fp8_recipe``, ``fp8_param``, and
+    ``fp8_amax_compute_algo`` fields above, which fold into these kwargs; setting the same keys
+    here directly overrides them. The block-scale env contract
+    (``NVTE_FP8_BLOCK_SCALING_FP32_SCALES``, ``VLLM_USE_DEEP_GEMM_E8M0``) is defaulted and
     validated per architecture at startup and forwarded to all Ray actors."""
     empty_cuda_cache: Optional[bool] = True
     """Manually empty torch's CUDA cache between the forward/backward pass and the optimizer step.
@@ -575,6 +590,16 @@ class MegatronConfig(BaseConfig):
         # doesn't have to repeat every default just to set one value.
         if self.transformer_config_kwargs is None:
             self.transformer_config_kwargs = {}
+        # The top-level FP8 fields fold into the TransformerConfig kwargs; explicitly
+        # configured kwargs take precedence.
+        for key, value in (
+            ("fp8", self.fp8),
+            ("fp8_recipe", self.fp8_recipe),
+            ("fp8_param", self.fp8_param),
+            ("fp8_amax_compute_algo", self.fp8_amax_compute_algo),
+        ):
+            if value is not None:
+                self.transformer_config_kwargs.setdefault(key, value)
         for k, v in DEFAULT_TRANSFORMER_CONFIG_KWARGS.items():
             self.transformer_config_kwargs.setdefault(k, copy.deepcopy(v))
         if self.optimizer_config_kwargs is None:

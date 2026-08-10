@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isfinite
 from typing import Iterator, Sequence
 
 import torch
@@ -13,7 +12,6 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import (
     batched_blockwise_cast_to_fp8,
     blockwise_cast_to_fp8,
     normalize_block_size,
-    use_amax_epsilon_default,
     use_power_2_scales_default,
 )
 
@@ -34,15 +32,12 @@ class SerializedFp8Config:
 
     weight_block_size: tuple[int, int] = (128, 128)
     power_2_scale: bool = field(default_factory=use_power_2_scales_default)
-    amax_epsilon: float = field(default_factory=use_amax_epsilon_default)
     spec: ModelFp8Spec | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "weight_block_size", normalize_block_size(self.weight_block_size))
         if type(self.power_2_scale) is not bool:
             raise ValueError(f"power_2_scale must be a bool, got {self.power_2_scale!r}")
-        if not isfinite(self.amax_epsilon) or self.amax_epsilon < 0:
-            raise ValueError(f"amax_epsilon must be finite and non-negative, got {self.amax_epsilon}")
 
     def require_spec(self) -> ModelFp8Spec:
         if self.spec is None:
@@ -68,10 +63,6 @@ def get_serialized_fp8_quantization_config(
     if ignored_layers:
         qconfig["ignored_layers"] = list(ignored_layers)
     return qconfig
-
-
-def should_use_serialized_fp8(mode: str | None) -> bool:
-    return mode == SERIALIZED_BLOCKWISE_FP8
 
 
 def scale_name_for_weight(name: str) -> str:
@@ -113,7 +104,6 @@ def iter_batched_moe_expert_fp8_tensors(
             projection_tensor,
             config.weight_block_size,
             config.power_2_scale,
-            config.amax_epsilon,
         )
         weight_name = f"{SKYRL_BATCHED_MOE_FP8_PREFIX}{moe_spec.experts_base}.{proj.hf_name}.weight"
         yield weight_name, q_weight
@@ -138,7 +128,6 @@ def iter_serialized_fp8_tensors(
             tensor,
             config.weight_block_size,
             config.power_2_scale,
-            config.amax_epsilon,
         )
         yield name, q_weight
         yield scale_name_for_weight(name), scale

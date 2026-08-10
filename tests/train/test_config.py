@@ -11,7 +11,7 @@ from typing import Annotated, Optional
 import pytest
 from omegaconf import OmegaConf
 
-from skyrl.backends.skyrl_train.distributed.megatron import packing_utils
+from skyrl.backends.skyrl_train.distributed.megatron import quantization_utils
 from skyrl.train.config.config import (
     BaseConfig,
     DeltaWeightSyncConfig,
@@ -282,6 +282,26 @@ def test_megatron_validation_requires_fp8_param_gather_for_training():
         train_utils.validate_megatron_cfg(cfg)
 
 
+def test_megatron_top_level_fp8_fields_fold_into_transformer_config_kwargs():
+    from skyrl.train.config.config import MegatronConfig
+
+    cfg = MegatronConfig(fp8="e4m3", fp8_recipe="auto", fp8_param=True, fp8_amax_compute_algo="most_recent")
+    assert cfg.transformer_config_kwargs["fp8"] == "e4m3"
+    assert cfg.transformer_config_kwargs["fp8_recipe"] == "auto"
+    assert cfg.transformer_config_kwargs["fp8_param"] is True
+    assert cfg.transformer_config_kwargs["fp8_amax_compute_algo"] == "most_recent"
+    # Defaults stay off: no FP8 keys appear unless requested.
+    assert "fp8" not in MegatronConfig().transformer_config_kwargs
+
+
+def test_megatron_explicit_transformer_config_kwargs_override_top_level_fp8_fields():
+    from skyrl.train.config.config import MegatronConfig
+
+    cfg = MegatronConfig(fp8="e4m3", fp8_recipe="blockwise", transformer_config_kwargs={"fp8_recipe": "mxfp8"})
+    assert cfg.transformer_config_kwargs["fp8_recipe"] == "mxfp8"
+    assert cfg.transformer_config_kwargs["fp8"] == "e4m3"
+
+
 def test_megatron_validation_allows_inference_only_fp8_param_without_gather():
     cfg = _make_validated_test_config()
     cfg.trainer.strategy = "megatron"
@@ -294,7 +314,7 @@ def test_megatron_validation_allows_inference_only_fp8_param_without_gather():
 
 @pytest.mark.parametrize(("blackwell", "expected_recipe"), [(True, "mxfp8"), (False, "blockwise")])
 def test_megatron_validation_resolves_auto_fp8_recipe(monkeypatch, blackwell, expected_recipe):
-    monkeypatch.setattr(packing_utils, "is_blackwell_or_newer", lambda: blackwell)
+    monkeypatch.setattr(quantization_utils, "is_blackwell_or_newer", lambda: blackwell)
     monkeypatch.setattr(train_utils, "is_blackwell_or_newer", lambda: blackwell)
     cfg = _make_validated_test_config()
     cfg.trainer.strategy = "megatron"

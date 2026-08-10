@@ -349,11 +349,9 @@ async def construct_training_input_from_generator_output(generator_output, token
             id="qwen3.5-0.8b-dense_tp2_fp8_param",
             marks=pytest.mark.h100,
         ),
-        # vLLM must run TP=1 for this model under blockwise FP8: at TP=4 a
-        # 4304-wide projection shards to 1076 per rank, which vLLM rejects
-        # ("output_partition_size = 1076 is not divisible by ... block_n =
-        # 128"). TP=1 x 4 engines matches the validated production layout
-        # (Megatron TP/EP shards -> full-width vLLM ranks).
+        # TP=1 x 4 engines mirrors the production layout: Megatron TP/EP shards
+        # feed full-width vLLM ranks. Blockwise FP8 also builds at inference
+        # TP=2/4, since the vision blocks sit on the FP8 ignore list.
         pytest.param(
             4,
             1,

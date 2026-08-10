@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from math import isfinite
 from operator import index
 from typing import Sequence
 
@@ -26,19 +25,6 @@ def use_power_2_scales_default() -> bool:
     return scale_mode == "0"
 
 
-def use_amax_epsilon_default() -> float:
-    """Read the TE blockwise amax floor used by the training weight quantizer."""
-
-    raw_value = os.getenv("NVTE_FP8_BLOCK_AMAX_EPSILON", "0")
-    try:
-        epsilon = float(raw_value)
-    except ValueError as exc:
-        raise ValueError(f"NVTE_FP8_BLOCK_AMAX_EPSILON must be a float, got {raw_value!r}") from exc
-    if not isfinite(epsilon) or epsilon < 0:
-        raise ValueError(f"NVTE_FP8_BLOCK_AMAX_EPSILON must be finite and non-negative, got {epsilon}")
-    return epsilon
-
-
 def normalize_block_size(block_size: Sequence[int]) -> tuple[int, int]:
     try:
         raw_values = tuple(block_size)
@@ -56,7 +42,6 @@ def blockwise_cast_to_fp8(
     weight: torch.Tensor,
     block_size: Sequence[int],
     power_2_scale: bool = False,
-    amax_epsilon: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Quantize a 2D tensor to vLLM's blockwise E4M3 checkpoint format.
 
@@ -67,8 +52,6 @@ def blockwise_cast_to_fp8(
 
     if weight.ndim != 2:
         raise ValueError(f"Blockwise FP8 expects a 2D tensor, got shape={tuple(weight.shape)}")
-    if not isfinite(amax_epsilon) or amax_epsilon < 0:
-        raise ValueError(f"amax_epsilon must be finite and non-negative, got {amax_epsilon}")
 
     block_m, block_n = normalize_block_size(block_size)
     rows, cols = weight.shape
@@ -85,8 +68,8 @@ def blockwise_cast_to_fp8(
 
     blocks = padded.view(padded_rows // block_m, block_m, padded_cols // block_n, block_n)
     blocks = blocks.permute(0, 2, 1, 3)
-    # Match TE's amax floor, with a nonzero fallback for all-zero blocks.
-    scale = blocks.abs().amax(dim=(2, 3)).clamp(min=max(amax_epsilon, 1e-10)) / fp8_info.max
+    # Nonzero floor keeps all-zero blocks from degenerating the scale.
+    scale = blocks.abs().amax(dim=(2, 3)).clamp(min=1e-10) / fp8_info.max
     if power_2_scale:
         # Rounding up preserves range and matches TE's power-of-two scale rule.
         scale = torch.pow(2.0, torch.ceil(torch.log2(scale)))
@@ -101,7 +84,6 @@ def batched_blockwise_cast_to_fp8(
     weight: torch.Tensor,
     block_size: Sequence[int],
     power_2_scale: bool = False,
-    amax_epsilon: float = 0.0,
     expert_batch_size: int = 8,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Quantize a 3D ``[experts, rows, cols]`` tensor blockwise.
@@ -113,8 +95,6 @@ def batched_blockwise_cast_to_fp8(
 
     if weight.ndim != 3:
         raise ValueError(f"Batched blockwise FP8 expects a 3D tensor, got shape={tuple(weight.shape)}")
-    if not isfinite(amax_epsilon) or amax_epsilon < 0:
-        raise ValueError(f"amax_epsilon must be finite and non-negative, got {amax_epsilon}")
     if isinstance(expert_batch_size, bool) or not isinstance(expert_batch_size, int) or expert_batch_size <= 0:
         raise ValueError(f"expert_batch_size must be a positive integer, got {expert_batch_size!r}")
 
@@ -144,7 +124,7 @@ def batched_blockwise_cast_to_fp8(
 
         blocks = padded.view(end - start, row_blocks, block_m, col_blocks, block_n)
         blocks = blocks.permute(0, 1, 3, 2, 4)
-        scale = blocks.abs().amax(dim=(3, 4)).clamp(min=max(amax_epsilon, 1e-10)) / fp8_info.max
+        scale = blocks.abs().amax(dim=(3, 4)).clamp(min=1e-10) / fp8_info.max
         if power_2_scale:
             scale = torch.pow(2.0, torch.ceil(torch.log2(scale)))
         q_blocks = (blocks / scale[:, :, :, None, None]).clamp(min=fp8_info.min, max=fp8_info.max)

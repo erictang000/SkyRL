@@ -42,20 +42,21 @@ def test_blockwise_cast_defaults_to_exact_fp32_scales():
     assert torch.equal(default_scale, exact_scale)
 
 
-def test_blockwise_cast_uses_training_amax_epsilon_for_near_zero_blocks(monkeypatch):
-    monkeypatch.setenv("NVTE_FP8_BLOCK_AMAX_EPSILON", "1e-4")
+def test_blockwise_cast_floors_scale_for_all_zero_blocks(monkeypatch):
     monkeypatch.setenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", "1")
     config = SerializedFp8Config()
-    weight = torch.full((128, 128), 1e-8, dtype=torch.float32)
+    weight = torch.zeros((128, 128), dtype=torch.float32)
 
-    _, scale = blockwise_cast_to_fp8(
+    q_weight, scale = blockwise_cast_to_fp8(
         weight,
         config.weight_block_size,
         config.power_2_scale,
-        config.amax_epsilon,
     )
 
-    assert scale.item() == pytest.approx(config.amax_epsilon / torch.finfo(torch.float8_e4m3fn).max)
+    # All-zero blocks must not degenerate the scale to zero/inf.
+    assert scale.item() == pytest.approx(1e-10 / torch.finfo(torch.float8_e4m3fn).max)
+    assert torch.isfinite(scale).all()
+    assert q_weight.view(torch.uint8).eq(0).all()
 
 
 def test_blockwise_cast_pow2_scales_match_te_ue8m0_rule():
@@ -165,7 +166,11 @@ def test_qwen35_ignored_layers_include_only_checkpoint_vision_prefixes():
 
     assert QWEN35_FP8_SPEC.ignored_layers(hf_config) == [
         "model.visual.blocks.0.attn.proj",
+        "model.visual.blocks.0.mlp.linear_fc1",
+        "model.visual.blocks.0.mlp.linear_fc2",
         "model.visual.blocks.1.attn.proj",
+        "model.visual.blocks.1.mlp.linear_fc1",
+        "model.visual.blocks.1.mlp.linear_fc2",
     ]
 
 
