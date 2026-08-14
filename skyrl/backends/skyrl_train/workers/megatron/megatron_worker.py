@@ -39,6 +39,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.optimizer import (
 )
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     resolve_auto_fp8_recipe,
+    validate_concrete_fp8_recipe,
 )
 from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
     SKYRL_LORA_ADAPTER_NAME,
@@ -473,10 +474,12 @@ class MegatronWorker:
             if isinstance(transformer_config_kwargs, dict)
             else OmegaConf.to_container(transformer_config_kwargs, resolve=True)
         )
-        # validate_megatron_cfg resolves fp8_recipe="auto" on the driver; resolve
-        # again here so worker-only entry paths never hand "auto" to TE (the worker
-        # always has the target GPU visible).
+        # validate_megatron_cfg resolves fp8_recipe="auto" on the driver when it
+        # can see a GPU; a GPU-less driver ships "auto" through unresolved. The
+        # worker always has the target device visible, so resolve here and
+        # re-run the device/recipe validation the blind driver had to skip.
         resolve_auto_fp8_recipe(transformer_config_kwargs)
+        validate_concrete_fp8_recipe(transformer_config_kwargs)
 
         if not self.cfg.gradient_checkpointing:
             for key in ("recompute_granularity", "recompute_method", "recompute_num_layers"):
