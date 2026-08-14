@@ -17,6 +17,7 @@ try:
         MegatronMappingRegistry,
     )
     from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+    from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
     from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
     from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
     from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
@@ -133,8 +134,23 @@ try:
         """MoE Qwen3.5 language model (``model.language_model.*``) -> GPTModel."""
 
         def mapping_registry(self) -> MegatronMappingRegistry:
+            # Routed experts are stored either fused (`experts.gate_up_proj`, one
+            # stacked tensor per projection) or per-expert
+            # (`experts.<i>.gate_proj.weight`), depending on the transformers
+            # version that wrote the checkpoint -- so it has to be detected from
+            # the actual keys. megatron-bridge 0.6.0 hardcoded the fused layout;
+            # 0.7.0 made it the `experts_packed` argument, defaulting to False,
+            # which silently produces mappings that match nothing on a fused
+            # checkpoint (the expert weights then keep their initialized values).
+            experts_packed = moe_experts_stored_packed(
+                getattr(self, "hf_pretrained", None), "model.language_model.layers."
+            )
             return MegatronMappingRegistry(
-                *self._get_moe_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="")
+                *self._get_moe_lm_mappings(
+                    hf_prefix="model.language_model.",
+                    megatron_prefix="",
+                    experts_packed=experts_packed,
+                )
             )
 
     @MegatronModelBridge.register_bridge(
