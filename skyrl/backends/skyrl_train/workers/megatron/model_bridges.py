@@ -35,14 +35,19 @@ try:
         rope fields so the base CONFIG_MAPPING can handle them.
         """
 
-        def build_conversion_tasks(self, hf_pretrained, megatron_model):
+        def build_conversion_tasks(self, hf_pretrained, megatron_model, weight_dtype=None):
             """Filter out None tasks from the base implementation.
 
             megatron-bridge 0.3.1 build_conversion_tasks returns None entries
             for params with no mapping, but load_weights_hf_to_megatron
             doesn't guard against them.
+
+            ``weight_dtype`` was added to the base signature in megatron-bridge
+            0.7.0 and is passed by keyword from ``load_weights_hf_to_megatron``;
+            overrides must accept and forward it (see upstream's own overrides in
+            ``kimi_k3_bridge`` / ``kimi_k25_vl_bridge``).
             """
-            tasks = super().build_conversion_tasks(hf_pretrained, megatron_model)
+            tasks = super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
             return [t for t in tasks if t is not None]
 
         def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):
