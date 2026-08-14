@@ -152,7 +152,9 @@ class MegatronWeightExtractor(WeightExtractor):
                 }
                 scale = prec_to_bytes[self.training_dtype] / prec_to_bytes[param.dtype]
                 size_in_bytes = param.element_size() * param.numel() * tp_size * ep_size * scale
-            return broadcast_object_across_pp_ranks(size_in_bytes)
+            # allow_missing: a task may correspond to no parameter on any PP rank
+            # (see the layout note below), in which case there is no size to agree on.
+            return broadcast_object_across_pp_ranks(size_in_bytes, allow_missing=True)
 
         sizes = [
             calculate_size_in_bytes(
@@ -172,6 +174,16 @@ class MegatronWeightExtractor(WeightExtractor):
         regular_task_indices: list[int] = []
 
         for idx, task in enumerate(weight_conversion_tasks):
+            # Skip tasks that own no parameter on any PP rank. megatron-bridge 0.7.0
+            # registers mappings for BOTH MoE expert layouts -- grouped-GEMM
+            # (`mlp.experts.linear_fc1`) and SequentialMLP
+            # (`mlp.experts.local_experts.*.linear_fc1`) -- so a model built with one
+            # layout still gets conversion tasks for the other. Those have no weights
+            # to export, and including them would break bucket-size accounting.
+            # Bridge 0.6.0 registered the grouped layout only, so this restores the
+            # previous task set exactly.
+            if sizes[idx] is None:
+                continue
             if getattr(task.mapping, "is_grouped_export", False):
                 gk = getattr(task.mapping, "group_key", None)
                 grouped_task_indices.setdefault(gk, []).append(idx)
