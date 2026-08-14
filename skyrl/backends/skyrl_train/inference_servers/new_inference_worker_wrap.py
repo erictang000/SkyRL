@@ -101,7 +101,18 @@ def _load_batched_moe_fp8_tensor(
     if target_name is None or shard_id is None:
         raise ValueError(f"Unsupported batched MoE wire tensor name {wire_name!r}")
     if target_name not in params_dict:
-        raise ValueError(f"Batched MoE target parameter {target_name!r} was not found for wire tensor {wire_name!r}")
+        # vLLM 0.26 turned FusedMoE into a factory returning a MoERunner whose
+        # RoutedExperts submodule registers the expert parameters, adding one
+        # segment to every runtime name; earlier engines register them on the
+        # experts module directly.
+        module_path, _, param_leaf = target_name.rpartition(".")
+        nested_name = f"{module_path}.routed_experts.{param_leaf}"
+        if nested_name not in params_dict:
+            raise ValueError(
+                f"Batched MoE target parameter was not found for wire tensor {wire_name!r}: "
+                f"tried {target_name!r} and {nested_name!r}"
+            )
+        target_name = nested_name
 
     param = params_dict[target_name]
     weight_loader = getattr(param, "weight_loader", None)
