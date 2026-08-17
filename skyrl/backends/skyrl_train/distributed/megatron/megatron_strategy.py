@@ -399,7 +399,8 @@ class MegatronStrategy(DistributedStrategy):
         local_rank = os.environ.get("LOCAL_RANK")
         if local_rank is not None and torch.cuda.is_available():
             torch.cuda.set_device(int(local_rank))
-        _async_calls.maybe_finalize_async_calls(blocking=True)
+        if _async_calls is not None:
+            _async_calls.maybe_finalize_async_calls(blocking=True)
 
     def finalize_pending_saves(self) -> None:
         """Block until any in-flight async checkpoint write completes.
