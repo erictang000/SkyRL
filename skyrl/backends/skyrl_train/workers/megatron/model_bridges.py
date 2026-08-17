@@ -197,7 +197,7 @@ try:
         model_config = unwrap_model(megatron_model)[0].config
         if self._share_embeddings_and_output_weights(model_config):
             names = [name for name in names if "output_layer" not in name]
-        return [names[i] for i, task in enumerate(tasks) if task is None]
+        return [names[i] if i < len(names) else f"<index {i}>" for i, task in enumerate(tasks) if task is None]
 
     def _build_conversion_tasks_dropping_unmapped(self, hf_pretrained, megatron_model, *args, **kwargs):
         tasks = _orig_build_conversion_tasks(self, hf_pretrained, megatron_model, *args, **kwargs)
@@ -208,7 +208,7 @@ try:
         if not getattr(type(self), "_skyrl_logged_unmapped", False):
             type(self)._skyrl_logged_unmapped = True
             try:
-                dropped = self._unmapped_param_names(tasks, megatron_model)
+                dropped = _unmapped_param_names(self, tasks, megatron_model)
             except Exception:  # never let diagnostics break weight loading
                 dropped = [f"<index {i}>" for i, task in enumerate(tasks) if task is None]
             logger.warning(

@@ -233,7 +233,7 @@ no-build-isolation-package = [
 # unpinned dependencies.
 override-dependencies = [
     "nvidia-resiliency-ext; sys_platform == 'never'",
-    # New hard dependency of megatron-bridge 0.7.0. It publishes no wheels, so it
+    # megatron-bridge hard dependency that publishes no wheels, so it
     # would compile CUDA on every install and on every Ray runtime-env sync.
     # megatron-core only uses it for the experimental DSA (DeepSeek Sparse
     # Attention) variant, behind a `try: from fast_hadamard_transform import ...

@@ -180,8 +180,6 @@ class MegatronWeightExtractor(WeightExtractor):
             # (`mlp.experts.local_experts.*.linear_fc1`) -- so a model built with one
             # layout still gets conversion tasks for the other. Those have no weights
             # to export, and including them would break bucket-size accounting.
-            # Bridge 0.6.0 registered the grouped layout only, so this restores the
-            # previous task set exactly.
             if sizes[idx] is None:
                 continue
             if getattr(task.mapping, "is_grouped_export", False):
@@ -502,17 +500,13 @@ class MegatronWorker:
         for k, v in transformer_config_kwargs.items():
             setattr(provider, k, v)
 
-        # Keep a hybrid (linear-attention) layer pattern consistent with num_layers.
-        # megatron-bridge < 0.7.0 set `linear_attention_freq` to an *interval* (an int),
-        # which megatron-core expanded against whatever `num_layers` ended up being, so
-        # shrinking `num_layers` above just produced a shorter pattern. Since 0.7.0 the
-        # bridge resolves the HF config's `layer_types` into an explicit per-layer list
+        # megatron bridge resolves the HF config's `layer_types` into an explicit per-layer list
         # sized for the full model, and megatron-core asserts
         # `len(pattern) == num_layers` in `get_linear_attention_pattern`. Truncate so a
         # `num_layers` override still builds. Only shrink: a pattern shorter than
         # `num_layers` is a genuine misconfiguration, so let the upstream assert report it.
         linear_attention_freq = getattr(provider, "linear_attention_freq", None)
-        if isinstance(linear_attention_freq, list) and len(linear_attention_freq) > provider.num_layers:
+        if isinstance(linear_attention_freq, (list, tuple)) and provider.num_layers is not None and len(linear_attention_freq) > provider.num_layers:
             logger.info(
                 f"Truncating linear_attention_freq from {len(linear_attention_freq)} to "
                 f"{provider.num_layers} entries to match the configured num_layers"

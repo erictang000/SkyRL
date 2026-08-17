@@ -46,9 +46,7 @@ from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
 _PP_SEED_OFFSET = 100
 
 # Process-wide queue of in-flight async checkpoint writes. Megatron-core has no
-# global for this; SkyRL used to stash it on
-# `megatron.core.dist_checkpointing.strategies.base`, a long-deprecated module
-# that megatron-core 0.20 deleted, so it lives here now. It has to be
+# global for this; It has to be
 # module-level rather than an instance attribute because `_finalize_async_calls`
 # is a staticmethod, invoked from a finalization callback with no strategy handle.
 _async_calls: Optional[AsyncCallsQueue] = None
