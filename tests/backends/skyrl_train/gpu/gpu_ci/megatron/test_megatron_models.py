@@ -10,6 +10,8 @@ block scales (NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1, set by
 _extra_env_vars_for_model). Select them with: -k "full_fp8 or fp8_param".
 """
 
+import os
+
 import pytest
 import ray
 import torch
@@ -18,6 +20,9 @@ from transformers import AutoTokenizer
 from skyrl.backends.skyrl_train.distributed.dispatch import (
     WorkerOutput,
     loss_fn_outputs_to_tensor,
+)
+from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
+    is_blackwell_or_newer,
 )
 from skyrl.backends.skyrl_train.inference_servers.engine_utils import (
     get_sampling_params_for_backend,
@@ -100,12 +105,23 @@ def _extra_env_vars_for_model(model_name: str, fp8_mode: str | None = None) -> d
     if "moonlight" in model_name.lower() or "glm-4" in model_name.lower():
         env["NVTE_FUSED_ATTN"] = "1"
     if fp8_mode:
-        # Hopper serialized-FP8 contract: FP32 block scales end-to-end, and
-        # vLLM must not requantize wire scales to E8M0 (train/utils/utils.py
-        # pins both in production; the test sets them explicitly because the
-        # fp8 fields are applied after get_test_actor_config's validate_cfg).
-        env["NVTE_FP8_BLOCK_SCALING_FP32_SCALES"] = "1"
-        env["VLLM_USE_DEEP_GEMM_E8M0"] = "0"
+        # Serialized-FP8 block-scale contract, mirroring what
+        # train/utils/utils.py pins in production (the test sets them
+        # explicitly because the fp8 fields are applied after
+        # get_test_actor_config's validate_cfg). Hopper: FP32 block scales
+        # end-to-end, and vLLM must not requantize wire scales to E8M0.
+        # Blackwell (SM100+): TE only supports power-of-2 block scales for
+        # blockwise quantization, and SM100 DeepGEMM only accepts E8M0 scale
+        # factors -- power-of-2 wire scales requantize to E8M0 losslessly.
+        if is_blackwell_or_newer():
+            scale_mode, e8m0_mode = "0", "1"
+        else:
+            scale_mode, e8m0_mode = "1", "0"
+        env["NVTE_FP8_BLOCK_SCALING_FP32_SCALES"] = os.environ.get("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", scale_mode)
+        env["VLLM_USE_DEEP_GEMM_E8M0"] = os.environ.get("VLLM_USE_DEEP_GEMM_E8M0", e8m0_mode)
+    # fla's TileLang GDN backend aborts on Blackwell; fall back to Triton.
+    if "qwen3.5" in model_name.lower():
+        env["FLA_TILELANG"] = os.environ.get("FLA_TILELANG", "0" if is_blackwell_or_newer() else "1")
     return env or None
 
 
