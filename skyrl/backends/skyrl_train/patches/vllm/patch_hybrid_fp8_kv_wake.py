@@ -42,6 +42,9 @@ def patch_hybrid_fp8_kv_wake() -> bool:
         from vllm.v1.worker import gpu_model_runner
     except ModuleNotFoundError:
         return False
+    except Exception as e:
+        logger.warning("Importing vLLM failed; skipping hybrid KV wake patch: {}", e)
+        return False
 
     runner_cls = gpu_model_runner.GPUModelRunner
     target = runner_cls.init_fp8_kv_scales
