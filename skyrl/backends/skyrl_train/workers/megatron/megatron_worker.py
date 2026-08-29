@@ -27,6 +27,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import (
     _convert_moe_experts_lora_to_vllm,
     broadcast_object_across_pp_ranks,
     freeze_moe_router,
+    gdn_in_proj_lora_is_safe,
     get_model_config,
     get_moe_metrics,
     print_model_size,
@@ -545,13 +546,29 @@ class MegatronWorker:
         self.enable_router_replay = megatron_config.moe_enable_routing_replay
 
     def configure_lora(self, lora_config, lora_type: Optional[str] = "lora"):
+        if lora_config.target_modules == "all-linear":
+            if lora_type == "lora":
+                target_modules = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
+            else:
+                target_modules = [
+                    "linear_q",
+                    "linear_k",
+                    "linear_v",
+                    "linear_proj",
+                    "linear_fc1_up",
+                    "linear_fc1_gate",
+                    "linear_fc2",
+                    "in_proj",
+                    "out_proj",
+                ]
+            if not gdn_in_proj_lora_is_safe(self.bridge):
+                target_modules.remove("in_proj")
+        else:
+            target_modules = lora_config.target_modules
+
         if lora_type == "lora":
             self.lora_cls = LoRA(
-                target_modules=(
-                    ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
-                    if lora_config.target_modules == "all-linear"
-                    else lora_config.target_modules
-                ),
+                target_modules=target_modules,
                 dim=lora_config.rank,
                 alpha=lora_config.alpha,
                 dropout=lora_config.dropout,
@@ -562,19 +579,7 @@ class MegatronWorker:
             )
         elif lora_type == "canonical_lora":
             self.lora_cls = CanonicalLoRA(
-                target_modules=(
-                    [
-                        "linear_q",
-                        "linear_k",
-                        "linear_v",
-                        "linear_proj",
-                        "linear_fc1_up",
-                        "linear_fc1_gate",
-                        "linear_fc2",
-                    ]
-                    if lora_config.target_modules == "all-linear"
-                    else lora_config.target_modules
-                ),
+                target_modules=target_modules,
                 dim=lora_config.rank,
                 alpha=lora_config.alpha,
                 dropout=lora_config.dropout,

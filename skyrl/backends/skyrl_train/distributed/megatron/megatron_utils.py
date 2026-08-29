@@ -198,6 +198,31 @@ def _convert_moe_experts_lora_to_vllm(
     return converted
 
 
+def gdn_in_proj_lora_is_safe(bridge) -> bool:
+    """Whether LoRA on GatedDeltaNet ``in_proj`` can round-trip through weight sync.
+
+    False for models whose bridge maps ``in_proj`` to two fused HF tensors
+    (``in_proj_qkvz``/``in_proj_ba``, e.g. Qwen3-Next): peft_bridge has no
+    fused-adapter split for that layout, so a merged export fails on a shape
+    mismatch and an unmerged export silently drops the ``in_proj_ba`` half.
+    True for the separate ``in_proj_qkv/z/b/a`` layout (e.g. Qwen3.5) and for
+    models without GDN layers (where ``in_proj`` matches nothing).
+    """
+    # `_model_bridge` hands each fresh bridge only the raw HF config; some
+    # bridges' `mapping_registry` inspect the checkpoint through
+    # `hf_pretrained.state` (GLM-4.5's fused-expert probe), so install the
+    # AutoBridge's weights-backed `hf_pretrained` first.
+    model_bridge = bridge._model_bridge
+    model_bridge.hf_pretrained = bridge.hf_pretrained
+    mapping = model_bridge.mapping_registry().megatron_to_hf_lookup(
+        # Layer 0 stands in for the wildcard in the bridge's mapping patterns.
+        "decoder.layers.0.self_attention.in_proj.weight"
+    )
+    if mapping is None:
+        return True
+    return isinstance(mapping.hf_param, dict) and set(mapping.hf_param) == {"qkv", "z", "b", "a"}
+
+
 @torch.no_grad()
 def offload_megatron_grads_to_cpu(models):
     for model_chunk in models:
