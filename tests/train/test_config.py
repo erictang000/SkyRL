@@ -193,6 +193,7 @@ def test_runtime_env_supports_fsdp_without_megatron_configs(monkeypatch):
 def test_serialized_fp8_runtime_defaults_to_fp32_scales(monkeypatch):
     monkeypatch.delenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", raising=False)
     monkeypatch.delenv("VLLM_USE_DEEP_GEMM_E8M0", raising=False)
+    monkeypatch.setattr(train_utils, "has_visible_cuda_device", lambda: True)
     monkeypatch.setattr(train_utils, "peer_access_supported", lambda **_kwargs: True)
     monkeypatch.setattr(train_utils, "is_blackwell_or_newer", lambda: False)
     cfg = example_dummy_config()
@@ -207,6 +208,7 @@ def test_serialized_fp8_runtime_defaults_to_fp32_scales(monkeypatch):
 def test_serialized_fp8_runtime_defaults_to_pow2_scales_on_blackwell(monkeypatch):
     monkeypatch.delenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", raising=False)
     monkeypatch.delenv("VLLM_USE_DEEP_GEMM_E8M0", raising=False)
+    monkeypatch.setattr(train_utils, "has_visible_cuda_device", lambda: True)
     monkeypatch.setattr(train_utils, "peer_access_supported", lambda **_kwargs: True)
     monkeypatch.setattr(train_utils, "is_blackwell_or_newer", lambda: True)
     cfg = example_dummy_config()
@@ -221,6 +223,7 @@ def test_serialized_fp8_runtime_defaults_to_pow2_scales_on_blackwell(monkeypatch
 def test_serialized_fp8_pow2_scales_reject_disabled_e8m0_on_blackwell(monkeypatch):
     monkeypatch.delenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", raising=False)
     monkeypatch.setenv("VLLM_USE_DEEP_GEMM_E8M0", "0")
+    monkeypatch.setattr(train_utils, "has_visible_cuda_device", lambda: True)
     monkeypatch.setattr(train_utils, "peer_access_supported", lambda **_kwargs: True)
     monkeypatch.setattr(train_utils, "is_blackwell_or_newer", lambda: True)
     cfg = example_dummy_config()
@@ -228,6 +231,51 @@ def test_serialized_fp8_pow2_scales_reject_disabled_e8m0_on_blackwell(monkeypatc
 
     with pytest.raises(ValueError, match="VLLM_USE_DEEP_GEMM_E8M0=1"):
         prepare_runtime_environment(cfg)
+
+
+def test_serialized_fp8_requires_an_explicit_scale_mode_without_a_driver_gpu(monkeypatch):
+    """The contract is baked into the runtime env before ray.init, so a GPU-less
+    head cannot infer it from the workers; guessing Hopper would hand FP32 block
+    scales to Blackwell workers."""
+    monkeypatch.delenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", raising=False)
+    monkeypatch.delenv("VLLM_USE_DEEP_GEMM_E8M0", raising=False)
+    monkeypatch.setattr(train_utils, "peer_access_supported", lambda **_kwargs: True)
+    monkeypatch.setattr(train_utils, "has_visible_cuda_device", lambda: False)
+    cfg = example_dummy_config()
+    cfg.generator.inference_engine.fp8_weight_sync_mode = "blockwise"
+
+    with pytest.raises(ValueError, match="NVTE_FP8_BLOCK_SCALING_FP32_SCALES"):
+        prepare_runtime_environment(cfg)
+
+
+def test_serialized_fp8_pow2_scales_set_e8m0_without_a_driver_gpu(monkeypatch):
+    """E8M0 follows the wire scale format, not the driver's device: vLLM picks the
+    per-device form itself, so the default must survive a GPU-less head."""
+    monkeypatch.setenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", "0")
+    monkeypatch.delenv("VLLM_USE_DEEP_GEMM_E8M0", raising=False)
+    monkeypatch.setattr(train_utils, "peer_access_supported", lambda **_kwargs: True)
+    monkeypatch.setattr(train_utils, "has_visible_cuda_device", lambda: False)
+    monkeypatch.setattr(train_utils, "is_blackwell_or_newer", lambda: False)
+    cfg = example_dummy_config()
+    cfg.generator.inference_engine.fp8_weight_sync_mode = "blockwise"
+
+    env_vars = prepare_runtime_environment(cfg)
+
+    assert env_vars["NVTE_FP8_BLOCK_SCALING_FP32_SCALES"] == "0"
+    assert env_vars["VLLM_USE_DEEP_GEMM_E8M0"] == "1"
+
+
+@pytest.mark.parametrize("backend", ["sharded_rdt", "delta"])
+def test_serialized_fp8_weight_sync_rejects_backends_without_a_chunk_channel(backend):
+    """Neither backend carries payload + scale pairs, and both would otherwise
+    fail only at the first sync -- after vLLM has loaded as FP8."""
+    cfg = _make_validated_test_config()
+    cfg.trainer.strategy = "megatron"
+    cfg.generator.inference_engine.fp8_weight_sync_mode = "blockwise"
+    cfg.generator.inference_engine.weight_sync_backend = backend
+
+    with pytest.raises(ValueError, match=backend):
+        validate_inference_engine_cfg(cfg)
 
 
 def test_serialized_fp8_weight_sync_requires_megatron():
@@ -252,6 +300,7 @@ def test_serialized_fp8_weight_sync_rejects_adapter_only_megatron_lora():
 
 def test_megatron_fp8_compute_defaults_to_fp32_scales_without_serialized_sync(monkeypatch):
     monkeypatch.delenv("NVTE_FP8_BLOCK_SCALING_FP32_SCALES", raising=False)
+    monkeypatch.setattr(train_utils, "has_visible_cuda_device", lambda: True)
     monkeypatch.setattr(train_utils, "peer_access_supported", lambda **_kwargs: True)
     monkeypatch.setattr(train_utils, "is_blackwell_or_newer", lambda: False)
     cfg = example_dummy_config()

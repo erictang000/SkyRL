@@ -21,6 +21,7 @@ from ray.util.placement_group import (
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
+    has_visible_cuda_device,
     is_blackwell_or_newer,
     is_fp8_enabled,
     resolve_auto_fp8_recipe,
@@ -584,6 +585,18 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
     if ie_cfg.fp8_weight_sync_mode == BLOCKWISE_FP8:
         if cfg.trainer.strategy != "megatron":
             raise ValueError("blockwise FP8 weight sync requires trainer.strategy='megatron'")
+        if ie_cfg.weight_sync_backend in {"sharded_rdt", "delta"}:
+            # Neither backend can carry the quantized payload + scale pairs that
+            # blockwise FP8 sync is made of: the RDT weight sources export bridge
+            # tensors cast to the inference dtype, and the delta checkpoint format
+            # cannot represent the marker names and scale tensors. Both senders
+            # refuse at send time too, but vLLM is built with quantization="fp8"
+            # and load_format="dummy" long before the first sync, so the model is
+            # already loaded by then.
+            raise ValueError(
+                "blockwise FP8 weight sync is not supported with "
+                f"weight_sync_backend={ie_cfg.weight_sync_backend!r}; use 'nccl'"
+            )
         lora_cfg = cfg.trainer.policy.model.lora
         if lora_cfg.rank > 0 and not cfg.trainer.policy.megatron_config.lora_config.merge_lora:
             raise ValueError(
@@ -905,6 +918,19 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
     fp8_env_defaults: dict[str, str] = {}
     configured_scale_mode = os.environ.get("NVTE_FP8_BLOCK_SCALING_FP32_SCALES")
     if fp8_contract_enabled or configured_scale_mode is not None:
+        if configured_scale_mode is None and not has_visible_cuda_device():
+            # The block-scale contract must be identical in every actor, so it is
+            # fixed here, before ray.init ships it in the runtime env — too early
+            # to probe the cluster. A GPU-less head cannot infer the workers'
+            # architecture, and defaulting to the Hopper contract would silently
+            # hand FP32 block scales to Blackwell workers, where TE emulates
+            # blockwise on the MX datapath and only supports power-of-2 scales.
+            raise ValueError(
+                "FP8 is enabled but this driver sees no CUDA device, so the block-scale "
+                "contract cannot be inferred from the workers' architecture. Export "
+                "NVTE_FP8_BLOCK_SCALING_FP32_SCALES explicitly: '0' (power-of-2 scales) "
+                "on Blackwell/SM100+, '1' (FP32 scales) on Hopper."
+            )
         scale_mode = configured_scale_mode or ("0" if is_blackwell_or_newer() else "1")
         if scale_mode not in {"0", "1"}:
             raise ValueError("NVTE_FP8_BLOCK_SCALING_FP32_SCALES must be '0' (power-of-2) " "or '1' (FP32 scales).")
@@ -925,18 +951,21 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
                     "does not requantize them to power-of-2 scales."
                 )
             fp8_env_defaults["VLLM_USE_DEEP_GEMM_E8M0"] = e8m0_mode
-        elif serialized_fp8 and scale_mode == "0" and is_blackwell_or_newer():
-            # The symmetric rule: SM100 DeepGEMM only accepts E8M0 scale factors
-            # (with VLLM_USE_DEEP_GEMM_E8M0=0 it asserts "Unsupported architecture
-            # or scaling factor types"). Power-of-2 wire scales are exactly
-            # representable in E8M0, so the requantization is lossless.
+        elif serialized_fp8 and scale_mode == "0":
+            # The symmetric rule, and a property of the wire format rather than of
+            # this process's device: power-of-2 scales are exactly representable in
+            # E8M0, so vLLM's requantization is lossless. vLLM then picks the
+            # per-device form itself (UE8M0 on SM100/SM120, FP32-ceil-to-UE8M0 on
+            # Hopper), which is why this default must not be gated on the driver's
+            # architecture — a GPU-less head would drop it. SM100 DeepGEMM also
+            # rejects the alternative outright ("Unsupported architecture or
+            # scaling factor types" with VLLM_USE_DEEP_GEMM_E8M0=0).
             e8m0_mode = os.environ.get("VLLM_USE_DEEP_GEMM_E8M0", "1")
             if e8m0_mode != "1":
                 raise ValueError(
-                    "Power-of-2 block scales on SM100+ require VLLM_USE_DEEP_GEMM_E8M0=1: "
-                    "Blackwell DeepGEMM only accepts E8M0 scale factors, and power-of-2 "
-                    "wire scales requantize to E8M0 losslessly. Unset the variable or "
-                    "set it to 1."
+                    "Power-of-2 block scales require VLLM_USE_DEEP_GEMM_E8M0=1: they "
+                    "requantize to E8M0 losslessly, and Blackwell DeepGEMM accepts no "
+                    "other scale factor type. Unset the variable or set it to 1."
                 )
             fp8_env_defaults["VLLM_USE_DEEP_GEMM_E8M0"] = e8m0_mode
 

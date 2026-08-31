@@ -47,6 +47,9 @@ MEGATRON_FP8_AMAX_COMPUTE_ALGO=most_recent
 MEGATRON_TP_ONLY_AMAX_RED=false
 FP8_WEIGHT_SYNC_MODE=blockwise
 export NVTE_FP8_BLOCK_SCALING_FP32_SCALES=0
+# Pinned rather than left to the default so the contract is explicit on
+# both ends: power-of-2 wire scales, which vLLM consumes as E8M0.
+export VLLM_USE_DEEP_GEMM_E8M0=1
 
 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
