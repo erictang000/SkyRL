@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import fastapi
 import psutil
+import zstandard
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError as FastAPIRequestValidationError
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -777,6 +778,8 @@ class SaveWeightsRequest(BaseModel):
 class LoadWeightsRequest(BaseModel):
     model_id: str
     path: str
+    optimizer: bool = True
+    seq_id: int | None = None
     type: Literal["load_weights"] | None = None
 
 
@@ -1083,14 +1086,28 @@ async def get_training_run(model_id: str, session: AsyncSession = Depends(get_se
     )
 
 
+# Upper bound for a decompressed forward_backward body. Far above any
+# legitimate payload (requests are chunked client-side well below this), but
+# it keeps a small crafted body from ballooning into an arbitrarily large
+# allocation.
+_MAX_FWDBWD_BODY_BYTES = 1 << 30  # 1 GiB
+
+
 async def _read_forward_backward_request(request: Request) -> tuple[ForwardBackwardRequest, bool]:
     """Read a forward_backward body in either wire format.
 
     tinker SDK >= 0.25.0 submits the body as protobuf and routes forward-only
     passes here via the proto's ``forward_only`` flag instead of calling
     ``/api/v1/forward``; older SDKs keep sending JSON with forward_only False.
+    Large proto bodies may arrive zstd-compressed (``Content-Encoding: zstd``);
+    ASGI servers do not decode request bodies, so decompress here.
     """
     body = await request.body()
+    if request.headers.get("content-encoding", "").strip().lower() == "zstd":
+        try:
+            body = zstandard.ZstdDecompressor().decompress(body, max_output_size=_MAX_FWDBWD_BODY_BYTES)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"failed to zstd-decompress request body: {exc}") from exc
     if PROTO_CONTENT_TYPE in request.headers.get("content-type", "").lower():
         try:
             request_dict, forward_only = parse_forward_backward_request(body)
@@ -1164,8 +1181,25 @@ async def optim_step(request: OptimStepRequest, session: AsyncSession = Depends(
 
 @app.post("/api/v1/load_weights", response_model=FutureResponse)
 async def load_weights(request: LoadWeightsRequest, req: Request, session: AsyncSession = Depends(get_session)):
-    """Loads weights and training state."""
+    """Loads weights and training state.
+
+    Matching the Tinker service, LoadWeights is only permitted as a model's first
+    request: any prior request for the model (forward_backward, save_weights, a
+    previous load_weights, ...) makes further loads a 400. Load into a freshly
+    created model instead (create_training_client_from_state[_with_optimizer]).
+    """
     await get_model(session, request.model_id)
+
+    prior_requests = await session.exec(
+        select(func.count())
+        .select_from(FutureDB)
+        .where(FutureDB.model_id == request.model_id)
+        .where(FutureDB.request_type != types.RequestType.CREATE_MODEL)
+    )
+    prior_count = prior_requests.one()
+    if prior_count > 0:
+        seq_id = request.seq_id if request.seq_id is not None else prior_count + 1
+        raise HTTPException(status_code=400, detail=f"LoadWeights is not permitted with seq_id {seq_id}")
 
     path = types.TinkerPath.parse(request.path)
     if (
@@ -1184,7 +1218,11 @@ async def load_weights(request: LoadWeightsRequest, req: Request, session: Async
         session=session,
         request_type=types.RequestType.LOAD_WEIGHTS,
         model_id=request.model_id,
-        request_data=types.LoadWeightsInput(source_model_id=source_model_id, checkpoint_id=checkpoint_id),
+        request_data=types.LoadWeightsInput(
+            source_model_id=source_model_id,
+            checkpoint_id=checkpoint_id,
+            load_optimizer=request.optimizer,
+        ),
     )
 
     await session.commit()
