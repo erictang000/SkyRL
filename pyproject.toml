@@ -206,6 +206,12 @@ dev = [
 [tool.setuptools]
 include-package-data = true
 
+# Runtime patch payloads (skyrl/backends/skyrl_train/patches/**/*.patch) are read
+# from disk at runtime, so they must ship inside the package. `include-package-data`
+# alone does not cover them
+[tool.setuptools.package-data]
+"*" = ["*.patch"]
+
 [tool.setuptools.dynamic]
 version = {attr = "skyrl.__version__"}
 
