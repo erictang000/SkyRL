@@ -19,6 +19,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from omegaconf import OmegaConf
 from transformers import AutoConfig
 
+import skyrl.backends.skyrl_train.workers.megatron.model_bridges  # noqa: F401  # register extra bridges
 from skyrl.backends.skyrl_train.distributed.dispatch import MeshRank, WorkerOutput
 from skyrl.backends.skyrl_train.distributed.megatron.megatron_strategy import (
     MegatronStrategy,
@@ -44,6 +45,9 @@ from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import
 from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_index_share import (
     patch_dsa_index_share,
 )
+from skyrl.backends.skyrl_train.patches.megatron.patch_mla_thd_v_pad import (
+    patch_mla_thd_v_pad,
+)
 from skyrl.backends.skyrl_train.patches.te.patch_fa2_head_dim import (
     patch_fa2_head_dim_allowlist,
 )
@@ -66,6 +70,9 @@ from skyrl.backends.skyrl_train.workers.megatron.adapter_store import (
 from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
     MegatronModelWrapper,
 )
+from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
+    maybe_force_qwen35_text_bridge,
+)
 from skyrl.backends.skyrl_train.workers.worker import (
     CriticWorkerBase,
     PolicyWorkerBase,
@@ -84,16 +91,13 @@ from skyrl.train.config.config import MegatronDDPConfig, get_config_as_dict
 from skyrl.train.utils.utils import str_to_torch_dtype, update_model_config
 from skyrl.utils.tok import get_tokenizer
 
+patch_mla_thd_v_pad()
+
 if TYPE_CHECKING:
     from skyrl.backends.skyrl_train.inference_servers.base import (
         InferenceEngineInterface,
     )
     from skyrl.train.config.config import InferenceEngineConfig
-
-import skyrl.backends.skyrl_train.workers.megatron.model_bridges  # noqa: F401  # register extra bridges
-from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
-    maybe_force_qwen35_text_bridge,
-)
 
 
 class MegatronWeightExtractor(WeightExtractor):
