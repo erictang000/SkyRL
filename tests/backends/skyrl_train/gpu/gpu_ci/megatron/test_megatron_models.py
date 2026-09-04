@@ -71,6 +71,16 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         cfg.trainer.ref.language_model_only = True
         # validate_cfg requires policy/ref/generator language_model_only to agree.
         cfg.generator.inference_engine.language_model_only = True
+    if "glm-5.3-flash" in model_name.lower():
+        # GLM-5.3-Flash (glm5_next) is a KDA + DSA(kpool) + mHC hybrid MoE shipped as a VL
+        # checkpoint. SkyRL bridges only the language model (skyrl_train/workers/megatron/glm5_next),
+        # so route both trainer and vLLM to the text-only path. KDA needs packed (thd) sequences;
+        # the DSA layers are NoPE MLA with equal q/k/v head dims (256), so FA2 is fine.
+        cfg.trainer.remove_microbatch_padding = True
+        cfg.trainer.policy.language_model_only = True
+        cfg.trainer.ref.language_model_only = True
+        cfg.generator.inference_engine.language_model_only = True
+        cfg.trainer.flash_attn = True
     # Large MoE models: Megatron's DistributedOptimizer eagerly materializes
     # the fp32 master + AdamW state on GPU at init (~6x model size), which
     # OOMs on 4xH100 before forward ever runs. These tests only forward +
@@ -79,6 +89,7 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         ("qwen3.5-35b" in model_name.lower() and "tiny" not in model_name.lower())
         or ("nemotron-3.5-lightning" in model_name.lower())
         or ("glm-4.7-flash" in model_name.lower())
+        or ("glm-5.3-flash" in model_name.lower())
     )
     if is_large_moe:
         cfg.trainer.policy.inference_only_init = True
@@ -111,6 +122,11 @@ def _engine_overrides_for_model(model_name: str) -> dict:
     if "glm-4.7-flash" in model_name.lower():
         # GLM-4.7-Flash's 202k default context would size the KV pool far past
         # what is left next to the colocated Megatron policy shard.
+        overrides["engine_init_kwargs"]["max_model_len"] = 4096
+        overrides["gpu_memory_utilization"] = 0.5
+    if "glm-5.3-flash" in model_name.lower():
+        # 1M default context; the 4-layer slice is still ~24B params (288 experts x 3 MoE layers),
+        # colocated with the Megatron shard. The DSA indexer in vLLM needs DeepGEMM.
         overrides["engine_init_kwargs"]["max_model_len"] = 4096
         overrides["gpu_memory_utilization"] = 0.5
     return overrides
@@ -214,6 +230,28 @@ async def construct_training_input_from_generator_output(generator_output, token
             3e-1,
             5e-2,
             id="glm-4.7-flash_h100_tp4_ep4",
+            marks=pytest.mark.h100,
+        ),
+        # GLM-5.3-Flash, 4-layer slice of the real checkpoint (CharyZeng/GLM-5.3-Flash-4layer):
+        # 2 KDA + 2 DSA(kpool) layers, 1 dense + 3 x 288-expert MoE, mHC on every block; ~24B
+        # params in bf16 (the routed experts dominate), so it needs the same 4xH100 mesh as the
+        # other large MoE entries. Real (truncated) weights keep the logprob distribution peaked,
+        # unlike the random-init tiny models, so the vLLM/Megatron comparison is meaningful even
+        # though the slice itself is not coherent. Exercises: KDA (fla), NoPE MLA + kpool indexer
+        # (dense path, sequences <= index_topk), clamped SwiGLU MoE, mHC, HF<->Megatron bridge
+        # with `model.language_model.*` prefixes, weight sync into vLLM's glm5_next model.
+        pytest.param(
+            2,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            "CharyZeng/GLM-5.3-Flash-4layer",
+            3e-1,
+            5e-2,
+            id="glm-5.3-flash-4layer_h100_tp2_ep4",
             marks=pytest.mark.h100,
         ),
         pytest.param(

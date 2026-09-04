@@ -8,6 +8,13 @@ SkyRL uses Megatron-Bridge for HF-to-Megatron model conversion. Installed from g
 - `MegatronConfig` in `skyrl/train/config.py`
 - `MegatronWorker` in `skyrl/backends/skyrl_train/workers/megatron/megatron_worker.py`.
 - Custom bridges in `skyrl/backends/skyrl_train/workers/megatron/model_bridges.py` (e.g., `GLM47FlashBridge`).
+- GLM-5.3-Flash (`glm5_next`: KDA linear attention + DSA sparse MLA with kpool indexer + mHC hyper-connections)
+  lives in `skyrl/backends/skyrl_train/workers/megatron/glm5_next/` -- its own layer classes, block spec, provider and
+  bridge, since neither megatron-core nor Megatron-Bridge support it. Needs `language_model_only=True` (VL checkpoint),
+  packed sequences (KDA), and the vLLM side needs DeepGEMM for the DSA indexer.
+- `skyrl/backends/skyrl_train/workers/megatron/__init__.py` applies `patch_fa4_cute_import` before any megatron import:
+  flash-attn 2.8.x's FA4 `flash_attn.cute` module is incompatible with the cutlass DSL vLLM >= 0.28 pins and would
+  otherwise abort `import megatron.bridge`.
 
 ## Parallelism Strategies
 

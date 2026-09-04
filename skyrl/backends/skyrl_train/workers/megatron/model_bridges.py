@@ -24,6 +24,9 @@ try:
     from megatron.core.models.gpt.gpt_model import GPTModel
     from megatron.core.utils import unwrap_model
 
+    # GLM-5.3-Flash (glm5_next): KDA + DSA(kpool) + mHC hybrid MoE. Importing registers the bridge.
+    import skyrl.backends.skyrl_train.workers.megatron.glm5_next.bridge  # noqa: F401
+
     @MegatronModelBridge.register_bridge(
         source="Glm4MoeLiteForCausalLM",
         target=GPTModel,
