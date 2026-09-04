@@ -411,10 +411,15 @@ vllm = [
     { url = "https://wheels.vllm.ai/98ed0856f31fa3aaf5e27464e2b4ef5a8ee6b2f5/vllm-0.28.1rc1.dev359%2Bg98ed0856f-cp38-abi3-manylinux_2_28_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { url = "https://wheels.vllm.ai/98ed0856f31fa3aaf5e27464e2b4ef5a8ee6b2f5/vllm-0.28.1rc1.dev359%2Bg98ed0856f-cp38-abi3-manylinux_2_28_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
 ]
-# TEMPORARY (local dev): DeepGEMM built from deepseek-ai/DeepGEMM@8b1392b (vLLM's pinned DeepGEMM commit) against
-# torch 2.11 + CUDA 13 -- replaced by a GitHub release URL before merge. vLLM's vendored copy is linked against
-# torch 2.13 and fails to import under the torch 2.11 we hold, and vLLM's GLM-5.3 DSA indexer hard-requires DeepGEMM.
-deep-gemm = { path = "/mnt/nvme0/etang/DeepGEMM/dist/deep_gemm-2.6.1+8b1392b-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version >= '3.12' and python_full_version < '3.13'" }
+# DeepGEMM at deepseek-ai/DeepGEMM@8b1392b (the commit the pinned vLLM vendors), built against torch 2.11 +
+# CUDA 13 (nvcc 13.0.88, cp312, x86_64, glibc >= 2.35) and hosted like the fast-hadamard-transform wheels
+# below. vLLM ships its own copy under `vllm.third_party.deep_gemm`, but that `_C` is a version-specific
+# cpython extension linked against torch 2.13 and fails to import under the torch 2.11 we hold; vLLM
+# prefers an installed `deep_gemm` package when one exists. Needed because vLLM's GLM-5.3-Flash DSA
+# indexer hard-requires DeepGEMM (DeepSeek-V3.2-style sparse-attention models too). Kernels are JIT
+# compiled at runtime, so the host still needs nvcc/nvrtc. Rebuild if the torch pin moves; drop once
+# vLLM's vendored extension loads against our torch.
+deep-gemm = { url = "https://github.com/erictang000/DeepGEMM/releases/download/v2.6.1-8b1392b-cu13torch2.11/deep_gemm-2.6.1%2B8b1392b-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version >= '3.12' and python_full_version < '3.13'" }
 # NOTE (sumanthrh): This custom wheel of vllm-router includes a fix for /chat/completions endpoint: https://github.com/vllm-project/router/pull/162  on top of 0.1.14
 # TODO (sumanthrh): Remove this after 0.1.15 vllm-router release
 vllm-router = [

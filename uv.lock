@@ -1599,9 +1599,9 @@ wheels = [
 [[package]]
 name = "deep-gemm"
 version = "2.6.1+8b1392b"
-source = { path = "/mnt/nvme0/etang/DeepGEMM/dist/deep_gemm-2.6.1+8b1392b-cp312-cp312-linux_x86_64.whl" }
+source = { url = "https://github.com/erictang000/DeepGEMM/releases/download/v2.6.1-8b1392b-cu13torch2.11/deep_gemm-2.6.1%2B8b1392b-cp312-cp312-linux_x86_64.whl" }
 wheels = [
-    { filename = "deep_gemm-2.6.1+8b1392b-cp312-cp312-linux_x86_64.whl", hash = "sha256:52933489232f8051ffd6081eff2a68812d085f667974bd123602de57afa252b9" },
+    { url = "https://github.com/erictang000/DeepGEMM/releases/download/v2.6.1-8b1392b-cu13torch2.11/deep_gemm-2.6.1%2B8b1392b-cp312-cp312-linux_x86_64.whl", hash = "sha256:52933489232f8051ffd6081eff2a68812d085f667974bd123602de57afa252b9" },
 ]
 
 [[package]]
@@ -9338,8 +9338,8 @@ requires-dist = [
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "datasets", marker = "extra == 'skyrl-train'", specifier = ">=4.0.0" },
     { name = "debugpy", marker = "extra == 'skyrl-train'", specifier = "==1.8.0" },
-    { name = "deep-gemm", marker = "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fsdp'", path = "/mnt/nvme0/etang/DeepGEMM/dist/deep_gemm-2.6.1+8b1392b-cp312-cp312-linux_x86_64.whl" },
-    { name = "deep-gemm", marker = "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", path = "/mnt/nvme0/etang/DeepGEMM/dist/deep_gemm-2.6.1+8b1392b-cp312-cp312-linux_x86_64.whl" },
+    { name = "deep-gemm", marker = "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fsdp'", url = "https://github.com/erictang000/DeepGEMM/releases/download/v2.6.1-8b1392b-cu13torch2.11/deep_gemm-2.6.1%2B8b1392b-cp312-cp312-linux_x86_64.whl" },
+    { name = "deep-gemm", marker = "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", url = "https://github.com/erictang000/DeepGEMM/releases/download/v2.6.1-8b1392b-cu13torch2.11/deep_gemm-2.6.1%2B8b1392b-cp312-cp312-linux_x86_64.whl" },
     { name = "fast-hadamard-transform", marker = "python_full_version == '3.12.*' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", url = "https://github.com/erictang000/fast-hadamard-transform/releases/download/v1.1.0.post2-cu13torch2.11/fast_hadamard_transform-1.1.0%2Bcu13torch2.11cxx11abitrue-cp312-cp312-linux_x86_64.whl" },
     { name = "fast-hadamard-transform", marker = "python_full_version == '3.13.*' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", url = "https://github.com/erictang000/fast-hadamard-transform/releases/download/v1.1.0.post2-cu13torch2.11/fast_hadamard_transform-1.1.0%2Bcu13torch2.11cxx11abitrue-cp313-cp313-linux_x86_64.whl" },
     { name = "fast-hadamard-transform", marker = "(python_full_version < '3.12' and sys_platform == 'linux' and extra == 'megatron') or (python_full_version >= '3.14' and sys_platform == 'linux' and extra == 'megatron') or (platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'megatron')", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=e7706faf8d1c3b9f241e36860640ad1dac644ede" },
