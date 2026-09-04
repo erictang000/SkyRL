@@ -244,6 +244,10 @@ async def construct_training_input_from_generator_output(generator_output, token
         # though the slice itself is not coherent. Exercises: KDA (fla), NoPE MLA + kpool indexer
         # (dense path, sequences <= index_topk), clamped SwiGLU MoE, mHC, HF<->Megatron bridge
         # with `model.language_model.*` prefixes, weight sync into vLLM's glm5_next model.
+        # Threshold: the truncated slice has a very spread next-token distribution, so bf16
+        # per-token logprob noise is larger than on a full model -- HF-bf16 vs HF-fp32 already
+        # differs by 0.056 mean |dlogprob| on real text, vLLM vs HF-bf16 by 0.062, Megatron vs
+        # HF-fp32 by 0.043; vLLM vs Megatron lands at ~0.06 (0.060 measured on 4xB200).
         pytest.param(
             2,
             1,
@@ -254,7 +258,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             4,
             "CharyZeng/GLM-5.3-Flash-4layer",
             3e-1,
-            5e-2,
+            1e-1,
             id="glm-5.3-flash-4layer_h100_tp2_ep4",
             marks=pytest.mark.h100,
         ),
