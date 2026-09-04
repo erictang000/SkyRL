@@ -592,6 +592,9 @@ async def _build_and_serve_vllm_server(
     # One uvicorn per port (no api_server_count fan-out), matching vLLM's own
     # single-server path, so SO_REUSEPORT stays off.
     sock = create_server_socket(sock_addr, reuse_port=False)
+    # vLLM >= 0.28.1 gates the token-in/token-out ``/inference/v1/generate`` route (which SkyRL's
+    # generation client calls) behind this env var, read when the app is built.
+    os.environ.setdefault("VLLM_ENABLE_SCALE_OUT_ENDPOINTS", "1")
     app = build_app(cli_args)
 
     # Initialize the engine (this loads the model - takes time)
