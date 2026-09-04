@@ -16,8 +16,10 @@ dependencies = [
     "pillow>=11.3.0",
     "rich>=14.1.0",
     "safetensors>=0.6.2",
-    "tokenizers>=0.21.2",
-    "transformers>=5.16.1,<5.17",
+    # Floor tracks the transformers pin below: transformers 5.16.1 requires
+    # tokenizers>=0.23.1.
+    "tokenizers>=0.23.1",
+    "transformers>=5.6.1,<=5.16.1",
     "typer>=0.17.4",
     "peft==0.18.1",
     "hf_transfer",
@@ -251,16 +253,16 @@ no-build-isolation-package = [
 override-dependencies = [
     "nvidia-resiliency-ext; sys_platform == 'never'",
     "transformer-engine[pytorch]==2.16.0; sys_platform == 'linux'",
-    "transformers>=5.16.1,<5.17; sys_platform == 'linux'",
+    "transformers>=5.6.1,<=5.16.1; sys_platform == 'linux'",
     "megatron-core>=0.16.0; sys_platform == 'linux' and python_version >= '3.12'",
     "ml_dtypes>=0.5.0; sys_platform == 'linux'",
     # `nixl` hard-depends on both nixl-cu12 and nixl-cu13; drop the cu12 variant
     # so it doesn't pull a second, unused CUDA runtime in alongside the cu13 one.
     "nixl-cu12; sys_platform == 'never'",
     # Megatron-Bridge pins flashinfer-python==0.6.8.post1, which conflicts with
-    # our pin, so all three flashinfer packages are held here. vLLM 0.28.0 needs
-    # >=0.6.16: it imports `flashinfer.autotuner.set_autotune_process_group`,
-    # which 0.6.14 does not have, and the engine fails to start without it.
+    # our pin, so all three flashinfer packages are held here. The pinned vLLM
+    # (0.28.1rc1.dev359, see `vllm` in [tool.uv.sources]) requires exactly 0.6.18; vLLM
+    # 0.28.0 already needed >=0.6.16 (`flashinfer.autotuner.set_autotune_process_group`).
     # flashinfer hard-errors when an installed cubin's version differs from its
     # own, so the three must move together.
     # They must also be >=0.6.13: older flashinfer rejects the `layout_code` vLLM's
