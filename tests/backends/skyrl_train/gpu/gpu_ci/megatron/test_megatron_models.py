@@ -81,6 +81,10 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         cfg.trainer.ref.language_model_only = True
         cfg.generator.inference_engine.language_model_only = True
         cfg.trainer.flash_attn = True
+        # vLLM's KDA triton kernels put (num_seqs * kda_heads) in CUDA grid dim y; with the default
+        # max_num_seqs=1024 and 64 heads that is 65536 > 65535 and the CUDA-graph capture / profile
+        # run fails with "Triton Error [CUDA]: invalid argument". Stay below the limit.
+        cfg.generator.inference_engine.max_num_seqs = 512
     # Large MoE models: Megatron's DistributedOptimizer eagerly materializes
     # the fp32 master + AdamW state on GPU at init (~6x model size), which
     # OOMs on 4xH100 before forward ever runs. These tests only forward +
