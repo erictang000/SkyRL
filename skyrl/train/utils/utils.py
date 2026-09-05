@@ -817,12 +817,15 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         # object and requires pickling.
         env_vars["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
 
-        # NOTE (sumanthrh): In vLLM >= 0.9.0, we've observed compilatiion failures with torch compile.
-        # removing the compilation directory and trying again does not fix the issue. Temporarily we disable
-        # compilation cache, which seems to fix the issue. This should not have any effect on performance -
-        # compilation will still happen, it's just not cached
-        # TODO (sumanthrh): remove this once vLLM fixes the issue
-        env_vars["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+        # vLLM torch compile is default enabled, we leave it as-is and propagate any user-supplied
+        # overrides for `VLLM_DISABLE_COMPILE_CACHE`
+        # TODO (sumanthrh): Test with shared storage in a multi-node env where we can persist cache
+        if os.environ.get("VLLM_DISABLE_COMPILE_CACHE"):
+            logger.info(
+                "Exporting `VLLM_DISABLE_COMPILE_CACHE` to ray runtime env: "
+                f"{os.environ['VLLM_DISABLE_COMPILE_CACHE']}"
+            )
+            env_vars["VLLM_DISABLE_COMPILE_CACHE"] = os.environ["VLLM_DISABLE_COMPILE_CACHE"]
 
         if not os.environ.get("VLLM_USE_V1", False):
             logger.info(
