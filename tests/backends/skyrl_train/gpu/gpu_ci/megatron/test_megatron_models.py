@@ -306,6 +306,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
             5e-1,
             5e-2,
+            None,
             id="nemotron3.5-lightning_tp4_ep4_h100",
             marks=pytest.mark.h100,
         ),
