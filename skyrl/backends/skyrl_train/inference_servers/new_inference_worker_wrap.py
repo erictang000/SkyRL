@@ -322,9 +322,13 @@ class NewInferenceWorkerWrap(LayerwiseReloadWorkerMixin):
         Receive a batched weight update via vLLM's NCCL weight transfer engine.
 
         Alternative to update_weights_ipc for the broadcast (non-IPC) sender:
-        the trainer initiates an NCCL broadcast via
-        NCCLWeightTransferEngine.trainer_send_weights, and each inference
-        worker calls weight_transfer_engine.receive_weights here.
+        the trainer initiates an NCCL broadcast via the vendored
+        ``nccl_trainer_send_weights``, and each inference worker calls
+        weight_transfer_engine.receive_weights here.
+
+        ``update_info`` carries only names/dtype_names/shapes. Since vLLM 0.28.0
+        whether the transfer is packed is fixed at init (from the
+        ``/init_weight_transfer_engine`` payload), not per round.
 
         Routed through this skyrl wrap (rather than vLLM's native
         /update_weights endpoint) so the load is wrapped with
