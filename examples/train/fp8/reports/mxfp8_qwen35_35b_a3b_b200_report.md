@@ -4,7 +4,7 @@ Live report for running `examples/train/fp8/run_fp8_blackwell_mxfp8_qwen35_35b_a
 on a single 8xB200 node, followed by a BF16 (no quantization) baseline of the same
 script in the same W&B project so the two can be compared side by side.
 
-- Code: branch `fp8-rl-weight-sync` at `fbed91d4` ("address comment and lint").
+- Code: branch `fp8-rl-weight-sync` at `079efbb1` (the working tree at `fbed91d4` failed on import, see status log).
 - Machine: `etang-b200-spot17`, 8x NVIDIA B200 (183 GB each), 224 CPUs, 3.9 TB RAM.
 - W&B: entity `sky-posttraining-uc-berkeley`, project `skyrl_fp8`.
 
@@ -15,7 +15,8 @@ script in the same W&B project so the two can be compared side by side.
 | 2026-09-05 02:31 | Data prepared with `prepare_dapo_data.sh` (`~/data/dapo/{dapo-math-17k,aime-2024}-cleaned.parquet`). |
 | 2026-09-05 02:32 | `Qwen/Qwen3.5-35B-A3B-Base` (72 GB) downloaded into the HF hub cache, which lives on nvme (`/mnt/nvme0/etang/hf_hub`). |
 | 2026-09-05 02:40 | Built a 6-disk RAID0 (`/dev/md0`, 2.2 TB, ext4) from blank local nvme disks and mounted it at `/mnt/nvme_ckpt` for checkpoints. |
-| 2026-09-05 02:45 | Launched the FP8 run (`fp8_blackwell_mxfp8_qwen35_35b_a3b`). |
+| 2026-09-05 02:45 | Launched the FP8 run (`fp8_blackwell_mxfp8_qwen35_35b_a3b`). Died at import: `new_inference_worker_wrap.py` imported `skyrl.backends.skyrl_train.patches.vllm.patch_hybrid_fp8_kv_wake`, which does not exist on this branch (it lives on `yjhmitweb/fp8-rl-mxfp8-weight-sync`). |
+| 2026-09-05 02:55 | Eric removed the stale import (commit `079efbb1`); relaunched the FP8 run. |
 
 ## Disk layout and why
 
