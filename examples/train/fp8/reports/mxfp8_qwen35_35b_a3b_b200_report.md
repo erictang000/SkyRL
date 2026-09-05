@@ -31,6 +31,7 @@ script in the same W&B project so the two can be compared side by side.
 | 2026-09-05 07:18 | BF16 at step 79. Trend by thirds of the run so far: `avg_raw_reward` -0.43 -> -0.07 -> +0.29; `avg_pass_at_8` 0.73 -> 0.78 -> 0.90; avg response tokens 5507 -> 4469 -> 3200; logprob mismatch flat at 0.017; grad norm flat at 0.21; entropy 0.31 -> 0.41. Step time now ~160 s plus a ~4 min checkpoint save every 20 steps. Step 100 expected ~08:20 UTC. RAID at 1.0 TB used. |
 | 2026-09-05 08:12 | BF16 step-100 checkpoint saved. The handoff script had already exited at 05:08: its liveness check (`pgrep -f launch_bf16.sh`) never matched because the launcher `exec`s the example script, so the process name changed. My bug; BF16 kept training. |
 | 2026-09-05 09:05 | Stopped BF16 manually after step 120 (latest checkpoint `global_step_120`), so the baseline has 120 logged steps; the comparison uses steps 1-100. Launched FP8 with `trainer.max_training_steps=100`. |
+| 2026-09-05 09:16 | FP8 run (W&B `9mrrqwez`) completed step 1: sync 18 s, generate 72 s, fwd logprobs 24 s, train 45 s (175 s total; Triton kernels already cached from the BF16 run). `avg_pass_at_8=0.688`, `avg_raw_reward=-0.485`, `grad_norm=0.213`, entropy 0.324, avg 5352 tokens. Rollout-vs-train logprob abs diff mean **0.032** (BF16: 0.017), max 2.24; the minibatch variant is 0.020. Expected to be larger under FP8 (MXFP8 trainer GEMMs vs blockwise-FP8 vLLM serving), but this is the number to watch. |
 
 ## Disk layout and why
 
