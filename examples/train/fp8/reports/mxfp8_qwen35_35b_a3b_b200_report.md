@@ -24,6 +24,7 @@ script in the same W&B project so the two can be compared side by side.
 | 2026-09-05 03:12 | BF16 attempt without `FLA_TILELANG=0` (W&B `5prixc0n`) crashed with the identical `Triton Error [CUDA]: misaligned address` in `forward_backward`, after a healthy rollout (`avg_pass_at_8=0.719`, generate 85 s, fwd logprobs 33 s). Confirms the crash is the GDN backward on B200, not FP8. |
 | 2026-09-05 03:14 | Relaunched the BF16 baseline with `FLA_TILELANG=0`. Per Eric, the baseline runs first; the FP8 run follows once BF16 is confirmed healthy. |
 | 2026-09-05 03:31 | BF16 baseline (W&B `u9nvss8l`) completed step 1 with `FLA_TILELANG=0`: sync 22.5 s, generate 86.8 s, fwd logprobs 112 s, policy train 354 s (first step includes Triton compile/autotune), 588 s total. `avg_pass_at_8=0.719`, `avg_raw_reward=-0.514`, `grad_norm=0.216`, rollout-vs-train logprob abs diff mean 0.0173 / max 1.95. Healthy; it continues as the baseline. |
+| 2026-09-05 03:50 | BF16 steady state after the first step: generate 90-105 s, policy train 45-80 s, about 3 min per step, so 400 steps is roughly 20 h per run (40 h for both sequentially). First checkpoint lands at step 20. |
 
 ## Disk layout and why
 
