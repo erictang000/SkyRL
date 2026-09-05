@@ -82,12 +82,12 @@ from skyrl.backends.skyrl_train.workers.megatron.adapter_store import (
 from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
     MegatronModelWrapper,
 )
+from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
+    maybe_force_qwen35_text_bridge,
+)
 from skyrl.backends.skyrl_train.workers.megatron.quantization.fp8_param import (
     initialize_fp8_param_optimizer_masters,
     is_fp8_param_enabled,
-)
-from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
-    maybe_force_qwen35_text_bridge,
 )
 from skyrl.backends.skyrl_train.workers.worker import (
     CriticWorkerBase,

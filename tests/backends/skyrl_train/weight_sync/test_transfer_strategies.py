@@ -948,6 +948,66 @@ def test_broadcast_sender_preserves_mixed_dtype_logical_chunk(monkeypatch):
     ]
 
 
+def test_broadcast_send_chunk_uses_vendored_send_and_init_time_packed(monkeypatch):
+    """Per-chunk FP8 rounds share the batched path's wire protocol.
+
+    vLLM 0.28.0 removed ``NCCLWeightTransferEngine.trainer_send_weights`` and
+    rejects ``packed`` on ``NCCLWeightTransferUpdateInfo``, so the per-chunk
+    send must go through the vendored ``nccl_trainer_send_weights`` with the
+    ``packed`` agreed at init, and the update payload must carry only metadata.
+    """
+    import skyrl.backends.skyrl_train.weight_sync.broadcast_strategy as broadcast_module
+
+    class FakeInferenceClient:
+        def __init__(self):
+            self.update_infos = []
+
+        async def update_weights_nccl(self, update_info):
+            self.update_infos.append(update_info)
+
+    client = FakeInferenceClient()
+    group = object()
+    sender = BroadcastWeightTransferSender(
+        init_info=BroadcastInitInfo(
+            master_addr="127.0.0.1",
+            master_port=12345,
+            rank_offset=1,
+            world_size=2,
+            packed=False,
+            override_existing_receiver=False,
+        ),
+        model_update_group=group,
+        inference_client=client,
+    )
+    sends = []
+
+    def fake_send(iterator, model_update_group, *, packed):
+        sends.append((list(iterator), model_update_group, packed))
+
+    monkeypatch.setattr(broadcast_module, "nccl_trainer_send_weights", fake_send)
+
+    chunk = WeightChunk(
+        names=["w0", "scale"],
+        dtypes=["float8_e4m3fn", "float32"],
+        shapes=[[4], [1]],
+        tensors=[
+            torch.empty((4,), dtype=torch.float8_e4m3fn),
+            torch.empty((1,), dtype=torch.float32),
+        ],
+    )
+
+    asyncio.run(sender._send_chunk_vllm_native(chunk))
+
+    assert client.update_infos == [
+        {"names": ["w0", "scale"], "dtype_names": ["float8_e4m3fn", "float32"], "shapes": [[4], [1]]}
+    ]
+    assert len(sends) == 1
+    names, sent_group, packed = sends[0]
+    assert [name for name, _ in names] == ["w0", "scale"]
+    assert sent_group is group
+    assert packed is False
+
+
 def test_broadcast_sender_retains_precomputed_metadata_path(monkeypatch):
     sender = BroadcastWeightTransferSender(
         init_info=BroadcastInitInfo(

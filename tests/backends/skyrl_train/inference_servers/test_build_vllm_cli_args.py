@@ -1,7 +1,7 @@
 """Tests for build_vllm_cli_args on GPU-less hosts."""
 
-from types import SimpleNamespace
 from argparse import Namespace
+from types import SimpleNamespace
 
 import pytest
 

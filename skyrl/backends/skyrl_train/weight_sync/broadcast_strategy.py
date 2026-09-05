@@ -27,7 +27,6 @@ from skyrl.backends.skyrl_train.weight_sync.nccl_trainer_send import (
     nccl_trainer_init,
     nccl_trainer_send_weights,
 )
-)
 from skyrl.backends.skyrl_train.weight_sync.transfer_strategy import (
     WeightSyncInitInfo,
     WeightTransferSender,
@@ -158,8 +157,6 @@ class BroadcastWeightTransferSender(WeightTransferSender):
         weight_metadata: Optional[Dict[str, list]],
     ) -> None:
         """Batched path: one update_weights call + nccl_trainer_send_weights.
-        
-       
 
         All ranks must evaluate the chunks iterator (extract_weights uses
         collective all-gather internally). Only rank 0 sends the gathered
@@ -223,19 +220,25 @@ class BroadcastWeightTransferSender(WeightTransferSender):
         torch.distributed.barrier()
 
     async def _send_chunk_vllm_native(self, chunk: WeightChunk) -> None:
-        """Send one logical chunk through vLLM's byte-packed NCCL path."""
-        from vllm.distributed.weight_transfer.nccl_engine import (
-            NCCLWeightTransferEngine,
-        )
+        """Send one logical chunk as its own NCCL update round.
 
-        update_info = {**get_weight_chunk_metadata(chunk), "packed": True}
+        Same wire protocol as the batched path (vendored
+        ``nccl_trainer_send_weights`` + ``BroadcastInitInfo.packed``), just one
+        round per chunk because serialized-FP8 names/shapes are only known once
+        the chunk is built. The update info carries only names/dtype_names/shapes:
+        vLLM 0.28.0 rejects ``packed`` there (it is fixed at init). The packed
+        producer linearizes by bytes, so mixed fp8/fp32/bf16 tensors in one
+        round are fine.
+        """
+        update_info = get_weight_chunk_metadata(chunk)
         update_task = asyncio.create_task(self._inference_client.update_weights_nccl(update_info))
 
         # Let the receiver enter its collective while the trainer broadcasts.
         await asyncio.to_thread(
-            NCCLWeightTransferEngine.trainer_send_weights,
-            iterator=iter(zip(chunk.names, chunk.tensors)),
-            trainer_args={"group": self._model_update_group, "packed": True},
+            nccl_trainer_send_weights,
+            iter(zip(chunk.names, chunk.tensors)),
+            self._model_update_group,
+            packed=self._init_info.packed,
         )
         await update_task
 
