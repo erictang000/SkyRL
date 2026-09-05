@@ -25,6 +25,9 @@ script in the same W&B project so the two can be compared side by side.
 | 2026-09-05 03:14 | Relaunched the BF16 baseline with `FLA_TILELANG=0`. Per Eric, the baseline runs first; the FP8 run follows once BF16 is confirmed healthy. |
 | 2026-09-05 03:31 | BF16 baseline (W&B `u9nvss8l`) completed step 1 with `FLA_TILELANG=0`: sync 22.5 s, generate 86.8 s, fwd logprobs 112 s, policy train 354 s (first step includes Triton compile/autotune), 588 s total. `avg_pass_at_8=0.719`, `avg_raw_reward=-0.514`, `grad_norm=0.216`, rollout-vs-train logprob abs diff mean 0.0173 / max 1.95. Healthy; it continues as the baseline. |
 | 2026-09-05 03:50 | BF16 steady state after the first step: generate 90-105 s, policy train 45-80 s, about 3 min per step, so 400 steps is roughly 20 h per run (40 h for both sequentially). First checkpoint lands at step 20. |
+| 2026-09-05 04:00 | First BF16 checkpoint (`global_step_20`) written to the RAID: 453 GB, as estimated (bf16 params + fp32 master + two fp32 Adam moments for 35B). With `max_ckpts_to_keep=2` the volume peaks at ~1.4 TB during a save; 2.2 TB available. |
+| 2026-09-05 04:05 | Eric asked whether the reward is on track vs W&B run `qnbegkir` (project `qwen35_35b_a3b_fp8_latency_revalidation_20260714`). See "Reward sanity check" below: different model (post-trained vs Base), so different length regime; per-step noise is comparable. |
+| 2026-09-05 04:10 | Plan changed per Eric: 100 steps each instead of 400. A detached handoff script waits for the BF16 step-100 checkpoint, stops the BF16 run, and launches FP8 with `trainer.max_training_steps=100`. The BF16 W&B run will therefore show as killed rather than finished; step 100 is its last logged step. |
 
 ## Disk layout and why
 
@@ -64,7 +67,7 @@ Exactly the example script: Megatron EP=8 (TP/PP/CP/ETP=1), `fp8=e4m3`,
 sent to vLLM; vLLM serves FP8), `NVTE_FP8_BLOCK_SCALING_FP32_SCALES=0`,
 `VLLM_USE_DEEP_GEMM_E8M0=1`. 8 colocated vLLM engines with TP=1,
 `gpu_memory_utilization=0.7`. DAPO/GRPO, `train_batch_size=32`, `n_samples_per_prompt=8`,
-`max_generate_length=8192`, `lr=1e-6`, 400 steps.
+`max_generate_length=8192`, `lr=1e-6`. 100 steps (reduced from the script's 400; see status log).
 
 ### BF16 baseline (`bf16_baseline_qwen35_35b_a3b`)
 
@@ -105,6 +108,28 @@ Run order (per Eric): BF16 baseline first, FP8 after it is confirmed healthy.
    rollout in 74 s with sane rewards (`avg_pass_at_8=0.656`), and the forward logprob pass.
 
 
+## Reward sanity check vs the July reference run
+
+Reference: `q35_35b_bf16_timing40_mem060_south1b1_r2_20260714` (W&B `qnbegkir`), 10 steps, crashed.
+Same DAPO hyperparameters (batch 32, 8 samples, lr 1e-6, 8192 max length, overlong buffer 4096 with
+penalty 1.0), but a different model and a few config differences:
+
+| | Reference (`qnbegkir`) | This baseline (`u9nvss8l`) |
+| --- | --- | --- |
+| Model | `Qwen/Qwen3.5-35B-A3B` (post-trained) | `Qwen/Qwen3.5-35B-A3B-Base` |
+| Avg response tokens, first steps | 7,600-8,160 (almost all truncated at 8,192) | 4,970-6,350 |
+| `reward/avg_raw_reward`, first 10 steps | -1.93 rising to -1.33 | -0.51, mean -0.43, std 0.24 over 27 steps |
+| `reward/avg_pass_at_8`, first 10 steps | 0.16 rising to 0.47 | 0.53-0.88, mean 0.73 |
+| Rollout-vs-train logprob abs diff (mean) | 0.013 | 0.017 |
+| `use_kl_loss` / `remove_microbatch_padding` | true / false | false / true |
+
+The reference's smooth climb is the post-trained model learning to stop hitting the length cap
+(the overlong penalty ramps to -1 at 8,192 tokens). The Base model starts well inside the cap, so
+its raw reward is already near the correct-answer regime and the per-step swings are dominated by
+batch length variance: low-reward steps in this run have ~6,200-6,350 average tokens, high-reward
+steps ~4,970-5,130. Step-to-step std is comparable (0.20 vs 0.24). Grad norm 0.14-0.29 without
+spikes, clip ratio 0, logprob mismatch flat. Verdict: on track; judge the trend over tens of steps.
+
 ## Results
 
-_(pending)_
+_(pending: BF16 to step 100, then FP8 to step 100, then side-by-side comparison)_
