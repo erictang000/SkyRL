@@ -24,7 +24,6 @@ Usage:
         skyrl.backends.skyrl_train.inference_servers.new_inference_worker_wrap.NewInferenceWorkerWrap
 """
 
-import sys
 from typing import Any
 
 import torch
@@ -33,17 +32,11 @@ from skyrl.backends.skyrl_train.inference_servers.layerwise_reload import (
     LayerwiseReloadWorkerMixin,
     _empty_cuda_cache_rocm,
 )
-from skyrl.backends.skyrl_train.patches.vllm.patch_hybrid_fp8_kv_wake import (
-    patch_hybrid_fp8_kv_wake,
-)
 from skyrl.backends.skyrl_train.weight_sync.base import cuda_uuid_to_str
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     SKYRL_BATCHED_MOE_FP8_PREFIX,
     batched_moe_wire_targets,
 )
-
-if "vllm.v1.worker.gpu_model_runner" in sys.modules:
-    patch_hybrid_fp8_kv_wake()
 
 try:
     from skyrl.backends.skyrl_train.weight_sync.delta_engine import (
