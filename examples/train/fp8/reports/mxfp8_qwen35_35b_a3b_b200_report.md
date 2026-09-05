@@ -28,6 +28,7 @@ script in the same W&B project so the two can be compared side by side.
 | 2026-09-05 04:00 | First BF16 checkpoint (`global_step_20`) written to the RAID: 453 GB, as estimated (bf16 params + fp32 master + two fp32 Adam moments for 35B). With `max_ckpts_to_keep=2` the volume peaks at ~1.4 TB during a save; 2.2 TB available. |
 | 2026-09-05 04:05 | Eric asked whether the reward is on track vs W&B run `qnbegkir` (project `qwen35_35b_a3b_fp8_latency_revalidation_20260714`). See "Reward sanity check" below: different model (post-trained vs Base), so different length regime; per-step noise is comparable. |
 | 2026-09-05 04:10 | Plan changed per Eric: 100 steps each instead of 400. A detached handoff script waits for the BF16 step-100 checkpoint, stops the BF16 run, and launches FP8 with `trainer.max_training_steps=100`. The BF16 W&B run will therefore show as killed rather than finished; step 100 is its last logged step. |
+| 2026-09-05 07:18 | BF16 at step 79. Trend by thirds of the run so far: `avg_raw_reward` -0.43 -> -0.07 -> +0.29; `avg_pass_at_8` 0.73 -> 0.78 -> 0.90; avg response tokens 5507 -> 4469 -> 3200; logprob mismatch flat at 0.017; grad norm flat at 0.21; entropy 0.31 -> 0.41. Step time now ~160 s plus a ~4 min checkpoint save every 20 steps. Step 100 expected ~08:20 UTC. RAID at 1.0 TB used. |
 
 ## Disk layout and why
 
