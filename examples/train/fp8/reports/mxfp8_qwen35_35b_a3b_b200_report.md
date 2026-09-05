@@ -34,6 +34,7 @@ script in the same W&B project so the two can be compared side by side.
 | 2026-09-05 09:16 | FP8 run (W&B `9mrrqwez`) completed step 1: sync 18 s, generate 72 s, fwd logprobs 24 s, train 45 s (175 s total; Triton kernels already cached from the BF16 run). `avg_pass_at_8=0.688`, `avg_raw_reward=-0.485`, `grad_norm=0.213`, entropy 0.324, avg 5352 tokens. Rollout-vs-train logprob abs diff mean **0.032** (BF16: 0.017), max 2.24; the minibatch variant is 0.020. Expected to be larger under FP8 (MXFP8 trainer GEMMs vs blockwise-FP8 vLLM serving), but this is the number to watch. |
 | 2026-09-05 11:48 | FP8 crashed at the step-60 checkpoint save with `CheckpointException`: the RAID hit 100%. My sizing error: I budgeted for one run's checkpoints (2 kept + 1 in flight = 1.4 TB) but the two BF16 checkpoints (906 GB) were still on disk. Steps 1-60 of the FP8 run are logged in W&B `9mrrqwez`. |
 | 2026-09-05 11:55 | Recovery: deleted the partial FP8 `global_step_60` (292 GB) and the BF16 `global_step_120` (kept `global_step_100`, the comparison endpoint). Relaunched FP8 with `resume_mode=latest` (resumes from its `global_step_40`), `max_ckpts_to_keep=1`, and `WANDB_RESUME=allow WANDB_RUN_ID=9mrrqwez` so the curve stays in one W&B run. Caveat: W&B keeps steps 41-60 from the pre-crash trajectory and drops the resumed run's re-logged 41-60 (steps must increase); from step 61 on the points come from the resumed trajectory, which re-sampled from the step-40 state. Costs ~1 h of compute. |
+| 2026-09-05 14:29 | FP8 reached step 100 (`Reached max_training_steps=100`), final checkpoint saved. Both runs complete; results below. Remaining on the RAID: one 453 GB checkpoint per run (`global_step_100`). |
 
 ## Disk layout and why
 
@@ -136,6 +137,90 @@ batch length variance: low-reward steps in this run have ~6,200-6,350 average to
 steps ~4,970-5,130. Step-to-step std is comparable (0.20 vs 0.24). Grad norm 0.14-0.29 without
 spikes, clip ratio 0, logprob mismatch flat. Verdict: on track; judge the trend over tens of steps.
 
-## Results
+## Results (steps 1-100, both runs)
 
-_(pending: BF16 to step 100, then FP8 to step 100, then side-by-side comparison)_
+W&B project: https://wandb.ai/sky-posttraining-uc-berkeley/skyrl_fp8
+(BF16 `u9nvss8l`, FP8 `9mrrqwez`; the BF16 run shows as "crashed" because it was stopped by hand
+after step 120, and the FP8 run is missing steps 60-61 at the disk-full resume boundary.)
+
+![MXFP8 vs BF16](mxfp8_vs_bf16_qwen35_35b_a3b_b200.png)
+
+Means over steps (per-step reward std is ~0.36 for both runs, so a 100-step mean has a standard
+error of ~0.04):
+
+| Metric | BF16 1-100 | FP8 1-100 | BF16 51-100 | FP8 51-100 | BF16 91-100 | FP8 91-100 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `reward/avg_raw_reward` | 0.028 | 0.075 | 0.328 | 0.342 | 0.416 | 0.411 |
+| `reward/avg_pass_at_8` | 0.826 | 0.843 | 0.901 | 0.912 | 0.913 | 0.925 |
+| `reward/mean_positive_reward` | 0.614 | 0.630 | 0.717 | 0.723 | | |
+| `generate/avg_num_tokens` | 3992 | 3896 | 2943 | 2961 | 2578 | 2612 |
+| `policy/rollout_train_logprobs_abs_diff_mean` | 0.0175 | 0.0280 | 0.0180 | 0.0276 | 0.0182 | 0.0283 |
+| `policy/minibatch_rollout_logprobs_abs_diff_mean` | 0.0139 | 0.0219 | 0.0161 | 0.0239 | | |
+| `policy/grad_norm` (mean / max) | 0.208 / 0.29 | 0.206 / 0.52 | 0.210 | 0.207 | | |
+| `policy/policy_entropy` | 0.369 | 0.288 | 0.409 | 0.302 | 0.409 | 0.327 |
+| `policy/loss_metrics/clip_ratio` | 0 | 0 | 0 | 0 | | |
+
+Throughput (mean seconds per step, steps 1-100):
+
+| Phase | BF16 | FP8 | FP8 speedup |
+| --- | --- | --- | --- |
+| `timing/step` | 174.3 | 149.2 | 1.17x |
+| `timing/generate` | 82.2 | 70.0 | 1.18x |
+| `timing/fwd_logprobs_values_reward` | 12.1 | 10.9 | 1.10x |
+| `timing/train_critic_and_policy` | 46.0 | 37.3 | 1.23x |
+| `timing/sync_weights` | 19.2 | 18.8 | 1.02x |
+
+### Reading
+
+- **Reward and learning dynamics match.** Raw reward, pass@8, positive-reward fraction, response
+  length, policy loss, grad norm and clip ratio track each other within per-step noise across
+  all windows, and the last-10-step values are within 0.01 (reward) and 0.012 (pass@8). Both runs
+  learn the same thing at the same rate: shorter responses (5.4k to 2.6k tokens) and higher accuracy.
+- **Rollout-vs-train logprob mismatch is 1.6x higher under FP8** (0.028 vs 0.0175, flat over the
+  run) and the minibatch variant likewise (0.022 vs 0.014). Expected: the trainer computes
+  logprobs through MXFP8 GEMMs (32-element E8M0 block scales) while vLLM serves 128x128
+  blockwise FP8, so the two sides are not bit-matched the way BF16/BF16 is. It stays flat
+  (no drift) and the clip ratio stays 0, so it is not destabilizing training at this scale.
+  Per-token max mismatch is comparable (worst step 7.3 FP8 vs 10.0 BF16).
+- **Policy entropy is the one systematic divergence.** BF16 entropy rises from 0.33 to ~0.41 over
+  the run; FP8 falls to ~0.25 by step 40 and recovers to ~0.33 by step 100, so it runs ~20-25%
+  below BF16 throughout. Response length and reward do not show a matching difference, so
+  this is either a lower-entropy policy or an artifact of computing entropy from FP8 logits.
+  Worth a targeted check (e.g. evaluate the FP8 `global_step_100` checkpoint's entropy with a
+  BF16 forward).
+- **Two grad-norm spikes in FP8** (0.52 at step 15, 0.48 at step 78) vs a BF16 max of 0.29. Both are
+  isolated single steps with no effect on the following steps; `max_grad_norm=1.0` clipping was
+  never hit.
+- **Speed:** 17% faster end-to-end with the same batch composition; rollout is 18% faster on
+  FP8 weights and the FP8 trainer step is 23% faster. Weight sync time is unchanged (blockwise
+  FP8 payloads halve the bytes but the ~19 s is dominated by other work).
+
+### Verdict
+
+Numerics match to within noise on every training-outcome metric over 100 DAPO steps. The
+FP8-specific signals to keep an eye on for longer runs are the ~1.6x logprob mismatch and the
+lower entropy; neither affected reward here.
+
+## Code changes needed
+
+None in the FP8/MXFP8/weight-sync path itself. Two changes to make the checked-in example run on
+this branch and on B200, both on this report branch:
+
+1. `examples/train/fp8/run_fp8_*.sh` (all six): set `trainer.policy.language_model_only`,
+   `trainer.ref.language_model_only` and `generator.inference_engine.language_model_only` to
+   `true`, matching every other Qwen3.5 example. Without it the VL bridge model refuses SkyRL
+   sample packing at `init_model`.
+2. `skyrl/train/utils/utils.py`: stop forcing `FLA_TILELANG=1` into the Ray worker env; only
+   propagate it when the user set it, so fla's hardware-aware default applies (Triton on
+   Blackwell, TileLang on Hopper). The two Blackwell scripts additionally `export FLA_TILELANG=0`
+   explicitly. Without this the GDN backward aborts on B200 in both BF16 and FP8.
+
+Plus the stale `patch_hybrid_fp8_kv_wake` import in `new_inference_worker_wrap.py` that Eric
+removed on the working branch before the first successful launch (commit `079efbb1`).
+
+## Artifacts left on the machine
+
+- `/mnt/nvme_ckpt/ckpts/{bf16_baseline,fp8_blackwell_mxfp8}_qwen35_35b_a3b/global_step_100` (453 GB each).
+- `/mnt/nvme_ckpt` is a RAID0 over `/dev/nvme0n1`..`/dev/nvme5n1`, not in fstab.
+- Run logs (all attempts) in the session scratchpad under `logs/`.
+
