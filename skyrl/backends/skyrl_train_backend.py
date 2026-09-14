@@ -173,6 +173,11 @@ class SkyRLTrainBackend(AbstractBackend):
         # New inference infrastructure
         self._server_groups: list = []
         self._inference_router = None
+        # Colocated engines are slept after init and around training ops;
+        # sample paths must wake them. None = awake; otherwise the vLLM sleep
+        # level in effect: level 1 keeps a CPU backup of the weights (wakeable
+        # as-is), level 2 discards them, so a wake is only valid together with
+        # a weight sync.
         self._engines_sleep_level: int | None = None
 
         # Optional hook invoked on inference-engine state changes (after
@@ -450,7 +455,10 @@ class SkyRLTrainBackend(AbstractBackend):
             return
 
         # A preceding training op (another tenant's forward/forward_backward)
-        # may have left the trainer GPU-resident. Offload the trainer before bringing the engines up
+        # may have left the trainer GPU-resident; under colocate_all the
+        # engines' startup allocation (gpu_memory_utilization of each GPU)
+        # then OOMs. Offload the trainer before bringing the engines up --
+        # the same order the build path uses (build -> offload -> engines).
         if self._dispatch is not None:
             self._dispatch.offload_for_sampling()
 
@@ -1147,7 +1155,9 @@ class SkyRLTrainBackend(AbstractBackend):
         save_weights_for_sampler() explicitly before calling sample() if weights
         have been updated.
         """
-        # 1. Ensure inference engines are initialized
+        # 1. Ensure inference engines are initialized and awake. The wake
+        # refuses when the engines were slept at level 2 (weights discarded):
+        # sampling then needs a weight sync first, not a plain wake.
         self._ensure_inference_engines()
         wake_error = self._wake_inference_engines_for_sampling()
         if wake_error is not None:
@@ -1357,6 +1367,12 @@ class SkyRLTrainBackend(AbstractBackend):
         self._validate_model_state(model_id)
         role = self._get_role(model_id)
 
+        # The dispatch backloads the trainer (masters + optimizer) for the
+        # save; awake colocated engines hold most of the GPU (218GiB/GPU at
+        # gpu_memory_utilization=0.8) and the backload OOMs. Same idiom as
+        # forward/forward_backward: sleep first, the next weight sync wakes.
+        self._sleep_inference_engines()
+
         # Create temp directory for checkpoint on the same (shared) filesystem
         # as output_path so the remote worker that writes the files and the
         # engine that tars them both see the same path.
@@ -1378,6 +1394,10 @@ class SkyRLTrainBackend(AbstractBackend):
         """Load model state and optionally optimizer state from a training checkpoint."""
         self._validate_model_state(model_id)
         role = self._get_role(model_id)
+
+        # Same GPU-residency requirement as save_checkpoint: the trainer
+        # backload cannot fit beside awake colocated engines.
+        self._sleep_inference_engines()
 
         # Extract tar to temp directory on the same (shared) filesystem as
         # checkpoint_path so the remote worker that loads the files can see it.
@@ -1410,6 +1430,8 @@ class SkyRLTrainBackend(AbstractBackend):
         # Lazily create inference engines on first sampling-related call
         self._ensure_inference_engines()
 
+        # The colocated sync dance (wake weights -> broadcast -> wake KV cache)
+        # assumes engines start asleep; a preceding sample leaves them awake.
         self._sleep_inference_engines()
 
         # Multi-LoRA: pass model_id so the dispatch swaps the right adapter in
@@ -1419,6 +1441,9 @@ class SkyRLTrainBackend(AbstractBackend):
         try:
             asyncio.run(self._dispatch.save_weights_for_sampler(model_id=sync_id))
         finally:
+            # The colocated sync path wakes the engines (weights + KV cache)
+            # even when the broadcast then fails partway; mark them awake so
+            # the next sleep is issued for real.
             self._engines_sleep_level = None
         if sync_id is not None:
             # The sync registered this tenant's adapter on vLLM; remember it
