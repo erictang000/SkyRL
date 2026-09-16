@@ -56,6 +56,8 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_lora_tp imp
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_vision_attention_backend import (
     patch_vision_attention_backend,
+from skyrl.backends.skyrl_train.patches.megatron.patch_grad_norm_mixed_dtype import (
+    patch_grad_norm_mixed_dtype,
 )
 from skyrl.backends.skyrl_train.patches.te.patch_fa2_head_dim import (
     patch_fa2_head_dim_allowlist,
@@ -104,6 +106,8 @@ from skyrl.env_vars import SKYRL_WORKER_NCCL_TIMEOUT_IN_S
 from skyrl.train.config.config import MegatronDDPConfig, get_config_as_dict
 from skyrl.train.utils.utils import update_model_config
 from skyrl.utils.tok import get_tokenizer
+
+patch_grad_norm_mixed_dtype()
 
 if TYPE_CHECKING:
     from skyrl.backends.skyrl_train.inference_servers.base import (
