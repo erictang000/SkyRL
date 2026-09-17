@@ -236,7 +236,7 @@ class Glm5NextBridge(MegatronModelBridge):
             f"{megatron_attn}.linear_kv_up_proj.weight": f"{hf_attn}.kv_b_proj.weight",
             f"{megatron_attn}.kv_layernorm.weight": f"{hf_attn}.kv_a_layernorm.weight",
             f"{megatron_attn}.linear_proj.weight": f"{hf_attn}.o_proj.weight",
-            # DSA lightning indexer (the k-pool compression parameters have no Megatron counterpart).
+            # DSA lightning indexer.
             f"{megatron_attn}.core_attention.indexer.linear_wq_b.weight": f"{hf_attn}.indexer.wq_b.weight",
             f"{megatron_attn}.core_attention.indexer.linear_wk.weight": f"{hf_attn}.indexer.wk.weight",
             f"{megatron_attn}.core_attention.indexer.k_norm.weight": f"{hf_attn}.indexer.k_norm.weight",
@@ -274,6 +274,18 @@ class Glm5NextBridge(MegatronModelBridge):
             for name in ("f_a_proj.weight", "g_a_proj.weight", "o_norm.weight")
         ]
         mappings.append(RowParallelMapping(f"{megatron_attn}.o_proj.weight", f"{hf_attn}.o_proj.weight"))
+
+        # DSA k-pool compression parameters. megatron-core only creates these when
+        # dsa_indexer_kpool > 1 (NVIDIA/Megatron-LM#7054) and initializes them randomly
+        # (nn.init.normal_ on the gate), so a pooled run without these mappings would silently
+        # train against random pooling weights. They are bare nn.Parameters on DSAIndexer rather
+        # than module weights, so AutoMapping cannot infer a parallelism type for them
+        # ("Cannot determine parallelism type for module 'DSAIndexer'"); the indexer is
+        # duplicated across tensor-parallel ranks, so they are replicated.
+        mappings += [
+            ReplicatedMapping(f"{megatron_attn}.core_attention.indexer.{name}", f"{hf_attn}.indexer.{name}")
+            for name in ("index_kpool_compress_ape", "index_kpool_compress_gate")
+        ]
 
         # Gated MLPs: dense, shared expert, routed experts (per-expert HF layout).
         mappings += [

@@ -188,7 +188,9 @@ def _engine_overrides_for_model(model_name: str, fp8_mode: str | None = None) ->
     return overrides
 
 
-async def generate_with_vllm(generator, client, model_name, tokenizer, return_training_input=False):
+async def generate_with_vllm(
+    generator, client, model_name, tokenizer, return_training_input=False, max_generate_length=MAX_GENERATE_LENGTH
+):
     input_batch: GeneratorInput = get_test_generator_input(
         model=model_name,
         num_prompts=NUM_PROMPTS,
@@ -202,7 +204,7 @@ async def generate_with_vllm(generator, client, model_name, tokenizer, return_tr
             temperature=0.0,
             top_p=1.0,
             top_k=-1,
-            max_generate_length=MAX_GENERATE_LENGTH,
+            max_generate_length=max_generate_length,
             min_p=0.0,
             logprobs=1,
         ),
@@ -267,10 +269,14 @@ async def construct_training_input_from_generator_output(generator_output, token
 @pytest.mark.asyncio
 @pytest.mark.megatron_models
 @pytest.mark.parametrize(
-    "tp,pp,cp,ep,etp,inference_tp,num_gpus,model_name,vllm_threshold,megatron_threshold,fp8_mode",
+    "tp,pp,cp,ep,etp,inference_tp,num_gpus,model_name,vllm_threshold,megatron_threshold,fp8_mode,max_generate_length",
     [
-        pytest.param(2, 1, 1, 2, 1, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, id="qwen3-moe_tp2_ep2"),
-        pytest.param(1, 2, 2, 1, None, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, id="qwen3-moe_pp2_cp2"),
+        pytest.param(
+            2, 1, 1, 2, 1, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, None, id="qwen3-moe_tp2_ep2"
+        ),
+        pytest.param(
+            1, 2, 2, 1, None, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, None, id="qwen3-moe_pp2_cp2"
+        ),
         # GLM-4.7-Flash (~31B MoE, MLA) on 4xH100-80G. Mesh: TP=4 EP=4 ETP=1
         # -> DP=1, vLLM TP=4 colocated on the same GPUs, same layout as the
         # other large-MoE entries below.
@@ -285,6 +291,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             "zai-org/GLM-4.7-Flash",
             3e-1,
             5e-2,
+            None,
             None,
             id="glm-4.7-flash_h100_tp4_ep4",
             marks=pytest.mark.h100,
@@ -312,7 +319,49 @@ async def construct_training_input_from_generator_output(generator_output, token
             3e-1,
             1e-1,
             None,
+            None,
             id="glm-5.3-flash-4layer_h100_tp2_ep4",
+            marks=pytest.mark.h100,
+        ),
+        # The same 4-layer slice, generating past dsa_indexer_topk (2048) so the DSA layers run
+        # the k-pool indexer's pool SELECTION instead of degenerating to dense attention.
+        #
+        # This is the only row that can catch a wrong k-pool setup. At or below index_topk every
+        # pool is selectable, so the pooled path covers the full causal prefix no matter what the
+        # compression weights are -- the short row above would pass even with
+        # index_kpool_compress_gate/ape left randomly initialized (megatron-core does
+        # nn.init.normal_ on the gate, so an unmapped bridge entry is silently random). Only past
+        # the budget does scoring decide which pools survive, making the logprob comparison
+        # against vLLM sensitive to those weights.
+        #
+        # GSM8K prompts are ~100-250 tokens, so the length has to come from generation.
+        #
+        # Thresholds: megatron_threshold (Megatron vs vLLM) is the real check here and is kept at
+        # the short row's 1e-1 -- measured 0.054 / 0.053 over two runs, i.e. the pooled path
+        # agrees with vLLM just as closely past the budget as the dense path does below it.
+        #
+        # vllm_threshold is looser than the other rows because it compares vLLM before vs after
+        # weight sync, and over a 2048-token greedy generation that measures divergence, not sync
+        # fidelity: one token flipped by a tiny numerical difference makes every later token
+        # differ (both runs logged "pre/post-sync generation lengths differ"). It is reproducible
+        # rather than chaotic -- 0.351 and 0.349 -- so 0.5 keeps enough headroom while still
+        # failing on a real regression, against 0.06-ish for the 128-token row. Tightening it
+        # further means shortening the generation, which would stop this row exercising pool
+        # selection at all.
+        pytest.param(
+            2,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            "eatang/GLM-5.3-Flash-4layer",
+            5e-1,
+            1e-1,
+            None,
+            2048,
+            id="glm-5.3-flash-4layer_h100_tp2_ep4_kpool_beyond_topk",
             marks=pytest.mark.h100,
         ),
         # GLM-5.3-Flash, the full 45-layer checkpoint: 34 KDA + 11 NoPE-MLA/DSA layers,
@@ -342,6 +391,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             3e-1,
             5e-2,
             None,
+            None,
             id="glm-5.3-flash-full_b300_tp2_ep8",
             marks=pytest.mark.b300,
         ),
@@ -356,6 +406,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             "eatang/qwen3.5-moe-tiny-random",
             1e-1,
             2e-1,
+            None,
             None,
             id="qwen3.5-moe_tp2_ep2",
             marks=pytest.mark.skip(reason="running into correctness issues for tiny qwen3.5"),
@@ -374,6 +425,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             "Qwen/Qwen3.5-0.8B",
             1e-1,
             5e-2,
+            None,
             None,
             id="qwen3.5-0.8b-dense_tp2",
         ),
@@ -394,6 +446,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-1,
             5e-2,
             None,
+            None,
             id="nemotron3.5-lightning_tp4_ep4_h100",
             marks=pytest.mark.h100,
         ),
@@ -412,6 +465,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             "Qwen/Qwen3.5-35B-A3B",
             3e-1,
             5e-2,
+            None,
             None,
             id="qwen3.5-35b-a3b_h100_tp4_ep4",
             marks=pytest.mark.h100,
@@ -436,6 +490,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             1e-1,
             5e-2,
             "full_fp8",
+            None,
             id="qwen3.5-0.8b-dense_tp2_full_fp8",
             marks=pytest.mark.h100,
         ),
@@ -451,6 +506,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             1e-1,
             5e-2,
             "fp8_param",
+            None,
             id="qwen3.5-0.8b-dense_tp2_fp8_param",
             marks=pytest.mark.h100,
         ),
@@ -469,13 +525,25 @@ async def construct_training_input_from_generator_output(generator_output, token
             3e-1,
             5e-2,
             "full_fp8",
+            None,
             id="qwen3.5-35b-a3b_h100_tp4_ep4_full_fp8",
             marks=pytest.mark.h100,
         ),
     ],
 )
 async def test_logprobs_matching_roundtrip(
-    tp, pp, cp, ep, etp, inference_tp, num_gpus, model_name, vllm_threshold, megatron_threshold, fp8_mode
+    tp,
+    pp,
+    cp,
+    ep,
+    etp,
+    inference_tp,
+    num_gpus,
+    model_name,
+    vllm_threshold,
+    megatron_threshold,
+    fp8_mode,
+    max_generate_length,
 ):
     """
     Check that logprob diff matches acrosss vllm and megatron.
@@ -485,8 +553,9 @@ async def test_logprobs_matching_roundtrip(
         cfg.trainer.strategy = "megatron"
         cfg.generator.inference_engine.tensor_parallel_size = inference_tp
         cfg.generator.inference_engine.num_engines = num_gpus // inference_tp
+        max_generate_length = max_generate_length or MAX_GENERATE_LENGTH
         cfg.generator.sampling_params = SamplingParams(
-            max_generate_length=MAX_GENERATE_LENGTH,
+            max_generate_length=max_generate_length,
             logprobs=1,
             temperature=0.0,
         )
@@ -588,7 +657,12 @@ async def test_logprobs_matching_roundtrip(
                 await client.wake_up()
 
             (response_mask, logprobs_t, gen_out_1), training_input = await generate_with_vllm(
-                generator, client, model_name, tokenizer, return_training_input=True
+                generator,
+                client,
+                model_name,
+                tokenizer,
+                return_training_input=True,
+                max_generate_length=max_generate_length,
             )
             await client.sleep()
 
@@ -642,7 +716,12 @@ async def test_logprobs_matching_roundtrip(
             await client.wake_up(tags=["kv_cache"])
 
             response_mask_2, logprobs_t_2, gen_out_2 = await generate_with_vllm(
-                generator, client, model_name, tokenizer, return_training_input=False
+                generator,
+                client,
+                model_name,
+                tokenizer,
+                return_training_input=False,
+                max_generate_length=max_generate_length,
             )
 
             if fp8_mode:

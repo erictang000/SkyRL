@@ -38,7 +38,12 @@ class Glm5NextDSAttention(DSAttention):
 
     def forward(self, query, key, value, attention_mask, x, qr, *args, packed_seq_params=None, **kwargs):
         max_seqlen = self._max_sequence_length(x, packed_seq_params)
-        if max_seqlen > self.index_topk:
+        # megatron-core implements the pooled indexer when dsa_indexer_kpool > 1
+        # (NVIDIA/Megatron-LM#7054), which is the regime this guard used to refuse. Only the
+        # token-level path (kpool == 1) is still limited to dsa_indexer_topk tokens.
+        # ``index_kpool`` is an attribute of DSAIndexer, not of DSAttention, so read the config.
+        index_kpool = int(getattr(self.config, "dsa_indexer_kpool", 1) or 1)
+        if index_kpool <= 1 and max_seqlen > self.index_topk:
             raise NotImplementedError(
                 f"GLM-5.3-Flash sparse attention with sequences longer than dsa_indexer_topk="
                 f"{self.index_topk} tokens (got {max_seqlen}) needs the k-pool indexer, which the "
