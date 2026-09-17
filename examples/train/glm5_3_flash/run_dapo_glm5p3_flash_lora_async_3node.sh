@@ -24,13 +24,16 @@ LOGGER="${LOGGER:-wandb}"
 
 MAX_TRAINING_STEPS=200
 
-# Same DSA-imposed 2048-token ceiling as the sync script.
-# 1024+1024 would exactly equal max_model_len, leaving no room for chat-template tokens, so
-# the prompt budget is trimmed to keep prompt+response strictly under the engine's context.
-MAX_PROMPT_LENGTH=896
-MAX_RESPONSE_LENGTH=1024
-INFERENCE_ENGINE_MAX_MODEL_LEN=2048
-OVERLONG_BUFFER_LEN=256
+# Sequence budget. The DSA layers index with dsa_indexer_topk=2048, and megatron-core now
+# implements the k-pool indexer (NVIDIA/Megatron-LM#7054), so sequences past that are selected
+# rather than refused -- the earlier 896+1024 cap is gone. This is still short of the stock DAPO
+# recipe's 2k prompt + 8k response: an 8k response is ~8x the per-step cost of the 1024 runs that
+# measured ~10 min/step, which does not fit an overnight experiment. Overlong filtering absorbs
+# the truncated tail.
+MAX_PROMPT_LENGTH=2048
+MAX_RESPONSE_LENGTH=4096
+INFERENCE_ENGINE_MAX_MODEL_LEN=6656          # prompt + response + headroom for chat-template tokens
+OVERLONG_BUFFER_LEN=2048                     # recipe ratio: half the response budget
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
 
 # dp here is 16/TP2 = 8, so (mini * n_samples) % dp == 0 holds for any n_samples; 12 is kept
@@ -39,7 +42,7 @@ TRAIN_BATCH_SIZE=32
 MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=12
 EVAL_N_SAMPLES_PER_PROMPT=12
-MAX_TOKENS_PER_MICROBATCH=4096
+MAX_TOKENS_PER_MICROBATCH=8192  # must hold one full sequence; 16384 OOM'd at step 1 on GSM8K
 
 # Fully-async knobs
 MAX_STALENESS_STEPS=4
