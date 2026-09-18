@@ -16,7 +16,13 @@ DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 
-NUM_NODES=2                      # trainer nodes; the third node hosts the inference engine
+# NOTE: sized for 2 nodes. vmnode-6r3vaf61zkut was drained from the Ray cluster after its GPU0
+# lost P2P with every peer (nvidia-smi topo -p2p r shows NS across GPU0's row), which made vLLM's
+# TP=8 ncclCommInitRank fail on that node every time. It cannot be reset in-guest -- the GPUs are
+# passthrough -- and its NVLinks have been inactive since its fabric manager died on 2026-07-18.
+# With only two nodes the policy drops to one node so the inference engine still gets a whole
+# node to itself; restore NUM_NODES=2 for a 3-node cluster.
+NUM_NODES=1                      # trainer node; the other node hosts the inference engine
 NUM_GPUS_PER_NODE=8
 NUM_INFERENCE_ENGINES=1
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
