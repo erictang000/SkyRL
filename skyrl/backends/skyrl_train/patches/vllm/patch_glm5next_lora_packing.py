@@ -70,7 +70,9 @@ def _patch_packed_modules_mapping() -> list[str]:
 
 def _patch_replicated_shard_ids() -> bool:
     """Keep LoRA-B whole for shards the base layer marks as replicated."""
-    from vllm.lora.layers.column_parallel_linear import MergedColumnParallelLinearWithLoRA
+    from vllm.lora.layers.column_parallel_linear import (
+        MergedColumnParallelLinearWithLoRA,
+    )
 
     original_init = MergedColumnParallelLinearWithLoRA.__init__
 
@@ -79,9 +81,7 @@ def _patch_replicated_shard_ids() -> bool:
         replicated_shard_ids = getattr(self.base_layer, "replicated_shard_ids", ())
         if not replicated_shard_ids:
             return
-        self.output_ids = tuple(
-            0 if i in replicated_shard_ids else self.tp_rank for i in range(self.n_slices)
-        )
+        self.output_ids = tuple(0 if i in replicated_shard_ids else self.tp_rank for i in range(self.n_slices))
 
     MergedColumnParallelLinearWithLoRA.__init__ = __init__
     return True

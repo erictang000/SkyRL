@@ -59,8 +59,82 @@ NUM_PROMPTS = 10
 N_SAMPLES_PER_PROMPT = 8
 MAX_GENERATE_LENGTH = 128
 
+# Standard deviation for the LoRA-B perturbation the LoRA rows apply before their
+# first weight sync. megatron-bridge zero-initializes every lora_B, so a freshly
+# built adapter is an exact no-op -- without this a LoRA row would compare two base
+# models and could not tell a correctly assembled adapter from one that never
+# reached the engine.
+#
+# 0.002 was picked by sweeping it against the Megatron-vs-vLLM diff on the
+# glm-5.3-flash-4layer row (4xH100):
+#
+#     std      diff     excess over the zero-adapter run
+#     0        0.065    --
+#     0.002    0.080    0.015
+#     0.01     0.178    0.113
+#
+# The excess grows faster than the std (7.5x for a 5x std) and carries almost no
+# systematic component -- at 0.002 the two sides' *mean* logprob agrees to 0.004 --
+# so it is bf16 divergence amplified by a random, off-distribution adapter on a
+# 4-layer slice with a very flat next-token distribution, not a scale or packing
+# mismatch (either of those would be linear in std and biased). 0.002 leaves the
+# adapter plainly live (it moves the logprobs) while keeping the comparison inside
+# the band the non-LoRA rows already sit in. Raise it only alongside the row's
+# megatron_threshold.
+LORA_B_PERTURB_STD = 0.002
 
-def get_test_actor_config(model_name) -> SkyRLTrainConfig:
+
+def lora_perturb_policy_worker_cls():
+    """Megatron policy worker with a test-only ``randomize_lora_b`` method.
+
+    Stands in for "the trainer took a step": both sides must then reproduce the same
+    *non-zero* adapter delta, which is what actually exercises the packed-projection
+    mapping (in_proj_qkvbfg_a / fused_qkv_a_proj), the per-expert MoE adapter layout
+    and the alpha/rank scaling folded in at export. Same construction pattern as
+    ``delta_weight_sync_utils.sparse_delta_benchmark_policy_worker_cls``.
+    """
+    from skyrl.backends.skyrl_train.workers.megatron.megatron_worker import (
+        MegatronPolicyWorkerBase as Base,
+    )
+
+    def randomize_lora_b(self, std: float = LORA_B_PERTURB_STD, seed: int = 1234):
+        if self.actor_module is None:
+            raise RuntimeError("actor_module is not initialized")
+        import zlib
+
+        rank = torch.distributed.get_rank()
+        touched = 0
+        with torch.no_grad():
+            for module in self.actor_module:
+                for name, param in module.named_parameters():
+                    if not name.endswith(".adapter.linear_out.weight"):
+                        continue
+                    # Seed from the parameter NAME alone, never the rank. Several of these
+                    # tensors are replicated rather than sharded and must hold identical
+                    # values on every rank that has a copy: the DP replicas (DP=2 in this
+                    # mesh), lora_B of a row-parallel adapter (linear_proj / o_proj /
+                    # linear_fc2, where lora_B is the all-reduced output projection) and
+                    # KDA's f_a_proj / g_a_proj, which are parallel_mode="duplicated".
+                    # A per-rank seed puts a different value in each copy -- a state the
+                    # trainer can never reach -- and the export then ships one rank's copy
+                    # while Megatron keeps computing with the per-rank mixture. That alone
+                    # moved the Megatron-vs-vLLM diff from 0.065 to 0.239.
+                    # The cost is that TP shards of the same tensor get identical content,
+                    # so a shard-to-rank permutation in the export would not show up here;
+                    # everything else about the adapter is still exercised.
+                    gen = torch.Generator(device="cpu").manual_seed(seed + zlib.crc32(name.encode()))
+                    noise = torch.randn(param.shape, generator=gen, dtype=torch.float32) * std
+                    param.data.copy_(noise.to(device=param.device, dtype=param.dtype))
+                    touched += 1
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
+        return {"rank": rank, "lora_b_tensors": touched}
+
+    subclass = type(f"LoraPerturb{Base.__name__}", (Base,), {"randomize_lora_b": randomize_lora_b})
+    return ray.remote(num_gpus=1)(subclass)
+
+
+def get_test_actor_config(model_name, lora: bool = False) -> SkyRLTrainConfig:
     cfg = SkyRLTrainConfig()
     cfg.trainer.policy.model.path = model_name
     cfg.trainer.micro_forward_batch_size_per_gpu = 2
@@ -113,6 +187,43 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         # max_num_seqs=1024 and 64 heads that is 65536 > 65535 and the CUDA-graph capture / profile
         # run fails with "Triton Error [CUDA]: invalid argument". Stay below the limit.
         cfg.generator.inference_engine.max_num_seqs = 512
+        if lora:
+            # merge_lora=False: the adapter is synced to vLLM as a PEFT directory and
+            # served under SKYRL_LORA_ADAPTER_NAME, instead of being merged into the
+            # base weights and pushed as a full ~45 GiB weight update.
+            #
+            # target_modules must be spelled out: the "all-linear" default maps to the
+            # dense-attention names (linear_qkv/...), which match none of
+            # GLM-5.3-Flash's MLA or KDA projections. These are the mcore module names
+            # from glm5_next/layer_specs.py (KDA: q/k/v/b/f_a/g_a/o_proj) and
+            # glm5_next/bridge.py (MLA: linear_q_down/up_proj,
+            # linear_kv_down/up_proj, linear_proj), plus the MoE/dense MLP linears.
+            # Mirrors examples/train/glm5_3_flash/run_gsm8k_glm5p3_flash_lora_1node.sh.
+            #
+            # f_b_proj / g_b_proj are deliberately absent on both sides: vLLM's KDA
+            # runs one fused in_proj_qkvbfg_a GEMM and .split()s it, so f_a/g_a are
+            # non-contiguous views and a LoRA-wrapped f_b_proj trips
+            # `assert inputs.is_contiguous()` in the triton lora_shrink.
+            lora_cfg = cfg.trainer.policy.model.lora
+            lora_cfg.rank = 32
+            lora_cfg.alpha = 32
+            lora_cfg.target_modules = [
+                "linear_q_down_proj",
+                "linear_q_up_proj",
+                "linear_kv_down_proj",
+                "linear_kv_up_proj",
+                "linear_proj",
+                "linear_fc1",
+                "linear_fc2",
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "b_proj",
+                "f_a_proj",
+                "g_a_proj",
+                "o_proj",
+            ]
+            cfg.trainer.policy.megatron_config.lora_config.merge_lora = False
     if "kimi-k2.5" in model_name.lower():
         # Unified VL checkpoint with a DeepSeek-V3 language model under a
         # `language_model.` prefix; MegatronWorker refuses it without
@@ -189,7 +300,7 @@ def _extra_env_vars_for_model(model_name: str, fp8_mode: str | None = None) -> d
     return env or None
 
 
-def _engine_overrides_for_model(model_name: str, fp8_mode: str | None = None) -> dict:
+def _engine_overrides_for_model(model_name: str, fp8_mode: str | None = None, lora: bool = False) -> dict:
     """Per-model overrides for vLLM engine init."""
     overrides = {"engine_init_kwargs": {}, "gpu_memory_utilization": 0.9}
     if "Nemotron-3.5-Lightning" in model_name:
@@ -223,6 +334,30 @@ def _engine_overrides_for_model(model_name: str, fp8_mode: str | None = None) ->
         # colocated with the Megatron shard. The DSA indexer in vLLM needs DeepGEMM.
         overrides["engine_init_kwargs"]["max_model_len"] = 4096
         overrides["gpu_memory_utilization"] = 0.5
+        if lora:
+            # lora_target_modules controls which modules vLLM *wraps*; it is not inferred
+            # from the adapter, and the profile run pushes dummy LoRAs through every
+            # wrapped layer. These are the vLLM-side names for the trainer's
+            # target_modules: vLLM fuses KDA's q/k/v/b/f_a/g_a into in_proj_qkvbfg_a and
+            # MLA's q_a/kv_a into fused_qkv_a_proj (see patch_glm5next_lora_packing).
+            #
+            # "experts" is required. Passing lora_target_modules at all switches the MoE
+            # from "unrestricted" to "filtered" (lora/utils.py::is_in_target_modules), and
+            # the MoE module suffix is `experts`. vLLM picks a LoRA-aware MoE expert kernel
+            # whenever LoRA is enabled *globally* (fused_moe/oracle/unquantized.py) but only
+            # sets the lora_context that kernel asserts on when the MoE layer is itself
+            # wrapped -- so omitting `experts` here raises "LoRA context must be set"
+            # during the profile run.
+            overrides["engine_init_kwargs"]["lora_target_modules"] = [
+                "fused_qkv_a_proj",
+                "q_b_proj",
+                "kv_b_proj",
+                "o_proj",
+                "gate_up_proj",
+                "down_proj",
+                "in_proj_qkvbfg_a",
+                "experts",
+            ]
     if "kimi-k2.5" in model_name.lower():
         # Same story: a 262k default context, and 384 routed experts sitting next
         # to the colocated Megatron shard.
@@ -312,13 +447,26 @@ async def construct_training_input_from_generator_output(generator_output, token
 @pytest.mark.asyncio
 @pytest.mark.megatron_models
 @pytest.mark.parametrize(
-    "tp,pp,cp,ep,etp,inference_tp,num_gpus,model_name,vllm_threshold,megatron_threshold,fp8_mode,max_generate_length",
+    "tp,pp,cp,ep,etp,inference_tp,num_gpus,model_name,vllm_threshold,megatron_threshold,fp8_mode,max_generate_length,lora",
     [
         pytest.param(
-            2, 1, 1, 2, 1, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, None, id="qwen3-moe_tp2_ep2"
+            2, 1, 1, 2, 1, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, None, False, id="qwen3-moe_tp2_ep2"
         ),
         pytest.param(
-            1, 2, 2, 1, None, 2, 4, "eatang/qwen3-moe-tiny-random", 1e-1, 2e-1, None, None, id="qwen3-moe_pp2_cp2"
+            1,
+            2,
+            2,
+            1,
+            None,
+            2,
+            4,
+            "eatang/qwen3-moe-tiny-random",
+            1e-1,
+            2e-1,
+            None,
+            None,
+            False,
+            id="qwen3-moe_pp2_cp2",
         ),
         # GLM-4.7-Flash (~31B MoE, MLA) on 4xH100-80G. Mesh: TP=4 EP=4 ETP=1
         # -> DP=1, vLLM TP=4 colocated on the same GPUs, same layout as the
@@ -336,6 +484,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             None,
             None,
+            False,
             id="glm-4.7-flash_h100_tp4_ep4",
             marks=pytest.mark.h100,
         ),
@@ -364,6 +513,8 @@ async def construct_training_input_from_generator_output(generator_output, token
             1e-1,
             1e-1,
             None,
+            None,
+            False,
             id="kimi-k2.5-2layer-int4-qat_h100_tp4_ep4",
             marks=pytest.mark.h100,
         ),
@@ -391,6 +542,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             1e-1,
             None,
             None,
+            False,
             id="glm-5.3-flash-4layer_h100_tp2_ep4",
             marks=pytest.mark.h100,
         ),
@@ -432,7 +584,55 @@ async def construct_training_input_from_generator_output(generator_output, token
             1e-1,
             None,
             2048,
+            False,
             id="glm-5.3-flash-4layer_h100_tp2_ep4_kpool_beyond_topk",
+            marks=pytest.mark.h100,
+        ),
+        # The same 4-layer slice trained with Megatron LoRA and synced with
+        # merge_lora=false: the adapter goes to vLLM as a PEFT directory and is served
+        # under SKYRL_LORA_ADAPTER_NAME, instead of being merged into the base weights
+        # and pushed as a full weight update. This is the row that covers the LoRA path
+        # end to end for GLM-5.3-Flash -- see .claude/docs/glm5_3_flash_lora.md.
+        #
+        # What only this row can catch:
+        #   * vLLM booting with enable_lora=True on a glm5_next model at all: the MoE
+        #     expert kernel is chosen LoRA-aware whenever LoRA is enabled globally and
+        #     asserts a lora_context that only a wrapped FusedMoE sets, so a
+        #     lora_target_modules list without "experts" dies in the profile run.
+        #   * the vllm#56327 packing backport (patch_glm5next_lora_packing): without the
+        #     Glm5Next packed_modules_mapping the adapter's separate q/k/v/b/f_a/g_a and
+        #     q_a/kv_a projections have nothing to assemble onto.
+        #   * KDA's non-contiguous f_a/g_a views through the triton lora_shrink.
+        #   * the Megatron -> PEFT adapter export for 288 per-expert adapters x 3 MoE
+        #     layers, and vLLM's hot-load of it.
+        #
+        # The adapter is made non-trivial before the first sync (randomize_lora_b, std
+        # LORA_B_PERTURB_STD): megatron-bridge zero-initializes lora_B, and an all-zero
+        # adapter is an exact no-op, so without that this row would compare two base
+        # models and pass even if the adapter never reached the engine. With it, both
+        # sides must reproduce the *same* non-zero delta.
+        #
+        # Thresholds mirror the short non-LoRA row above. Measured on 4xH100 with the
+        # live adapter: Megatron vs vLLM 0.080 (0.065 with lora_B left at zero, and
+        # ~0.06 on the non-LoRA row -- so applying the adapter on both sides costs
+        # about 0.015), and 0.132 on the pre/post-sync vLLM comparison, where the two
+        # greedy generations diverge at a near-tie exactly as they do without LoRA.
+        # See LORA_B_PERTURB_STD for the std sweep behind those numbers.
+        pytest.param(
+            2,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            "eatang/GLM-5.3-Flash-4layer",
+            3e-1,
+            1e-1,
+            None,
+            None,
+            True,
+            id="glm-5.3-flash-4layer_h100_tp2_ep4_lora",
             marks=pytest.mark.h100,
         ),
         # GLM-5.3-Flash, the full 45-layer checkpoint: 34 KDA + 11 NoPE-MLA/DSA layers,
@@ -463,6 +663,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             None,
             None,
+            False,
             id="glm-5.3-flash-full_b300_tp2_ep8",
             marks=pytest.mark.b300,
         ),
@@ -479,6 +680,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             2e-1,
             None,
             None,
+            False,
             id="qwen3.5-moe_tp2_ep2",
             marks=pytest.mark.skip(reason="running into correctness issues for tiny qwen3.5"),
         ),
@@ -498,6 +700,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             None,
             None,
+            False,
             id="qwen3.5-0.8b-dense_tp2",
         ),
         # Nemotron-3.5-Lightning (30B MoE, bf16) on 4xH100-80G. Same
@@ -518,6 +721,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             None,
             None,
+            False,
             id="nemotron3.5-lightning_tp4_ep4_h100",
             marks=pytest.mark.h100,
         ),
@@ -538,6 +742,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             None,
             None,
+            False,
             id="qwen3.5-35b-a3b_h100_tp4_ep4",
             marks=pytest.mark.h100,
         ),
@@ -562,6 +767,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             "full_fp8",
             None,
+            False,
             id="qwen3.5-0.8b-dense_tp2_full_fp8",
             marks=pytest.mark.h100,
         ),
@@ -578,6 +784,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             "fp8_param",
             None,
+            False,
             id="qwen3.5-0.8b-dense_tp2_fp8_param",
             marks=pytest.mark.h100,
         ),
@@ -597,6 +804,7 @@ async def construct_training_input_from_generator_output(generator_output, token
             5e-2,
             "full_fp8",
             None,
+            False,
             id="qwen3.5-35b-a3b_h100_tp4_ep4_full_fp8",
             marks=pytest.mark.h100,
         ),
@@ -615,6 +823,7 @@ async def test_logprobs_matching_roundtrip(
     megatron_threshold,
     fp8_mode,
     max_generate_length,
+    lora,
 ):
     """
     Check that logprob diff matches acrosss vllm and megatron.
@@ -622,7 +831,7 @@ async def test_logprobs_matching_roundtrip(
     # See the comparison branch at the end of the test.
     compare_common_prefix = bool(fp8_mode) or "kimi-k2.5" in model_name.lower()
     with ray_init(extra_env_vars=_extra_env_vars_for_model(model_name, fp8_mode)):
-        cfg = get_test_actor_config(model_name=model_name)
+        cfg = get_test_actor_config(model_name=model_name, lora=lora)
         # With merge_lora=False the policy is served under the adapter name, which
         # only exists after a sync -- so sync first, like the FP8 rows.
         lora_sync = _uses_lora_weight_sync(cfg)
@@ -670,7 +879,7 @@ async def test_logprobs_matching_roundtrip(
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         tokenizer.pad_token = tokenizer.eos_token
 
-        engine_overrides = _engine_overrides_for_model(model_name, fp8_mode)
+        engine_overrides = _engine_overrides_for_model(model_name, fp8_mode, lora=lora)
         async with InferenceEngineState.create(
             cfg=cfg,
             model=model_name,
@@ -716,7 +925,18 @@ async def test_logprobs_matching_roundtrip(
                     colocate_all=True,
                     num_gpus_per_node=num_gpus,
                     cfg=cfg,
+                    # LoRA rows only: makes lora_B non-zero so the synced adapter is
+                    # not a no-op. See lora_perturb_policy_worker_cls.
+                    worker_cls=lora_perturb_policy_worker_cls() if lora else None,
                 )
+                if lora:
+                    perturbed = ray.get(policy.async_run_ray_method("pass_through", "randomize_lora_b"))
+                    total_lora_b = sum(r["lora_b_tensors"] for r in perturbed)
+                    assert total_lora_b > 0, (
+                        "no LoRA-B tensors matched '.adapter.linear_out.weight'; the adapter would "
+                        "stay zero and this row would silently degrade to the non-LoRA one"
+                    )
+                    print(f"randomized {total_lora_b} lora_B tensors at std={LORA_B_PERTURB_STD}")
                 ray.get(
                     policy.async_run_ray_method(
                         "pass_through", "init_weight_sync_state", client, cfg.generator.inference_engine
