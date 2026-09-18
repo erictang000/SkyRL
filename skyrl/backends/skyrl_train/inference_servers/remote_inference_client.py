@@ -74,7 +74,9 @@ from skyrl.backends.skyrl_train.inference_servers.base import (
 )
 from skyrl.backends.skyrl_train.inference_servers.generate_wire import (
     decode_packed_routed_experts,
+    decode_packed_topk_logprobs,
 )
+from skyrl.backends.skyrl_train.utils.topk_logprobs import TopKLogprobs
 from skyrl.backends.utils import convert_vllm_prompt_logprobs
 from skyrl.env_vars import (
     SKYRL_GENERATE_CONCURRENCY_PER_ENGINE,
@@ -158,6 +160,12 @@ class SampleResponse(TypedDict):
     sequences: List[Dict[str, Any]]
     prompt_logprobs: Optional[List[Optional[float]]]
     topk_prompt_logprobs: Optional[List[Optional[List[Tuple[int, float]]]]]
+
+
+def _requests_topk_logprobs(sampling_params: Dict[str, Any]) -> bool:
+    """``logprobs > 1`` requests the sampler's top-k head alongside the sampled-token logprob."""
+    num_logprobs = sampling_params.get("logprobs")
+    return isinstance(num_logprobs, int) and num_logprobs > 1
 
 
 @dataclass
@@ -413,6 +421,7 @@ class RemoteInferenceClient(InferenceEngineInterface):
         mm_features = input_batch.get("mm_features")
         cache_salt = input_batch.get("cache_salt")
         get_logprobs = sampling_params.get("logprobs") is not None
+        get_topk_logprobs = _requests_topk_logprobs(sampling_params)
 
         # Two semaphores decouple the generate and detokenize stages:
         #   gen_sem:   limits concurrent in-flight generate requests so we don't
@@ -466,6 +475,7 @@ class RemoteInferenceClient(InferenceEngineInterface):
             stop_reasons=[r["stop_reason"] for r in raw_results],
             response_ids=[r["response_ids"] for r in raw_results],
             response_logprobs=[r["response_logprobs"] for r in raw_results] if get_logprobs else None,
+            response_topk_logprobs=[r["topk_logprobs"] for r in raw_results] if get_topk_logprobs else None,
             rollout_expert_indices=rollout_expert_indices,
         )
 
@@ -488,9 +498,12 @@ class RemoteInferenceClient(InferenceEngineInterface):
         Returns:
             Dict with keys: stop_reason, response_ids, response_logprobs
         """
+        # The SkyRL endpoint carries routed experts and the sampler top-k head; vLLM's native
+        # endpoint serves the plain sampled-logprob case.
+        get_topk_logprobs = _requests_topk_logprobs(sampling_params)
         url = (
             f"{self.proxy_url}/skyrl/v1/generate"
-            if self.enable_return_routed_experts
+            if (self.enable_return_routed_experts or get_topk_logprobs)
             else f"{self.proxy_url}/inference/v1/generate"
         )
 
@@ -530,11 +543,21 @@ class RemoteInferenceClient(InferenceEngineInterface):
                 raise ValueError("/skyrl/v1/generate must return packed routed_experts")
             routed_experts = decode_packed_routed_experts(packed_routed_experts)
 
+        topk_logprobs: Optional[TopKLogprobs] = None
+        if get_topk_logprobs:
+            packed_topk = choice.get("topk_logprobs")
+            if not isinstance(packed_topk, dict):
+                raise ValueError("/skyrl/v1/generate must return packed topk_logprobs when logprobs > 1")
+            topk_logprobs = decode_packed_topk_logprobs(packed_topk)
+            if len(topk_logprobs) != len(token_ids):
+                raise ValueError(f"topk_logprobs has {len(topk_logprobs)} rows for {len(token_ids)} generated tokens")
+
         return {
             "stop_reason": stop_reason,
             "response_ids": token_ids,
             "response_logprobs": response_logprobs,
             "routed_experts": routed_experts,
+            "topk_logprobs": topk_logprobs,
         }
 
     async def _render_for_sample(

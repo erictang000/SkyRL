@@ -29,6 +29,7 @@ from skyrl.backends.skyrl_train.distributed.ulysses.utils import (
 from skyrl.backends.skyrl_train.training_batch import TensorList
 from skyrl.backends.skyrl_train.utils.torch_utils import (
     chunked_entropy_from_logits,
+    logprobs_and_topk_logprobs_from_logits,
     logprobs_from_logits,
 )
 
@@ -250,9 +251,20 @@ class HFModelWrapper(nn.Module):
         pixel_values: Optional[TensorList] = None,
         image_grid_thw: Optional[TensorList] = None,
         mm_token_type_ids: Optional[torch.Tensor] = None,
+        rollout_topk_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Returns action log probs"""
+        """Returns action log probs.
+
+        When ``rollout_topk_ids`` (``(batch, num_actions, k)`` sampler top-k token ids for each
+        response position) is given, the trainer's logprobs of those tokens are returned as
+        ``output["topk_log_probs"]`` with shape ``(batch, num_actions, k)`` (requires
+        ``return_output=True``); score centering builds its correction term from them.
+        """
         has_image_inputs = pixel_values is not None or image_grid_thw is not None
+        if rollout_topk_ids is not None:
+            assert return_output, "rollout_topk_ids requires return_output=True"
+            assert self.sequence_parallel_size == 1, "rollout_topk_ids is not supported with sequence parallelism"
+            assert not self.is_vlm, "rollout_topk_ids is not supported for VLMs"
         if self.is_vlm:
             # VLMs use model specific 3D positional IDs, meaning sequence packing can not be supported.
             # Sequence packing requires computing position IDs, but position IDs for VLMs are 3D and require
@@ -275,6 +287,15 @@ class HFModelWrapper(nn.Module):
         sequences_fwd = sequences
         position_ids_fwd = position_ids
         attention_mask_fwd = attention_mask
+        topk_ids_fwd = None
+        if rollout_topk_ids is not None:
+            # Lay the response top-k ids out like `sequences`: responses occupy the last
+            # `num_actions` positions, prompt positions get id 0 (never read through the loss mask).
+            num_response_positions = rollout_topk_ids.shape[1]
+            topk_ids_fwd = torch.zeros(
+                (*sequences.shape, rollout_topk_ids.shape[-1]), dtype=torch.long, device=sequences.device
+            )
+            topk_ids_fwd[:, -num_response_positions:, :] = rollout_topk_ids.long()
         if self.remove_microbatch_padding:
             with torch.no_grad():
                 # Removes padding to get a packed tensor. `unpad_input` expects 3 dimensional tensor so we unsqueeze first
@@ -287,8 +308,14 @@ class HFModelWrapper(nn.Module):
                 # (nnz, 1) -> (1, nnz)
                 position_ids_fwd = position_ids_fwd.transpose(0, 1)
                 attention_mask_fwd = None  # no attention mask with FA 2
+                if topk_ids_fwd is not None:
+                    # (B, S, k) -> (nnz, k) -> (1, nnz, k)
+                    topk_ids_fwd, _, _, _, _ = unpad_input(topk_ids_fwd, attention_mask=attention_mask)
+                    topk_ids_fwd = topk_ids_fwd.unsqueeze(0)
 
         sequences_rolled = torch.roll(sequences_fwd, shifts=-1, dims=1)
+        # Same shift as the labels: position t predicts token t+1, so it also scores the top-k head of t+1.
+        topk_ids_rolled = torch.roll(topk_ids_fwd, shifts=-1, dims=1) if topk_ids_fwd is not None else None
         if self.sequence_parallel_size > 1:
             # NOTE: don't pass any attn mask with sample packing
             attention_mask_fwd = None if self.remove_microbatch_padding else attention_mask_fwd
@@ -334,11 +361,21 @@ class HFModelWrapper(nn.Module):
         logits_BSV.div_(temperature)
 
         # NOTE: this is slightly inaccurate with sample packing because last token from nth seq -> first token of n+1th seq loss is added.
-        log_probs = logprobs_from_logits(
-            logits_BSV,
-            sequences_rolled,
-            inplace_backward=True,
-        )
+        topk_log_probs = None
+        if topk_ids_rolled is not None:
+            log_probs, topk_log_probs = logprobs_and_topk_logprobs_from_logits(
+                logits_BSV,
+                sequences_rolled,
+                topk_ids_rolled,
+                chunk_size=self.logprobs_chunk_size,
+                inplace_backward=True,
+            )
+        else:
+            log_probs = logprobs_from_logits(
+                logits_BSV,
+                sequences_rolled,
+                inplace_backward=True,
+            )
 
         # gather output if sp > 1
         if self.sequence_parallel_size > 1:
@@ -354,6 +391,11 @@ class HFModelWrapper(nn.Module):
             log_probs = pad_input(
                 log_probs.transpose(0, 1), indices=nnz_indices, batch=batch_size, seqlen=seqlen
             ).squeeze(-1)
+            if topk_log_probs is not None:
+                # (1, nnz, k) -> (nnz, k) -> (batch_size, seqlen, k)
+                topk_log_probs = pad_input(
+                    topk_log_probs.squeeze(0), indices=nnz_indices, batch=batch_size, seqlen=seqlen
+                )
 
         if compute_entropy:
             # For sample packing: entropy is calculated on unpacked data, so no attention mask needed
@@ -391,6 +433,8 @@ class HFModelWrapper(nn.Module):
             else:
                 num_actions = np.array(num_actions)
         action_log_probs = log_probs[:, -num_actions - 1 : -1]
+        if topk_log_probs is not None:
+            output["topk_log_probs"] = topk_log_probs[:, -num_actions - 1 : -1, :]
 
         if return_output:
             return (action_log_probs, output)

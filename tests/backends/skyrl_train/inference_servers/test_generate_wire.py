@@ -12,14 +12,19 @@ import torch
 from skyrl.backends.skyrl_train.inference_servers.generate_wire import (
     CLAMPED_LOGPROB,
     build_logprobs_content,
+    build_topk_logprobs,
     decode_packed_routed_experts,
+    decode_packed_topk_logprobs,
     pack_routed_experts,
+    pack_topk_logprobs,
 )
+from skyrl.backends.skyrl_train.utils.topk_logprobs import TopKLogprobs
 
 
 @dataclass
 class _Logprob:
     logprob: float
+    rank: int | None = None
 
 
 @pytest.mark.parametrize(
@@ -183,3 +188,44 @@ def test_decode_rejects_noncanonical_dtype():
 
     with pytest.raises(ValueError, match="non-canonical dtype"):
         decode_packed_routed_experts(payload)
+
+
+def test_build_topk_logprobs_takes_lowest_ranks_and_pads_missing():
+    # Position 0: k=2 head plus the sampled token (id 9) outside the head; position 1: only one
+    # finite entry; position 2: nothing logged.
+    resp = [
+        {9: _Logprob(-5.0, rank=7), 3: _Logprob(-0.2, rank=1), 4: _Logprob(-1.7, rank=2)},
+        {1: _Logprob(-0.1, rank=1), 2: _Logprob(float("nan"), rank=2)},
+        None,
+    ]
+    topk = build_topk_logprobs([9, 1, 0], resp, k=2)
+    assert topk.ids.tolist() == [[3, 4], [1, 0], [0, 0]]
+    assert topk.logprobs[0].tolist() == pytest.approx([-0.2, -1.7])
+    assert topk.logprobs[1, 0] == pytest.approx(-0.1)
+    assert np.isneginf(topk.logprobs[1, 1]) and np.all(np.isneginf(topk.logprobs[2]))
+
+
+def test_build_topk_logprobs_orders_by_logprob_without_ranks():
+    topk = build_topk_logprobs([0], [{5: _Logprob(-2.0), 6: _Logprob(-0.5), 7: _Logprob(-1.0)}], k=2)
+    assert topk.ids.tolist() == [[6, 7]]
+
+
+def test_packed_topk_logprobs_round_trip_through_orjson_keeps_neg_inf():
+    topk = TopKLogprobs(ids=np.array([[3, 4], [1, 0]]), logprobs=np.array([[-0.2, -1.7], [-0.1, -np.inf]]))
+    payload = orjson.loads(orjson.dumps(pack_topk_logprobs(topk)))
+    decoded = decode_packed_topk_logprobs(payload)
+    assert decoded == topk
+    assert decoded.ids.dtype == np.int32 and decoded.logprobs.dtype == np.float32
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "nope",
+        {"ids": "AQID", "logprobs": "AQID", "shape": [1]},
+        {"ids": "AQID", "logprobs": "AQID", "shape": [1, 1]},
+    ],
+)
+def test_decode_packed_topk_logprobs_rejects_bad_payloads(payload):
+    with pytest.raises((TypeError, ValueError)):
+        decode_packed_topk_logprobs(payload)

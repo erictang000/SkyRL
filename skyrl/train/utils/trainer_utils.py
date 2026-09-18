@@ -699,6 +699,7 @@ def validate_generator_output(num_prompts: int, generator_output: GeneratorOutpu
             "loss_masks",
             "rewards",
             "rollout_logprobs",
+            "rollout_topk_logprobs",
             "stop_reasons",
             "trajectory_ids",
             "rollout_expert_indices",
@@ -730,6 +731,11 @@ def validate_generator_output(num_prompts: int, generator_output: GeneratorOutpu
             assert len(response_ids) == len(generator_output["rollout_logprobs"][i]), (
                 f"Response ids and rollout logprobs must have the same length, "
                 f"for sample {i} got {len(response_ids)} and {len(generator_output['rollout_logprobs'][i])}"
+            )
+        if generator_output.get("rollout_topk_logprobs"):
+            assert len(response_ids) == len(generator_output["rollout_topk_logprobs"][i]), (
+                f"Response ids and rollout top-k logprobs must have the same length, "
+                f"for sample {i} got {len(response_ids)} and {len(generator_output['rollout_topk_logprobs'][i])}"
             )
 
     # loss masks should be non-zero for at least one element for trainer

@@ -18,6 +18,11 @@ from skyrl.backends.skyrl_train.utils.routed_experts import (
     RoutedExpertIndices,
     compact_routed_expert_indices,
 )
+from skyrl.backends.skyrl_train.utils.topk_logprobs import (
+    TOPK_IDS_DTYPE,
+    TOPK_LOGPROBS_DTYPE,
+    TopKLogprobs,
+)
 
 # Matches the floor vLLM applies at its own serving boundaries.
 CLAMPED_LOGPROB = -9999.0
@@ -104,3 +109,73 @@ def decode_packed_routed_experts(payload: dict[str, Any]) -> RoutedExpertIndices
     if compact.dtype != dtype:
         raise ValueError(f"packed routed_experts uses non-canonical dtype {dtype.name}; expected {compact.dtype.name}")
     return compact
+
+
+def build_topk_logprobs(
+    token_ids: Iterable[int],
+    resp_logprobs: Iterable[Optional[Mapping[int, Any]]],
+    k: int,
+) -> TopKLogprobs:
+    """Build the sampler's top-``k`` head for every generated token from vLLM's logprob dicts.
+
+    vLLM returns, per position, a ``{token_id: Logprob(logprob, rank, ...)}`` dict holding the
+    ``k`` highest-probability tokens plus the sampled token when it falls outside them. The head
+    is the ``k`` lowest-rank entries, so a sampled token outside the top-``k`` is left to the tail
+    model on the trainer side. Positions with fewer than ``k`` usable entries (a missing dict, or a
+    non-finite logprob) are padded with ``-inf``, which the trainer treats as zero sampler mass.
+    """
+    token_ids = list(token_ids)
+    ids = np.zeros((len(token_ids), k), dtype=TOPK_IDS_DTYPE)
+    logprobs = np.full((len(token_ids), k), -np.inf, dtype=TOPK_LOGPROBS_DTYPE)
+    for t, lp_dict in enumerate(resp_logprobs):
+        if not lp_dict:
+            continue
+        entries = []
+        for tid, entry in lp_dict.items():
+            logprob = getattr(entry, "logprob", None)
+            if logprob is None or not math.isfinite(logprob):
+                continue
+            rank = getattr(entry, "rank", None)
+            # Rank is 1-based; fall back to ordering by logprob when vLLM leaves it unset.
+            entries.append((rank if rank is not None else float("inf"), -logprob, tid, logprob))
+        entries.sort()
+        head = entries[:k]
+        if head:
+            ids[t, : len(head)] = [e[2] for e in head]
+            logprobs[t, : len(head)] = [e[3] for e in head]
+    return TopKLogprobs(ids=ids, logprobs=logprobs)
+
+
+def pack_topk_logprobs(topk: TopKLogprobs) -> dict[str, Any]:
+    """Encode a ``TopKLogprobs`` as base64 so ``-inf`` entries survive orjson."""
+    return {
+        "ids": pybase64.b64encode(memoryview(np.ascontiguousarray(topk.ids, dtype=TOPK_IDS_DTYPE))).decode("ascii"),
+        "logprobs": pybase64.b64encode(
+            memoryview(np.ascontiguousarray(topk.logprobs, dtype=TOPK_LOGPROBS_DTYPE))
+        ).decode("ascii"),
+        "shape": list(topk.ids.shape),
+    }
+
+
+def decode_packed_topk_logprobs(payload: dict[str, Any]) -> TopKLogprobs:
+    if not isinstance(payload, dict):
+        raise TypeError("packed topk_logprobs must be an object")
+    try:
+        shape = tuple(payload["shape"])
+        ids_data = pybase64.b64decode_as_bytearray(payload["ids"], validate=True)
+        logprobs_data = pybase64.b64decode_as_bytearray(payload["logprobs"], validate=True)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid packed topk_logprobs payload") from exc
+    if len(shape) != 2 or any(
+        not isinstance(dim, (int, np.integer)) or isinstance(dim, bool) or dim < 0 for dim in shape
+    ):
+        raise ValueError(f"invalid packed topk_logprobs shape: {shape}")
+    expected = math.prod(shape)
+    if len(ids_data) != expected * np.dtype(TOPK_IDS_DTYPE).itemsize:
+        raise ValueError(f"packed topk_logprobs ids has {len(ids_data)} bytes, expected {expected * 4}")
+    if len(logprobs_data) != expected * np.dtype(TOPK_LOGPROBS_DTYPE).itemsize:
+        raise ValueError(f"packed topk_logprobs logprobs has {len(logprobs_data)} bytes, expected {expected * 4}")
+    return TopKLogprobs(
+        ids=np.frombuffer(ids_data, dtype=TOPK_IDS_DTYPE).reshape(shape).copy(),
+        logprobs=np.frombuffer(logprobs_data, dtype=TOPK_LOGPROBS_DTYPE).reshape(shape).copy(),
+    )

@@ -3,6 +3,8 @@ set -x
 # Fully async DAPO training+generation for Qwen3-1.7B-Base on DAPO training data and validate on AIME 2024.
 # bash examples/train/algorithms/dapo/prepare_dapo_data.sh
 # bash examples/train/algorithms/dapo/run_dapo_qwen3_1.7b_aime_fully_async.sh
+# With score centering on top of geometric masking:
+# SCORE_CENTERING=true bash examples/train/algorithms/dapo/run_dapo_qwen3_1.7b_aime_fully_async.sh
 
 MODEL_NAME="Qwen/Qwen3-1.7B-Base"
 DATA_DIR="$HOME/data/dapo"
@@ -48,7 +50,19 @@ SEQUENCE_MASK_METRIC=geometric
 GEO_MASK_HIGH=1.01
 GEO_MASK_LOW=0.99
 
-RUN_NAME=dapo_qwen3_1.7b_base-async-geoMask${GEO_MASK_LOW}_${GEO_MASK_HIGH}-bs${MINI_BATCH_SIZE}-maxStale${MAX_STALENESS_STEPS}-numCon${NUM_PARALLEL_GENERATION_WORKERS}-${NUM_GPUS_PER_NODE}train${NUM_INFERENCE_ENGINES}gen
+# Score centering (https://arxiv.org/abs/2609.20807) subtracts the sampler-expected score at every
+# prefix, removing the drift toward stale/mismatched sampler weights. It is additive and composes
+# with geometric masking. Set SCORE_CENTERING=true to enable; SCORE_CENTERING_TOP_K sets how many
+# sampler top-k logprobs vLLM returns per token.
+: "${SCORE_CENTERING:=false}"
+: "${SCORE_CENTERING_TOP_K:=32}"
+
+SC_TAG=""
+if [ "$SCORE_CENTERING" = "true" ]; then
+  SC_TAG="-scoreCenter${SCORE_CENTERING_TOP_K}"
+fi
+
+RUN_NAME=dapo_qwen3_1.7b_base-async-geoMask${GEO_MASK_LOW}_${GEO_MASK_HIGH}${SC_TAG}-bs${MINI_BATCH_SIZE}-maxStale${MAX_STALENESS_STEPS}-numCon${NUM_PARALLEL_GENERATION_WORKERS}-${NUM_GPUS_PER_NODE}train${NUM_INFERENCE_ENGINES}gen
 
 uv run --isolated --extra fsdp -m examples.train.algorithms.dapo.main_dapo_fully_async \
   data.train_data="['$TRAIN_FILE']" \
@@ -60,6 +74,8 @@ uv run --isolated --extra fsdp -m examples.train.algorithms.dapo.main_dapo_fully
   trainer.algorithm.off_policy_correction.sequence_mask_metric=$SEQUENCE_MASK_METRIC \
   trainer.algorithm.off_policy_correction.geo_mask_high=$GEO_MASK_HIGH \
   trainer.algorithm.off_policy_correction.geo_mask_low=$GEO_MASK_LOW \
+  trainer.algorithm.score_centering.enabled=$SCORE_CENTERING \
+  trainer.algorithm.score_centering.top_k=$SCORE_CENTERING_TOP_K \
   trainer.algorithm.advantage_estimator="grpo" \
   trainer.algorithm.policy_loss_type="rollout_is" \
   trainer.algorithm.overlong_buffer_len=$OVERLONG_BUFFER_LEN \

@@ -24,6 +24,7 @@ from skyrl.backends.skyrl_train.inference_servers.base import (
     InferenceEngineInterface,
 )
 from skyrl.backends.skyrl_train.utils.routed_experts import RoutedExpertIndices
+from skyrl.backends.skyrl_train.utils.topk_logprobs import TopKLogprobs
 from skyrl.train.config import GeneratorConfig, SkyRLGymConfig
 from skyrl.train.generators.base import (
     GeneratorInput,
@@ -52,6 +53,8 @@ class TrajectoryOutput:
     rollout_logprobs: Optional[List[float]]
     env_metrics: Dict[str, Any]
     rollout_expert_indices: Optional[RoutedExpertIndices] = None
+    # Sampler top-k head per response token; set when `sampling_params.logprobs > 1`.
+    rollout_topk_logprobs: Optional[TopKLogprobs] = None
     pixel_values: Optional[torch.Tensor] = None
     image_grid_thw: Optional[torch.Tensor] = None
     # End-to-end wall-clock time (seconds) to generate this trajectory. Optional: agent loops may
@@ -84,6 +87,7 @@ class AgentLoopState:
     response_end_idx: Optional[int]
     done: bool
     rollout_expert_indices: Optional[RoutedExpertIndices] = None
+    rollout_topk_logprobs: Optional[TopKLogprobs] = None
 
 
 @dataclass
@@ -96,6 +100,7 @@ class TurnOutput:
     rollout_expert_indices: Optional[RoutedExpertIndices]
     reward: Optional[float]
     added_eos: bool = False
+    output_topk_logprobs: Optional[TopKLogprobs] = None
 
     def get_turn_rollout_expert_indices(self) -> Optional[RoutedExpertIndices]:
         """Return only routes that the inference model actually executed."""
@@ -128,6 +133,13 @@ class TurnOutput:
         if not self.output_logprobs:
             return None
         return self.output_logprobs + [0.0] * len(self.obs_ids)
+
+    def get_turn_rollout_topk_logprobs(self) -> Optional[TopKLogprobs]:
+        """Sampler top-k head for this turn's output tokens, followed by dummy rows (probability one on
+        the inserted token) for observation tokens. None if the head was not requested."""
+        if self.output_topk_logprobs is None:
+            return None
+        return self.output_topk_logprobs.append_dummy(self.obs_ids)
 
 
 def _split_lists(time_splits: List[Optional[Dict[str, float]]]) -> Optional[Dict[str, List[float]]]:
@@ -372,6 +384,8 @@ class SkyRLGymGenerator(GeneratorInterface):
             agent_loop_output = StepWiseOutput(step_outputs=[]) if is_step_wise else None
 
             get_logprobs = current_sampling_params.get("logprobs", None) is not None
+            num_topk_logprobs = current_sampling_params.get("logprobs", None) or 0
+            get_topk_logprobs = num_topk_logprobs > 1
             agent_loop_state = AgentLoopState(
                 chat_history=chat_history,
                 input_ids=initial_input_ids,
@@ -379,6 +393,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                 rollout_logprobs=[] if get_logprobs else None,
                 response_end_idx=None,
                 done=False,
+                rollout_topk_logprobs=TopKLogprobs.empty(num_topk_logprobs) if get_topk_logprobs else None,
             )
 
             while not agent_loop_state.done:
@@ -400,6 +415,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                     )
                     agent_loop_state.loss_mask = []
                     agent_loop_state.rollout_logprobs = None
+                    agent_loop_state.rollout_topk_logprobs = None
 
                 engine_input = InferenceEngineInput(
                     prompt_token_ids=[agent_loop_state.input_ids],
@@ -414,11 +430,16 @@ class SkyRLGymGenerator(GeneratorInterface):
                 output_ids = engine_output["response_ids"][0]
                 stop_reason = engine_output["stop_reasons"][0]
                 response_logprobs = engine_output.get("response_logprobs", None)
+                response_topk_logprobs = engine_output.get("response_topk_logprobs", None)
                 rollout_expert_indices = engine_output.get("rollout_expert_indices", None)
                 if response_logprobs is not None:
                     response_logprobs = response_logprobs[0]
                     if self.custom_chat_template is not None:
                         raise ValueError("Response Logprobs bookkeeping is not supported with custom chat template")
+                if response_topk_logprobs is not None:
+                    response_topk_logprobs = response_topk_logprobs[0]
+                    if self.custom_chat_template is not None:
+                        raise ValueError("Top-k logprobs bookkeeping is not supported with custom chat template")
 
                 if rollout_expert_indices is not None:
                     rollout_expert_indices = rollout_expert_indices[0]
@@ -440,6 +461,8 @@ class SkyRLGymGenerator(GeneratorInterface):
                         # dummy logprobs for EOS token id. It will be loss masked with 0 in TurnOutput.get_turn_loss_mask
                         if response_logprobs is not None:
                             response_logprobs.append(0.0)
+                        if response_topk_logprobs is not None:
+                            response_topk_logprobs = response_topk_logprobs.append_dummy([self.tokenizer.eos_token_id])
                         added_eos = True
 
                 # 2. Environment step
@@ -472,6 +495,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                     obs_ids=obs_ids,
                     added_eos=added_eos,
                     rollout_expert_indices=rollout_expert_indices,
+                    output_topk_logprobs=response_topk_logprobs,
                 )
 
                 if is_step_wise:
@@ -522,6 +546,7 @@ class SkyRLGymGenerator(GeneratorInterface):
 
             prompt_ids = agent_loop_state.input_ids[:initial_prompt_length]
             rollout_logprobs = None
+            rollout_topk_logprobs = None
             rollout_expert_indices_out = None
             response_ids = None
 
@@ -553,6 +578,10 @@ class SkyRLGymGenerator(GeneratorInterface):
                     rollout_logprobs = agent_loop_state.rollout_logprobs[
                         : agent_loop_state.response_end_idx - initial_prompt_length + 1
                     ]
+                if agent_loop_state.rollout_topk_logprobs is not None:
+                    rollout_topk_logprobs = agent_loop_state.rollout_topk_logprobs[
+                        : agent_loop_state.response_end_idx - initial_prompt_length + 1
+                    ]
                 if agent_loop_state.rollout_expert_indices is not None:
                     rollout_expert_indices_out = agent_loop_state.rollout_expert_indices[
                         : agent_loop_state.response_end_idx + 1
@@ -571,6 +600,8 @@ class SkyRLGymGenerator(GeneratorInterface):
                     loss_mask.append(1)
                     if rollout_logprobs is not None:
                         rollout_logprobs.append(0.0)
+                    if rollout_topk_logprobs is not None:
+                        rollout_topk_logprobs = rollout_topk_logprobs.append_dummy([self.tokenizer.eos_token_id])
                     appended_eos_token = True
 
             if self.generator_cfg.step_wise_trajectories:
@@ -591,6 +622,7 @@ class SkyRLGymGenerator(GeneratorInterface):
                     rollout_logprobs=rollout_logprobs,
                     env_metrics=env_metrics,
                     rollout_expert_indices=rollout_expert_indices_out,
+                    rollout_topk_logprobs=rollout_topk_logprobs,
                 )
 
             agent_loop_output = self._post_process_agent_loop_output(
@@ -757,6 +789,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         responses = engine_output["response_ids"]
         stop_reasons = engine_output["stop_reasons"]
         logprobs = engine_output.get("response_logprobs", None)
+        topk_logprobs = engine_output.get("response_topk_logprobs", None)
         raw_rollout_expert_indices = engine_output.get("rollout_expert_indices", None)
 
         truncated_responses = []
@@ -764,6 +797,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         loss_masks = []
         env_metrics = []
         truncated_logprobs: Optional[List[List[float]]] = [] if logprobs is not None else None
+        truncated_topk_logprobs: Optional[List[TopKLogprobs]] = [] if topk_logprobs is not None else None
         truncated_indices: Optional[List[RoutedExpertIndices]] = [] if raw_rollout_expert_indices is not None else None
 
         for i, (output, response, env, env_class) in enumerate(zip(outputs, responses, envs, env_classes)):
@@ -779,6 +813,8 @@ class SkyRLGymGenerator(GeneratorInterface):
             if logprobs is not None:
                 sample_logprobs = logprobs[i][: len(response)]
                 truncated_logprobs.append(sample_logprobs)
+            if topk_logprobs is not None:
+                truncated_topk_logprobs.append(topk_logprobs[i][: len(response)])
             if raw_rollout_expert_indices is not None:
                 sample_indices = raw_rollout_expert_indices[i]
                 prompt_len = len(prompt_token_ids[i])
@@ -803,6 +839,7 @@ class SkyRLGymGenerator(GeneratorInterface):
             "stop_reasons": stop_reasons,
             "rollout_metrics": rollout_metrics,
             "rollout_logprobs": truncated_logprobs,
+            "rollout_topk_logprobs": truncated_topk_logprobs,
             "rollout_expert_indices": truncated_indices,
         }
 
@@ -923,9 +960,11 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         if sampling_params is not None:
             # sampling params will be a dict in the format of the inference engine backend
-            get_logprobs = sampling_params.get("logprobs", None) is not None
+            num_logprobs = sampling_params.get("logprobs", None)
         else:
-            get_logprobs = self.generator_cfg.sampling_params.logprobs is not None
+            num_logprobs = self.generator_cfg.sampling_params.logprobs
+        get_logprobs = num_logprobs is not None
+        get_topk_logprobs = get_logprobs and num_logprobs > 1
 
         if get_logprobs:
             if self.generator_cfg.step_wise_trajectories:
@@ -937,6 +976,11 @@ class SkyRLGymGenerator(GeneratorInterface):
                 rollout_logprobs = [output.rollout_logprobs for output in all_outputs]
         else:
             rollout_logprobs = None
+
+        if get_topk_logprobs and not self.generator_cfg.step_wise_trajectories:
+            rollout_topk_logprobs = [output.rollout_topk_logprobs for output in all_outputs]
+        else:
+            rollout_topk_logprobs = None
 
         if self.generator_cfg.inference_engine.enable_return_routed_experts:
             rollout_expert_indices = [output.rollout_expert_indices for output in all_outputs]
@@ -971,6 +1015,7 @@ class SkyRLGymGenerator(GeneratorInterface):
             "stop_reasons": stop_reasons,
             "rollout_metrics": rollout_metrics,
             "rollout_logprobs": rollout_logprobs,
+            "rollout_topk_logprobs": rollout_topk_logprobs,
             "trajectory_ids": out_trajectory_ids,
             # NOTE: for completion metrics, we output the completion time
             "trajectory_generation_times": out_trajectory_generation_times,
@@ -1047,6 +1092,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         agent_loop_state.response_end_idx = None
         # `logprobs` are not computed because retokenizing breaks token-in-token-out
         agent_loop_state.rollout_logprobs = None
+        agent_loop_state.rollout_topk_logprobs = None
         # indices are not meaningful when retokenizing
         agent_loop_state.rollout_expert_indices = None
         return agent_loop_state
@@ -1099,6 +1145,7 @@ class SkyRLGymGenerator(GeneratorInterface):
 
         loss_mask_for_turn = turn_output.get_turn_loss_mask()
         rollout_logprobs_for_turn = turn_output.get_turn_rollout_logprobs()
+        rollout_topk_logprobs_for_turn = turn_output.get_turn_rollout_topk_logprobs()
 
         # use the raw rollout expert indices without any appending of observation tokens
         # this will be overwritten each turn, so we don't need to append observation tokens to it
@@ -1110,6 +1157,7 @@ class SkyRLGymGenerator(GeneratorInterface):
             # no running loss_mask, `rollout_logprobs`, or `rollout_expert_indices` are tracked for step-wise training
             agent_loop_state.loss_mask = None
             agent_loop_state.rollout_logprobs = None
+            agent_loop_state.rollout_topk_logprobs = None
             agent_loop_state.rollout_expert_indices = None
         else:
             # Directly append turn output
@@ -1119,6 +1167,10 @@ class SkyRLGymGenerator(GeneratorInterface):
             agent_loop_state.loss_mask += loss_mask_for_turn
             if agent_loop_state.rollout_logprobs is not None and rollout_logprobs_for_turn is not None:
                 agent_loop_state.rollout_logprobs += rollout_logprobs_for_turn
+            if agent_loop_state.rollout_topk_logprobs is not None and rollout_topk_logprobs_for_turn is not None:
+                agent_loop_state.rollout_topk_logprobs = agent_loop_state.rollout_topk_logprobs.append(
+                    rollout_topk_logprobs_for_turn
+                )
             if rollout_expert_indices_for_turn is not None:
                 # overwrite the existing rollout inference indices, since the inference engine should
                 # return the expert indices for the entire sequence including each turn's input
@@ -1187,6 +1239,11 @@ class SkyRLGymGenerator(GeneratorInterface):
             rollout_logprobs_for_turn = turn_output.output_logprobs[: len(new_resp_tokens)] + [0.0] * len(
                 obs_ids_to_add
             )
+        rollout_topk_logprobs_for_turn = None
+        if turn_output.output_topk_logprobs is not None:
+            rollout_topk_logprobs_for_turn = turn_output.output_topk_logprobs[: len(new_resp_tokens)].append_dummy(
+                obs_ids_to_add
+            )
 
         # Directly append turn output
         agent_loop_state.response_end_idx = len(agent_loop_state.input_ids) + len(new_resp_tokens) - 1
@@ -1194,6 +1251,10 @@ class SkyRLGymGenerator(GeneratorInterface):
         agent_loop_state.loss_mask += loss_mask_for_turn
         if agent_loop_state.rollout_logprobs is not None and rollout_logprobs_for_turn is not None:
             agent_loop_state.rollout_logprobs += rollout_logprobs_for_turn
+        if agent_loop_state.rollout_topk_logprobs is not None and rollout_topk_logprobs_for_turn is not None:
+            agent_loop_state.rollout_topk_logprobs = agent_loop_state.rollout_topk_logprobs.append(
+                rollout_topk_logprobs_for_turn
+            )
         if (
             self.generator_cfg.inference_engine.enable_return_routed_experts
             and turn_output.rollout_expert_indices is not None

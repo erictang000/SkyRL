@@ -41,7 +41,9 @@ from skyrl.backends.skyrl_train.inference_servers.common import (
 from skyrl.backends.skyrl_train.inference_servers.generate_wire import (
     CLAMPED_LOGPROB,
     build_logprobs_content,
+    build_topk_logprobs,
     pack_routed_experts,
+    pack_topk_logprobs,
 )
 from skyrl.backends.skyrl_train.inference_servers.protocols import ServerActorProtocol
 from skyrl.env_vars import (
@@ -520,6 +522,13 @@ class VLLMServerActor(ServerActorProtocol):
             if resp.routed_experts is not None:
                 routed_experts = pack_routed_experts(resp.routed_experts)
 
+            # `logprobs > 1` asks for the sampler's top-k head (score centering); the sampled
+            # token's logprob above stays the source for `rollout_logprobs`.
+            topk_logprobs = None
+            num_topk = sampling_params_dict.get("logprobs") or 0
+            if resp.logprobs is not None and num_topk > 1:
+                topk_logprobs = pack_topk_logprobs(build_topk_logprobs(token_ids_out, resp.logprobs, num_topk))
+
             payload = {
                 "choices": [
                     {
@@ -527,6 +536,7 @@ class VLLMServerActor(ServerActorProtocol):
                         "finish_reason": finish_reason,
                         "logprobs": logprobs,
                         "routed_experts": routed_experts,
+                        "topk_logprobs": topk_logprobs,
                     }
                 ]
             }

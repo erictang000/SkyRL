@@ -56,6 +56,7 @@ from skyrl.train.dataset.preprocess import (
     compute_prompt_boundaries,
     compute_prompt_mini_batch_boundaries,
     convert_prompts_responses_to_batch_tensors,
+    convert_topk_logprobs_to_batch_tensors,
     make_router_padding_mask,
 )
 from skyrl.train.evaluate import evaluate, evaluate_step_wise
@@ -890,6 +891,7 @@ class RayPPOTrainer:
 
         logprobs: Optional[List[List[float]]] = generator_output.get("rollout_logprobs", None)
         rollout_expert_indices = generator_output.get("rollout_expert_indices", None)
+        rollout_topk_logprobs = generator_output.get("rollout_topk_logprobs", None)
 
         pixel_values = generator_output.get("pixel_values", None)
         image_grid_thw = generator_output.get("image_grid_thw", None)
@@ -929,6 +931,18 @@ class RayPPOTrainer:
                 [len(indices) for indices in rollout_expert_indices],
             )
 
+        rollout_topk_ids_tensor = None
+        rollout_topk_logprobs_tensor = None
+        if self.cfg.trainer.algorithm.score_centering.enabled:
+            assert rollout_topk_logprobs is not None, (
+                "expected non-null rollout top-k logprobs when score centering is enabled; the generator must "
+                "propagate `rollout_topk_logprobs` from the inference engine"
+            )
+        if rollout_topk_logprobs is not None:
+            rollout_topk_ids_tensor, rollout_topk_logprobs_tensor = convert_topk_logprobs_to_batch_tensors(
+                rollout_topk_logprobs, loss_masks_tensor.shape[1]
+            )
+
         # sanity check for off_policy_correction
         off_policy_correction = self.cfg.trainer.algorithm.off_policy_correction
         tis_ratio_type = off_policy_correction.tis_ratio_type
@@ -948,6 +962,8 @@ class RayPPOTrainer:
                 "rewards": rewards_tensor,
                 "loss_mask": loss_masks_tensor,
                 "rollout_logprobs": rollout_logprobs_tensor,
+                "rollout_topk_ids": rollout_topk_ids_tensor,
+                "rollout_topk_logprobs": rollout_topk_logprobs_tensor,
                 "rollout_expert_indices": rollout_expert_indices_tensor,
                 "router_padding_mask": router_padding_mask,
                 "pixel_values": pixel_values,

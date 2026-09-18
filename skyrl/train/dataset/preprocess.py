@@ -10,6 +10,11 @@ from skyrl.backends.skyrl_train.utils.routed_experts import (
     RoutedExpertIndices,
     compact_routed_expert_indices,
 )
+from skyrl.backends.skyrl_train.utils.topk_logprobs import (
+    TOPK_IDS_DTYPE,
+    TOPK_LOGPROBS_DTYPE,
+    TopKLogprobs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -390,3 +395,32 @@ def compute_prompt_mini_batch_boundaries(
             assert end - start == expected_num_seq_in_mini_batch
 
     return boundaries
+
+
+def convert_topk_logprobs_to_batch_tensors(
+    rollout_topk_logprobs: List[TopKLogprobs],
+    max_response: int,
+) -> Tuple[Integer[torch.Tensor, "batch response_len k"], Float[torch.Tensor, "batch response_len k"]]:
+    """Right-align per-trajectory sampler top-k heads into ``(batch, max_response, k)`` tensors.
+
+    Layout matches the response-level tensors from ``convert_prompts_responses_to_batch_tensors``:
+    the last ``len(topk_i)`` positions hold trajectory ``i``, leading positions are padding with
+    token id ``0`` and logprob ``-inf`` (zero sampler mass).
+    """
+    if not rollout_topk_logprobs:
+        raise ValueError("rollout_topk_logprobs must contain one entry per trajectory")
+    k = rollout_topk_logprobs[0].k
+    num_samples = len(rollout_topk_logprobs)
+    ids_np = np.zeros((num_samples, max_response, k), dtype=TOPK_IDS_DTYPE)
+    logprobs_np = np.full((num_samples, max_response, k), -np.inf, dtype=TOPK_LOGPROBS_DTYPE)
+    for i, sample in enumerate(rollout_topk_logprobs):
+        if not isinstance(sample, TopKLogprobs):
+            raise TypeError(f"rollout_topk_logprobs entries must be TopKLogprobs, got {type(sample).__name__} at {i}")
+        if sample.k != k:
+            raise ValueError(f"rollout_topk_logprobs entries must share k, got {sample.k} and {k}")
+        if len(sample) > max_response:
+            raise ValueError(f"trajectory {i} has {len(sample)} top-k rows but max_response is {max_response}")
+        if len(sample):
+            ids_np[i, max_response - len(sample) :] = sample.ids
+            logprobs_np[i, max_response - len(sample) :] = sample.logprobs
+    return torch.from_numpy(ids_np), torch.from_numpy(logprobs_np)

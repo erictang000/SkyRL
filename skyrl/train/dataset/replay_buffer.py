@@ -70,6 +70,9 @@ class Experience:
     rollout_expert_indices: Optional[Integer[torch.Tensor, "batch seq_len layer_num topk"]]
     num_actions: int
     info: Optional[dict]
+    # Sampler top-k head per response token, used by score centering.
+    rollout_topk_ids: Optional[Integer[torch.Tensor, "batch response_len k"]] = None
+    rollout_topk_logprobs: Optional[Float[torch.Tensor, "batch response_len k"]] = None
     router_padding_mask: Optional[Bool[torch.Tensor, "batch seq_len"]] = None
     kl: Optional[Float[torch.Tensor, "batch response_len"]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -102,6 +105,10 @@ class Experience:
             self.rollout_logprobs = to(self.rollout_logprobs, device)
         if self.rollout_expert_indices is not None:
             self.rollout_expert_indices = to(self.rollout_expert_indices, device)
+        if self.rollout_topk_ids is not None:
+            self.rollout_topk_ids = to(self.rollout_topk_ids, device)
+        if self.rollout_topk_logprobs is not None:
+            self.rollout_topk_logprobs = to(self.rollout_topk_logprobs, device)
         if self.router_padding_mask is not None:
             self.router_padding_mask = to(self.router_padding_mask, device)
         if self.pixel_values is not None:
@@ -133,6 +140,10 @@ class Experience:
             self.rollout_logprobs = self.rollout_logprobs.pin_memory()
         if self.rollout_expert_indices is not None:
             self.rollout_expert_indices = self.rollout_expert_indices.pin_memory()
+        if self.rollout_topk_ids is not None:
+            self.rollout_topk_ids = self.rollout_topk_ids.pin_memory()
+        if self.rollout_topk_logprobs is not None:
+            self.rollout_topk_logprobs = self.rollout_topk_logprobs.pin_memory()
         if self.router_padding_mask is not None:
             self.router_padding_mask = self.router_padding_mask.pin_memory()
         return self

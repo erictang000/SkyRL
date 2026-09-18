@@ -173,6 +173,8 @@ class BaseBatchIterator:
             num_actions=batch.metadata["response_length"],  # int
             rollout_logprobs=batch.get("rollout_logprobs"),
             rollout_expert_indices=batch.get("rollout_expert_indices"),
+            rollout_topk_ids=batch.get("rollout_topk_ids"),
+            rollout_topk_logprobs=batch.get("rollout_topk_logprobs"),
             router_padding_mask=batch.get("router_padding_mask"),
             # additional info
             # can be used to log metrics etc for micro-batches in the worker
@@ -335,6 +337,16 @@ class TokenBasedBatchIterator(BaseBatchIterator):
         if self.data.get("rollout_logprobs") is not None:
             ref_tensor = self.data["rollout_logprobs"]
             data["rollout_logprobs"] = torch.zeros((batch_size, num_actions), dtype=ref_tensor.dtype, device=device)
+        if self.data.get("rollout_topk_ids") is not None:
+            ref_tensor = self.data["rollout_topk_ids"]
+            data["rollout_topk_ids"] = torch.zeros(
+                (batch_size, num_actions, ref_tensor.shape[-1]), dtype=ref_tensor.dtype, device=device
+            )
+        if self.data.get("rollout_topk_logprobs") is not None:
+            ref_tensor = self.data["rollout_topk_logprobs"]
+            data["rollout_topk_logprobs"] = torch.full(
+                (batch_size, num_actions, ref_tensor.shape[-1]), float("-inf"), dtype=ref_tensor.dtype, device=device
+            )
         if self.data.get("rollout_expert_indices") is not None:
             ref_tensor = self.data["rollout_expert_indices"]
             data["rollout_expert_indices"] = make_replay_padding_indices(

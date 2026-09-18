@@ -310,6 +310,50 @@ def _apply_mtp_config(cfg: SkyRLTrainConfig):
         }
 
 
+def validate_score_centering_cfg(cfg: SkyRLTrainConfig) -> None:
+    """Validate ``trainer.algorithm.score_centering`` and derive the sampler settings it needs.
+
+    Score centering needs the sampler's top-k head for every generated token, so it forces
+    ``generator.sampling_params.logprobs`` to ``top_k`` and raises vLLM's ``max_logprobs`` to match.
+    """
+    score_centering = cfg.trainer.algorithm.score_centering
+    if not score_centering.enabled:
+        return
+    algorithm = cfg.trainer.algorithm
+    if cfg.trainer.strategy != "fsdp":
+        raise NotImplementedError(
+            f"`trainer.algorithm.score_centering` is only supported with `trainer.strategy=fsdp`, got "
+            f"{cfg.trainer.strategy}."
+        )
+    if algorithm.policy_loss_type != "rollout_is":
+        raise ValueError(
+            "`trainer.algorithm.score_centering` requires `trainer.algorithm.policy_loss_type=rollout_is`, got "
+            f"{algorithm.policy_loss_type}."
+        )
+    if algorithm.off_policy_correction.tis_ratio_type is not None:
+        raise ValueError(
+            "`trainer.algorithm.score_centering` cannot be combined with "
+            "`trainer.algorithm.off_policy_correction.tis_ratio_type`; the truncated importance weight is "
+            "computed against the old policy and is not folded into the centering weights."
+        )
+    if cfg.trainer.policy.sequence_parallel_size > 1:
+        raise NotImplementedError("`trainer.algorithm.score_centering` does not support sequence parallelism.")
+    if cfg.generator.step_wise_trajectories:
+        raise NotImplementedError("`trainer.algorithm.score_centering` does not support step-wise trajectories.")
+    num_logprobs = cfg.generator.sampling_params.logprobs
+    if num_logprobs is not None and num_logprobs > 1 and num_logprobs != score_centering.top_k:
+        raise ValueError(
+            f"`generator.sampling_params.logprobs`={num_logprobs} conflicts with "
+            f"`trainer.algorithm.score_centering.top_k`={score_centering.top_k}; leave `logprobs` unset."
+        )
+    cfg.generator.sampling_params.logprobs = score_centering.top_k
+    # vLLM caps per-request logprobs at `max_logprobs` (default 20).
+    engine_kwargs = cfg.generator.inference_engine.engine_init_kwargs
+    current_max = engine_kwargs.get("max_logprobs")
+    if current_max is None or (current_max >= 0 and current_max < score_centering.top_k):
+        engine_kwargs["max_logprobs"] = score_centering.top_k
+
+
 def validate_cfg(cfg: SkyRLTrainConfig):
     if cfg.trainer.strategy == "fsdp2":
         import warnings
@@ -445,6 +489,8 @@ def validate_cfg(cfg: SkyRLTrainConfig):
         cfg.trainer.algorithm.off_policy_correction.tis_ratio_type = "token"
         cfg.trainer.algorithm.off_policy_correction.token_tis_ratio_clip_high = cfg.trainer.algorithm.tis_imp_ratio_cap
 
+    validate_score_centering_cfg(cfg)
+
     # off_policy_correction config validation
     off_policy_correction = cfg.trainer.algorithm.off_policy_correction
     tis_ratio_type = off_policy_correction.tis_ratio_type
@@ -542,10 +588,11 @@ def validate_generator_cfg(cfg: SkyRLTrainConfig):
 
     if cfg.generator.sampling_params.logprobs is not None:
         assert isinstance(cfg.generator.sampling_params.logprobs, int)
-        if cfg.generator.sampling_params.logprobs > 1:
+        if cfg.generator.sampling_params.logprobs > 1 and not cfg.trainer.algorithm.score_centering.enabled:
             raise ValueError(
                 f"`logprobs` if set should be 0 or 1 (both return only the chosen token's logprob), "
-                f"got {cfg.generator.sampling_params.logprobs}"
+                f"got {cfg.generator.sampling_params.logprobs}. Values above 1 are only used by "
+                "`trainer.algorithm.score_centering`."
             )
 
     if cfg.trainer.strategy == "megatron":

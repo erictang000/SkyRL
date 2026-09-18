@@ -6,6 +6,7 @@ import torch
 
 from skyrl.backends.skyrl_train.inference_servers.base import ConversationType
 from skyrl.backends.skyrl_train.utils.routed_experts import RoutedExpertIndices
+from skyrl.backends.skyrl_train.utils.topk_logprobs import TopKLogprobs
 
 TrainingPhase = Literal["train", "eval"]
 
@@ -42,6 +43,9 @@ class GeneratorOutput(TypedDict):
     stop_reasons: Optional[List[str]]
     rollout_metrics: Optional[Dict[str, Any]]
     rollout_logprobs: Optional[List[List[float]]]
+    # Sampler top-k head per response token (one ``TopKLogprobs`` per trajectory), present when
+    # ``sampling_params.logprobs > 1``. Consumed by score centering.
+    rollout_topk_logprobs: Optional[List[TopKLogprobs]]
     trajectory_ids: Optional[List[TrajectoryID]]
     # Wall-clock generation time (seconds) for each trajectory, with one entry per
     # trajectory in the input batch (i.e. per ``agent_loop`` call). Used by the fully

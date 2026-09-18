@@ -883,6 +883,28 @@ class OffPolicyCorrectionConfig(BaseConfig):
     """Set to mask per-token when IS ratio > `token_mask_is_threshold_high`. ``None`` to disable."""
 
 
+# see https://docs.skyrl.ai/docs/algorithms/off_policy_correction#score-centering for more details
+@dataclass
+class ScoreCenteringConfig(BaseConfig):
+    enabled: bool = False
+    """Add the score-centering correction (https://arxiv.org/abs/2609.20807) to the policy loss.
+    Subtracts the sampler-expected score at every prefix so the update carries no drift toward
+    the (stale or numerically mismatched) sampler. Requires ``policy_loss_type="rollout_is"`` and
+    the ``fsdp`` backend; sets ``generator.sampling_params.logprobs`` to ``top_k``."""
+    top_k: int = 32
+    """Number of sampler top-k next-token logprobs used to build the centering term.
+    The remaining sampler mass is modeled with the trainer's distribution. The paper reports
+    ``32`` and ``128`` matching full-vocabulary centering; larger values cost more memory."""
+    tail_eps: float = 1e-6
+    """Floor for the sampler and trainer tail masses outside the top-k head."""
+
+    def __post_init__(self):
+        if self.top_k < 1:
+            raise ValueError(f"score_centering.top_k must be >= 1, got {self.top_k}")
+        if self.tail_eps <= 0:
+            raise ValueError(f"score_centering.tail_eps must be > 0, got {self.tail_eps}")
+
+
 @dataclass
 class AlgorithmConfig(BaseConfig):
     advantage_estimator: str = "grpo"
@@ -981,6 +1003,8 @@ class AlgorithmConfig(BaseConfig):
     Enabled Truncated Importance Sampling (TIS) as proposed in https://fengyao.notion.site/off-policy-rl."""
     off_policy_correction: OffPolicyCorrectionConfig = field(default_factory=OffPolicyCorrectionConfig)
     """See https://docs.skyrl.ai/docs/algorithms/off_policy_correction for a full guide."""
+    score_centering: ScoreCenteringConfig = field(default_factory=ScoreCenteringConfig)
+    """Score centering (https://arxiv.org/abs/2609.20807); composes with ``off_policy_correction`` masks."""
     sapo: SAPOConfig = field(default_factory=SAPOConfig)
     """Only used when ``policy_loss_type="sapo"``."""
     value_clip: float = 0.2

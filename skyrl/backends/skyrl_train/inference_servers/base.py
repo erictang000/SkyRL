@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Hashable, List, Optional, Tuple, TypedDict
 
 from skyrl.backends.skyrl_train.utils.routed_experts import RoutedExpertIndices
+from skyrl.backends.skyrl_train.utils.topk_logprobs import TopKLogprobs
 
 if TYPE_CHECKING:
     from skyrl.backends.skyrl_train.weight_sync import LoraLoadRequest
@@ -45,6 +46,9 @@ class InferenceEngineOutput(TypedDict):
     response_ids: List[List[int]]
     stop_reasons: List[str]
     response_logprobs: Optional[List[List[float]]]
+    # Sampler top-k head per generated token (one entry per response), set when
+    # ``sampling_params.logprobs > 1``; consumed by score centering.
+    response_topk_logprobs: Optional[List[TopKLogprobs]]
     prompt_logprobs: Optional[List[List[float]]]  # per-prompt-token logprobs under the current model
     rollout_expert_indices: Optional[List[RoutedExpertIndices]]
 

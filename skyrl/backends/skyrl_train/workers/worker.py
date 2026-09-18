@@ -1081,6 +1081,8 @@ class PolicyWorkerBase(Worker):
         loss_mask = experience.loss_mask
         response_mask = experience.response_mask
         rollout_action_logprobs = experience.rollout_logprobs
+        rollout_topk_ids = experience.rollout_topk_ids
+        rollout_topk_logprobs = experience.rollout_topk_logprobs
 
         # Determine which loss function to use
         resolved_loss_name = loss_fn if loss_fn is not None else self.cfg.algorithm.policy_loss_type
@@ -1115,7 +1117,16 @@ class PolicyWorkerBase(Worker):
                 entropy_requires_grad=self.cfg.algorithm.use_entropy_loss,
                 pixel_values=experience.pixel_values,
                 image_grid_thw=experience.image_grid_thw,
+                rollout_topk_ids=rollout_topk_ids,
             )
+            # Score centering needs the trainer's logprobs of the sampler's top-k head; only pass
+            # them when present so registered losses keep their existing signature otherwise.
+            score_centering_kwargs = {}
+            if rollout_topk_ids is not None:
+                score_centering_kwargs = dict(
+                    rollout_topk_logprobs=rollout_topk_logprobs,
+                    topk_log_probs=output["topk_log_probs"],
+                )
             # loss function
             # TODO: recompute advantages
             policy_loss, loss_metrics = current_loss_fn(
@@ -1125,6 +1136,7 @@ class PolicyWorkerBase(Worker):
                 config=loss_config,
                 loss_mask=loss_mask,
                 rollout_logprobs=rollout_action_logprobs,
+                **score_centering_kwargs,
             )
 
         # SFT path: skip KL/entropy terms, return per-token outputs for Tinker API

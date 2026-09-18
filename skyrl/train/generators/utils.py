@@ -283,6 +283,11 @@ def concatenate_generator_outputs(generator_outputs: List[GeneratorOutput], step
         raise ValueError(
             "generator outputs are expected to all have null rollout_logprobs or all non-null, but received a mix"
         )
+    has_topk = [output.get("rollout_topk_logprobs") is not None for output in generator_outputs]
+    if any(has_topk) and not all(has_topk):
+        raise ValueError(
+            "generator outputs are expected to all have null rollout_topk_logprobs or all non-null, but received a mix"
+        )
     first = generator_outputs[0]
     result: GeneratorOutput = {
         "prompt_token_ids": _flatten_field(generator_outputs, "prompt_token_ids"),
@@ -291,6 +296,7 @@ def concatenate_generator_outputs(generator_outputs: List[GeneratorOutput], step
         "loss_masks": _flatten_field(generator_outputs, "loss_masks"),
         "stop_reasons": _concat_optional_field(generator_outputs, "stop_reasons"),
         "rollout_logprobs": _concat_optional_field(generator_outputs, "rollout_logprobs"),
+        "rollout_topk_logprobs": _concat_optional_field(generator_outputs, "rollout_topk_logprobs"),
         "trajectory_generation_times": _concat_optional_field(generator_outputs, "trajectory_generation_times"),
         "trajectory_time_splits": _concat_optional_field(generator_outputs, "trajectory_time_splits"),
     }

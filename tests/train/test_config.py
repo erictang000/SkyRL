@@ -1194,3 +1194,66 @@ class TestDeltaWeightSyncConfig:
         # `publish_staging_dir` and `local_checkpoint_dir` should be constructed based on `sync_dir`
         assert "my_sync_dir" in cfg.publish_staging_dir
         assert "my_sync_dir" in cfg.local_checkpoint_dir
+
+
+class TestScoreCenteringValidation:
+    def _cfg(self):
+        cfg = _make_validated_test_config()
+        cfg.trainer.strategy = "fsdp"
+        cfg.trainer.algorithm.policy_loss_type = "rollout_is"
+        cfg.trainer.algorithm.score_centering.enabled = True
+        return cfg
+
+    def test_disabled_by_default_and_rejects_logprobs_above_one(self):
+        cfg = _make_validated_test_config()
+        assert not cfg.trainer.algorithm.score_centering.enabled
+        cfg.generator.sampling_params.logprobs = 8
+        with pytest.raises(ValueError, match="score_centering"):
+            validate_cfg(cfg)
+
+    def test_sets_sampler_logprobs_and_vllm_max_logprobs(self):
+        cfg = self._cfg()
+        cfg.trainer.algorithm.score_centering.top_k = 16
+        validate_cfg(cfg)
+        assert cfg.generator.sampling_params.logprobs == 16
+        assert cfg.generator.inference_engine.engine_init_kwargs["max_logprobs"] == 16
+
+    def test_keeps_larger_user_max_logprobs(self):
+        cfg = self._cfg()
+        cfg.generator.inference_engine.engine_init_kwargs["max_logprobs"] = 64
+        validate_cfg(cfg)
+        assert cfg.generator.inference_engine.engine_init_kwargs["max_logprobs"] == 64
+
+    def test_rejects_conflicting_sampler_logprobs(self):
+        cfg = self._cfg()
+        cfg.generator.sampling_params.logprobs = 5
+        with pytest.raises(ValueError, match="conflicts"):
+            validate_cfg(cfg)
+
+    def test_requires_rollout_is(self):
+        cfg = self._cfg()
+        cfg.trainer.algorithm.policy_loss_type = "regular"
+        with pytest.raises(ValueError, match="rollout_is"):
+            validate_cfg(cfg)
+
+    def test_rejects_tis_ratio(self):
+        cfg = self._cfg()
+        cfg.trainer.algorithm.off_policy_correction.tis_ratio_type = "token"
+        with pytest.raises(ValueError, match="tis_ratio_type"):
+            validate_cfg(cfg)
+
+    def test_composes_with_geometric_sequence_mask(self):
+        cfg = self._cfg()
+        cfg.trainer.algorithm.off_policy_correction.sequence_mask_metric = "geometric"
+        validate_cfg(cfg)
+        assert cfg.generator.sampling_params.logprobs == cfg.trainer.algorithm.score_centering.top_k
+
+    def test_requires_fsdp(self):
+        cfg = self._cfg()
+        cfg.trainer.strategy = "megatron"
+        with pytest.raises(NotImplementedError, match="fsdp"):
+            validate_cfg(cfg)
+
+    def test_rejects_invalid_top_k(self):
+        with pytest.raises(ValueError, match="top_k"):
+            SkyRLTrainConfig.from_cli_overrides(["trainer.algorithm.score_centering.top_k=0"])
