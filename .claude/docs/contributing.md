@@ -89,7 +89,7 @@ Don't:
 - Narrate the journey ("first I tried X, then discovered Y"). State what is
   true now.
 - Use mannered prose. Don't reach for metaphor when a literal phrase exists.
-  Write "a parameter worth varying", not "a dial worth turning"; 
+  Write "a parameter worth varying", not "a dial worth turning";
   "this still matters", not "this earns its keep".
   Metaphors carry connotations you did not choose, and they make the
   reader work harder so the writer can perform.

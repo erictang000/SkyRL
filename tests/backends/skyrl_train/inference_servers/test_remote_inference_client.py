@@ -659,24 +659,10 @@ class TestControlPlane:
 class TestWeightSync:
     """Test weight sync methods."""
 
-    @pytest.mark.asyncio
-    async def test_init_weight_update_communicator(self, client):
-        """Test init_weight_update_communicator expands init_info via to_api_payload and fans out."""
-        api_payload = {"master_address": "127.0.0.1", "master_port": 29500, "rank_offset": 1, "world_size": 5}
-
-        class MockInitInfo:
-            """Lightweight mock satisfying the for_servers / to_api_payload protocol."""
-
-            def for_servers(self, world_size_per_server, num_servers, dp_size=1):
-                return [self] * num_servers
-
-            def to_api_payload(self):
-                return dict(api_payload)
-
-        result = await client.init_weight_update_communicator(MockInitInfo())
-        assert set(result) == set(client.server_urls)
-        for response in result.values():
-            assert response["body"]["body"] == {"init_info": api_payload}
+    # The init handshake and the start/update/finish lifecycle run on the
+    # trainer-side engines' blocking SkyrlWeightSyncClient
+    # (weight_sync/control_plane.py, covered by test_control_plane.py). Covered
+    # here is what this client drives from the driver.
 
     @pytest.mark.asyncio
     async def test_update_named_weights(self, client):
@@ -694,7 +680,7 @@ class TestWeightSync:
 
     @pytest.mark.asyncio
     async def test_fetch_weights(self, client):
-        """Test fetch_weights uses the first-class /fetch_weights endpoint."""
+        """Test fetch_weights fans out to /fetch_weights on all servers."""
         result = await client.fetch_weights(
             target_version=3,
             sync_dir="gs://bucket/prefix",

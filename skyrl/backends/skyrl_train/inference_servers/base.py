@@ -4,10 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, Hashable, List, Optional, Tuple, Ty
 from skyrl.backends.skyrl_train.utils.routed_experts import RoutedExpertIndices
 
 if TYPE_CHECKING:
-    from skyrl.backends.skyrl_train.weight_sync import WeightUpdateRequest
-    from skyrl.backends.skyrl_train.weight_sync.transfer_strategy import (
-        WeightSyncInitInfo,
-    )
+    from skyrl.backends.skyrl_train.weight_sync import LoraLoadRequest
 
 MessageType = Dict[str, str]
 ConversationType = List[MessageType]
@@ -125,17 +122,17 @@ class InferenceEngineInterface(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def init_weight_update_communicator(self, init_info: "WeightSyncInitInfo"):
-        """Initialize weight update communicator from init info.
-
-        Args:
-            init_info: WeightSyncInitInfo from the sender containing all info needed
-                to create the appropriate receiver.
-        """
+    async def update_named_weights(self, request: "LoraLoadRequest | Dict[str, Any]"):
+        """Update model weights. Used for full parameter fine-tuning"""
         raise NotImplementedError()
 
     @abstractmethod
-    async def update_named_weights(self, request: "WeightUpdateRequest"):
+    async def load_lora_adapter(
+        self,
+        lora_name: str,
+        lora_path: str,
+    ) -> Dict[str, Any]:
+        """Load LoRA adapter"""
         raise NotImplementedError()
 
     @abstractmethod
