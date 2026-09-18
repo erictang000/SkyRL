@@ -15,9 +15,14 @@ DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 
-NUM_NODES=3
+# NOTE: sized for 2 nodes. vmnode-6r3vaf61zkut was drained from the Ray cluster after its GPU0
+# lost P2P with every peer (nvidia-smi topo -p2p r shows NS across GPU0's row), which made vLLM's
+# TP=8 ncclCommInitRank fail on that node every time. It cannot be reset in-guest -- the GPUs are
+# passthrough -- and its NVLinks have been inactive since its fabric manager died on 2026-07-18.
+# Restore NUM_NODES=3 (and NUM_INFERENCE_ENGINES=3 for the sync recipe) once that node is fixed.
+NUM_NODES=2
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=3          # one engine per node, colocated with that node's policy shard
+NUM_INFERENCE_ENGINES=2          # one engine per node, colocated with that node's policy shard
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
 LOGGER="${LOGGER:-wandb}"
 
@@ -32,7 +37,7 @@ MAX_TRAINING_STEPS=50
 MAX_PROMPT_LENGTH=2048
 MAX_RESPONSE_LENGTH=4096
 INFERENCE_ENGINE_MAX_MODEL_LEN=6656          # prompt + response + headroom for chat-template tokens
-OVERLONG_BUFFER_LEN=2048                     # recipe ratio: half the response budget
+OVERLONG_BUFFER_LEN=1024                     # penalty starts at 3072; see the note below
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
 
 # Batch shape. validate_cfg requires (policy_mini_batch_size * n_samples_per_prompt) % dp == 0,
@@ -57,9 +62,19 @@ TOP_P=1.0
 EVAL_TOP_P=0.7
 LR=1e-5                          # LoRA adapters, as in the reference LoRA scripts
 
-LORA_RANK=32
-LORA_ALPHA=32
+# The previous 45-step run at rank 32 / shared expert adapters moved implied accuracy only
+# 0.482 -> 0.502 while reward tracked length at corr -0.93. Two changes to that:
+#
+# share_expert_adapters=False gives every expert its own adapter instead of one shared across all
+# local grouped experts -- with 288 experts holding ~97% of the parameters, the shared adapter was
+# the capacity bottleneck. normalize_moe_lora then divides the expert rank by moe_router_topk
+# (8 here, so expert rank 64//8 = 8), keeping the per-token expert contribution comparable to a
+# dense rank-64 adapter; it requires rank % topk == 0, which 64 satisfies.
+LORA_RANK=64
+LORA_ALPHA=64
 MERGE_LORA=true                  # see the GSM8K script: vLLM's LoRA MoE path is not usable yet
+SHARE_EXPERT_ADAPTERS=false
+NORMALIZE_MOE_LORA=true
 LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,linear_kv_up_proj,linear_proj,linear_fc1,linear_fc2,q_proj,k_proj,v_proj,b_proj,f_a_proj,g_a_proj,o_proj]'
 
 MEGATRON_TP=2
@@ -153,6 +168,8 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.model.lora.alpha=$LORA_ALPHA \
   trainer.policy.model.lora.target_modules="$LORA_TARGET_MODULES" \
   trainer.policy.megatron_config.lora_config.merge_lora=$MERGE_LORA \
+  trainer.policy.model.lora.share_expert_adapters=$SHARE_EXPERT_ADAPTERS \
+  trainer.policy.megatron_config.lora_config.normalize_moe_lora=$NORMALIZE_MOE_LORA \
   trainer.policy.optimizer_config.lr=$LR \
   trainer.policy.optimizer_config.max_grad_norm=1.0 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
