@@ -486,8 +486,18 @@ class VLLMServerActor(ServerActorProtocol):
 
             body = await request.json()
             token_ids = body["token_ids"]
-            sampling_params_dict = body.get("sampling_params", {})
+            sampling_params_dict = dict(body.get("sampling_params", {}))
             cache_salt = body.get("cache_salt")
+
+            # A top-k head request (`logprobs > 1`, score centering) would otherwise make vLLM's
+            # output processor, which runs in this API-server process, detokenize and wrap k + 1
+            # `Logprob` objects per generated token. That starves the event loop that also serves
+            # pause/weight-sync. Array-backed logprobs without decoded tokens keep the per-token
+            # work constant; this endpoint returns token ids only, so nothing reads the text.
+            if (sampling_params_dict.get("logprobs") or 0) > 1:
+                sampling_params_dict.setdefault("flat_logprobs", True)
+                if not sampling_params_dict.get("stop"):
+                    sampling_params_dict.setdefault("detokenize", False)
 
             sampling_params = VLLMSamplingParams(**sampling_params_dict)
             # `cache_salt` salts vLLM's prefix cache; vLLM rejects an empty salt, so attach only when set.

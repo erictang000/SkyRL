@@ -49,6 +49,27 @@ def build_logprobs_content(
     """
     content: list[dict[str, float]] = []
     num_clamped = 0
+    if _is_flat_logprobs(resp_logprobs):
+        # vLLM's FlatLogprobs: the sampler puts the sampled token first at every position, so its
+        # logprob is the entry at each position's start index. Reading the arrays directly avoids
+        # rebuilding a dict of `Logprob` objects per position.
+        starts = np.asarray(resp_logprobs.start_indices, dtype=np.int64)
+        ends = np.asarray(resp_logprobs.end_indices, dtype=np.int64)
+        flat_ids = np.asarray(resp_logprobs.token_ids, dtype=np.int64)
+        flat_lps = np.asarray(resp_logprobs.logprobs, dtype=np.float64)
+        for tid, start, end in zip(token_ids, starts, ends):
+            logprob = None
+            if end > start and flat_ids[start] == tid:
+                logprob = float(flat_lps[start])
+            elif end > start:
+                matches = np.nonzero(flat_ids[start:end] == tid)[0]
+                if len(matches):
+                    logprob = float(flat_lps[start + matches[0]])
+            if logprob is None or not math.isfinite(logprob):
+                num_clamped += 1
+                logprob = CLAMPED_LOGPROB
+            content.append({"logprob": logprob})
+        return content, num_clamped
     for tid, lp_dict in zip(token_ids, resp_logprobs):
         # .get over `tid in lp_dict`: an entry present but None would otherwise
         # raise AttributeError instead of taking the floor below.
@@ -127,6 +148,9 @@ def build_topk_logprobs(
     token_ids = list(token_ids)
     ids = np.zeros((len(token_ids), k), dtype=TOPK_IDS_DTYPE)
     logprobs = np.full((len(token_ids), k), -np.inf, dtype=TOPK_LOGPROBS_DTYPE)
+    if _is_flat_logprobs(resp_logprobs):
+        _fill_topk_from_flat_logprobs(resp_logprobs, k, ids, logprobs)
+        return TopKLogprobs(ids=ids, logprobs=logprobs)
     for t, lp_dict in enumerate(resp_logprobs):
         if not lp_dict:
             continue
@@ -144,6 +168,51 @@ def build_topk_logprobs(
             ids[t, : len(head)] = [e[2] for e in head]
             logprobs[t, : len(head)] = [e[3] for e in head]
     return TopKLogprobs(ids=ids, logprobs=logprobs)
+
+
+def _is_flat_logprobs(resp_logprobs: Any) -> bool:
+    """Whether ``resp_logprobs`` is vLLM's array-backed ``FlatLogprobs`` (``flat_logprobs=True``)."""
+    return all(hasattr(resp_logprobs, attr) for attr in ("start_indices", "end_indices", "token_ids", "logprobs"))
+
+
+def _fill_topk_from_flat_logprobs(flat: Any, k: int, ids: np.ndarray, logprobs: np.ndarray) -> None:
+    """Fill ``ids``/``logprobs`` ``(T, k)`` from vLLM's ``FlatLogprobs``.
+
+    Per position vLLM stores the sampled token first, followed by the top-``k`` tokens in rank
+    order, so when every position holds exactly ``k + 1`` entries the head is a reshape and a
+    slice. Positions with a different entry count fall back to sorting by rank.
+    """
+    starts = np.asarray(flat.start_indices, dtype=np.int64)
+    ends = np.asarray(flat.end_indices, dtype=np.int64)
+    num_positions = min(len(starts), ids.shape[0])
+    if num_positions == 0:
+        return
+    starts, ends = starts[:num_positions], ends[:num_positions]
+    flat_ids = np.asarray(flat.token_ids, dtype=np.int64)
+    flat_lps = np.asarray(flat.logprobs, dtype=np.float32)
+    counts = ends - starts
+    if np.all(counts == k + 1) and len(flat_ids) >= int(ends[-1]):
+        head_ids = flat_ids[starts[0] : ends[-1]].reshape(num_positions, k + 1)[:, 1:]
+        head_lps = flat_lps[starts[0] : ends[-1]].reshape(num_positions, k + 1)[:, 1:]
+        finite = np.isfinite(head_lps)
+        ids[:num_positions] = np.where(finite, head_ids, 0)
+        logprobs[:num_positions] = np.where(finite, head_lps, -np.inf)
+        return
+    ranks = list(flat.ranks)
+    for t in range(num_positions):
+        start, end = int(starts[t]), int(ends[t])
+        entries = []
+        for j in range(start, end):
+            logprob = float(flat_lps[j])
+            if not math.isfinite(logprob):
+                continue
+            rank = ranks[j] if j < len(ranks) else None
+            entries.append((rank if rank is not None else float("inf"), -logprob, int(flat_ids[j]), logprob))
+        entries.sort()
+        head = entries[:k]
+        if head:
+            ids[t, : len(head)] = [e[2] for e in head]
+            logprobs[t, : len(head)] = [e[3] for e in head]
 
 
 def pack_topk_logprobs(topk: TopKLogprobs) -> dict[str, Any]:

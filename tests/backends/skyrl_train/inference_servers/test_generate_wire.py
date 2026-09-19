@@ -229,3 +229,85 @@ def test_packed_topk_logprobs_round_trip_through_orjson_keeps_neg_inf():
 def test_decode_packed_topk_logprobs_rejects_bad_payloads(payload):
     with pytest.raises((TypeError, ValueError)):
         decode_packed_topk_logprobs(payload)
+
+
+@dataclass
+class _FlatLogprobs:
+    """Mimics vLLM's FlatLogprobs: sampled token first per position, then top-k in rank order."""
+
+    start_indices: list
+    end_indices: list
+    token_ids: list
+    logprobs: list
+    ranks: list
+
+
+def _flat_from_positions(positions):
+    flat = _FlatLogprobs([], [], [], [], [])
+    for entries in positions:
+        flat.start_indices.append(len(flat.token_ids))
+        for tid, lp, rank in entries:
+            flat.token_ids.append(tid)
+            flat.logprobs.append(lp)
+            flat.ranks.append(rank)
+        flat.end_indices.append(len(flat.token_ids))
+    return flat
+
+
+def test_flat_logprobs_fast_path_matches_dict_path():
+    k = 2
+    # Position 0: sampled token 9 (rank 7) outside the head. Position 1: sampled token 3 is top-1,
+    # so it appears twice, as vLLM lays it out. Position 2: sampled with a non-finite logprob.
+    positions = [
+        [(9, -5.0, 7), (3, -0.2, 1), (4, -1.7, 2)],
+        [(3, -0.1, 1), (3, -0.1, 1), (5, -2.5, 2)],
+        [(6, float("-inf"), 1), (6, float("-inf"), 1), (7, -0.9, 2)],
+    ]
+    flat = _flat_from_positions(positions)
+    dicts = [{tid: _Logprob(lp, rank) for tid, lp, rank in entries} for entries in positions]
+    sampled = [9, 3, 6]
+
+    flat_topk = build_topk_logprobs(sampled, flat, k)
+    dict_topk = build_topk_logprobs(sampled, dicts, k)
+    assert flat_topk.ids[:2].tolist() == dict_topk.ids[:2].tolist() == [[3, 4], [3, 5]]
+    assert np.allclose(flat_topk.logprobs[:2], dict_topk.logprobs[:2])
+
+    # Both paths drop the non-finite entry at position 2 (as -inf, i.e. zero sampler mass); only
+    # the slot it leaves behind differs, which the trainer ignores.
+    def finite_entries(topk, t):
+        return {(int(i), round(float(lp), 6)) for i, lp in zip(topk.ids[t], topk.logprobs[t]) if np.isfinite(lp)}
+
+    assert finite_entries(flat_topk, 2) == finite_entries(dict_topk, 2) == {(7, -0.9)}
+
+    flat_content, flat_clamped = build_logprobs_content(sampled, flat)
+    dict_content, dict_clamped = build_logprobs_content(sampled, dicts)
+    assert flat_content == dict_content == [{"logprob": -5.0}, {"logprob": -0.1}, {"logprob": CLAMPED_LOGPROB}]
+    assert flat_clamped == dict_clamped == 1
+
+
+def test_flat_logprobs_ragged_positions_fall_back_to_rank_sort():
+    k = 2
+    positions = [[(1, -0.3, 1), (2, -0.9, 2), (5, -3.0, 3)], [(4, -0.5, 1)]]
+    flat = _flat_from_positions(positions)
+    topk = build_topk_logprobs([1, 4], flat, k)
+    assert topk.ids.tolist() == [[1, 2], [4, 0]]
+    assert np.isneginf(topk.logprobs[1, 1])
+
+
+def test_topk_from_real_vllm_flat_logprobs():
+    """Build a FlatLogprobs exactly as vLLM's LogprobsProcessor does and read the head back."""
+    vllm_logprobs = pytest.importorskip("vllm.logprobs")
+    k = 3
+    flat = vllm_logprobs.create_sample_logprobs(flat_logprobs=True)
+    # Position 0: sampled token 11 has rank 2 (inside the head). Position 1: sampled 40 has rank 9.
+    vllm_logprobs.append_logprobs_for_next_position(
+        flat, [11, 10, 11, 12], [-1.0, -0.5, -1.0, -2.0], [None] * 4, rank=2, num_logprobs=k
+    )
+    vllm_logprobs.append_logprobs_for_next_position(
+        flat, [40, 20, 21, 22], [-6.0, -0.3, -1.5, -2.5], [None] * 4, rank=9, num_logprobs=k
+    )
+    topk = build_topk_logprobs([11, 40], flat, k)
+    assert topk.ids.tolist() == [[10, 11, 12], [20, 21, 22]]
+    assert np.allclose(topk.logprobs, [[-0.5, -1.0, -2.0], [-0.3, -1.5, -2.5]])
+    content, num_clamped = build_logprobs_content([11, 40], flat)
+    assert content == [{"logprob": -1.0}, {"logprob": -6.0}] and num_clamped == 0
