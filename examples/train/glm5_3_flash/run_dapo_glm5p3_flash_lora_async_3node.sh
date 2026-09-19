@@ -105,7 +105,18 @@ INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION="${INFERENCE_ENGINE_GPU_MEMORY_UTILIZATI
 # the load across engines (and drops consistent_hash's very chatty per-request debug logging).
 ROUTER_INIT_KWARGS='{"policy": "round_robin", "queue_size": 8192, "queue_timeout_secs": 1800}'
 
-ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', "kv_cache_dtype": "bfloat16", "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "pass_config": {"fuse_allreduce_rms": false}}}'
+# vLLM-side LoRA targets, only consulted when MERGE_LORA=false. "experts" is the whole fix for
+# "AssertionError: LoRA context must be set": supplying lora_target_modules at all flips the MoE
+# from unrestricted to filtered, and GLM-5.3-Flash's MoE module suffix is `experts`. See
+# .claude/docs/glm5_3_flash_lora.md. f_b_proj/g_b_proj stay out (KDA's non-contiguous f_a/g_a).
+VLLM_LORA_TARGET_MODULES='["fused_qkv_a_proj", "q_b_proj", "kv_b_proj", "o_proj", "gate_up_proj", "down_proj", "in_proj_qkvbfg_a", "experts"]'
+
+if [ "$MERGE_LORA" = "false" ]; then
+  LORA_ENGINE_KWARG='"lora_target_modules": '"$VLLM_LORA_TARGET_MODULES"', '
+else
+  LORA_ENGINE_KWARG=''
+fi
+ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', "kv_cache_dtype": "bfloat16", '"$LORA_ENGINE_KWARG"'"compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "pass_config": {"fuse_allreduce_rms": false}}}'
 
 # The client fires one HTTP request per sequence and caps in-flight work at
 # SKYRL_GENERATE_CONCURRENCY_PER_ENGINE x num_engines. At the 512 default that is 1536 requests
