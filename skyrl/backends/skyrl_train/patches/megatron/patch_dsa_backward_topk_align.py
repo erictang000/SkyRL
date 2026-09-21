@@ -93,9 +93,7 @@ def patch_dsa_backward_topk_align() -> None:
         if SKYRL_DSA_BACKWARD_CHECK:
             _check_backward_contract(global_idxs, topk_length, skv, b, global_idxs.shape[-1])
 
-        return original(
-            global_idxs=align_topk_axis(global_idxs), topk_length=topk_length, skv=skv, b=b, **kwargs
-        )
+        return original(global_idxs=align_topk_axis(global_idxs), topk_length=topk_length, skv=skv, b=b, **kwargs)
 
     dsa_cudnn_kernels._run_sparse_attention_backward = _run_sparse_attention_backward
     _APPLIED = True
