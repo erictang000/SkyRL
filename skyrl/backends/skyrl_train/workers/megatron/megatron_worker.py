@@ -107,8 +107,6 @@ from skyrl.train.config.config import MegatronDDPConfig, get_config_as_dict
 from skyrl.train.utils.utils import update_model_config
 from skyrl.utils.tok import get_tokenizer
 
-patch_grad_norm_mixed_dtype()
-
 if TYPE_CHECKING:
     from skyrl.backends.skyrl_train.inference_servers.base import (
         InferenceEngineInterface,
@@ -122,6 +120,7 @@ from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
 )
 
 apply_shared_expert_lora_tp_patch()
+patch_grad_norm_mixed_dtype()
 
 
 class MegatronWorker:
