@@ -115,7 +115,7 @@ def _patch_lora_shrink_contiguity() -> bool:
 
 
 def apply_glm5next_lora_packing_patch() -> None:
-    """Apply all three pieces once per process; a build without GLM-5.3-Flash is a no-op."""
+    """Apply all four pieces once per process; a build without GLM-5.3-Flash is a no-op."""
     global _PATCHED
     if _PATCHED:
         return
@@ -123,6 +123,7 @@ def apply_glm5next_lora_packing_patch() -> None:
         patched_classes = _patch_packed_modules_mapping()
         _patch_replicated_shard_ids()
         _patch_lora_shrink_contiguity()
+        _patch_mla_kv_b_proj_lora()
     except (ModuleNotFoundError, ImportError) as e:
         logger.info(f"Skipping GLM-5.3-Flash LoRA packing patch: {e}")
         return
@@ -130,5 +131,129 @@ def apply_glm5next_lora_packing_patch() -> None:
     logger.info(
         "Patched vLLM for GLM-5.3-Flash LoRA (vllm#56327): packed_modules_mapping on "
         f"{patched_classes or '<none>'}, replicated_shard_ids honored in merged LoRA-B "
-        "loading, non-contiguous LoRA shrink inputs accepted"
+        "loading, non-contiguous LoRA shrink inputs accepted, kv_b_proj adapter applied "
+        "to the absorbed MLA projections"
     )
+
+
+# --------------------------------------------------------------------------------------
+# vllm#56327, commit ed6aaff3 ("Fix missing LoRA updates in MLA and DSA indexer")
+# --------------------------------------------------------------------------------------
+#
+# MLA never runs its `kv_b_proj` module on the decode path. `process_weights_after_loading`
+# splits the weight into the absorbed `W_UK_T` / `W_UV` and decode does
+# `torch.bmm(mqa_q_nope, W_UK_T)` / `torch.bmm(x, W_UV)` directly, so a LoRA adapter on
+# `kv_b_proj` -- which only ever applies inside the wrapped module's forward -- reaches
+# prefill and is silently dropped in decode. Since a response is almost all decode tokens,
+# the adapter we train on `linear_kv_up_proj` was very nearly inert at generation time.
+#
+# The upstream fix computes the adapter delta directly against the absorbed, head-major
+# layout and adds it to the bmm output, so nothing has to rebuild W_UK_T/W_UV.
+#
+# NOT vendored: the same commit's `glm5next/common/attention.py` hunk, which fixes the DSA
+# indexer's `wk_weights_proj` fp32 weight cache bypassing its LoRA wrapper. That module is
+# absent from our `lora_target_modules`, so it is never wrapped and the hunk is a no-op
+# here. Re-check if `wk_weights_proj` is ever added to the target list.
+#
+# TODO: remove together with the rest of this module once vllm#56327 lands in the pinned vLLM.
+
+# Inserted verbatim-in-spirit from the PR; the call site differs because our pinned vLLM
+# builds `mqa_ql_nope` as (N, B, L) and transposes afterwards, where the PR's base allocates
+# (B, N, L) up front.
+_FORWARD_IMPL_ANCHOR = """                # Convert from (N, B, L) to (B, N, L)
+                mqa_ql_nope = mqa_ql_nope.transpose(0, 1)
+
+            if fp8_attention and self.impl.supports_quant_query_input:"""
+
+_FORWARD_IMPL_REPLACEMENT = """                # Convert from (N, B, L) to (B, N, L)
+                mqa_ql_nope = mqa_ql_nope.transpose(0, 1)
+
+            self._apply_lora_projection(mqa_q_nope, mqa_ql_nope, is_query=True)
+
+            if fp8_attention and self.impl.supports_quant_query_input:"""
+
+
+def _apply_lora_projection(self, x, out, *, is_query: bool) -> None:
+    """Add kv_b_proj adapters to the absorbed, head-major MLA projection.
+
+    ``x`` is the bmm input and ``out`` the bmm output, both head-major:
+    (N, B, qk_nope_head_dim) -> (B, N, kv_lora_rank) for the query projection, and
+    (N, B, kv_lora_rank) -> (B, N, v_head_dim) for the value projection.
+
+    ``kv_b_proj`` maps kv_lora_rank -> num_heads * (qk_nope_head_dim + v_head_dim), so its
+    ``lora_b`` carries both halves; split at ``qk_nope_head_dim`` to get the K half (query
+    path) and the V half (value path). Associativity lets us fold as ``(x @ B) @ A`` rather
+    than materializing the full ``B @ A`` weight delta.
+    """
+    import torch
+    from vllm.distributed import get_dcp_group, get_tp_group
+    from vllm.lora.layers.column_parallel_linear import ColumnParallelLinearWithLoRA
+
+    layer = self.kv_b_proj
+    # Only wrapped when LoRA is enabled AND kv_b_proj is in lora_target_modules.
+    if not isinstance(layer, ColumnParallelLinearWithLoRA):
+        return
+    lora_a = layer.lora_a_stacked[0]
+    lora_b = layer.lora_b_stacked[0]
+    if layer.lora_config.fully_sharded_loras and layer.tp_size > 1:
+        lora_a = get_tp_group().all_gather(lora_a, dim=2)
+    if is_query and self.dcp_q_replicate:
+        lora_b = get_dcp_group().all_gather(lora_b, dim=2)
+    # MQA may consume only the decode prefix of the mapped batch.
+    indices = layer.punica_wrapper.token_lora_indices[: x.shape[1]]
+    for slot in range(lora_a.shape[0]):
+        a = lora_a[slot, 0]
+        b = lora_b[slot, 0].view(x.shape[0], self.qk_nope_head_dim + self.v_head_dim, -1)
+        if is_query:
+            delta = torch.matmul(x, b[:, : self.qk_nope_head_dim]) @ a
+        else:
+            delta = torch.matmul(x @ a.T, b[:, self.qk_nope_head_dim :].transpose(1, 2))
+        out.add_(torch.where((indices == slot)[:, None, None], delta.transpose(0, 1), 0))
+
+
+def _patch_mla_kv_b_proj_lora() -> bool:
+    """Apply the kv_b_proj adapter at both absorbed projections."""
+    import inspect
+    import sys
+    import textwrap
+
+    from vllm.model_executor.layers.attention.mla_attention import MLAAttention
+
+    if getattr(MLAAttention, "_skyrl_kv_b_proj_lora_patched", False):
+        return True
+
+    MLAAttention._apply_lora_projection = _apply_lora_projection
+
+    # Value projection: a plain wrapper is enough -- recompute the head-major views the
+    # original builds internally, let it run, then add the delta into the same storage.
+    original_v_up_proj = MLAAttention._v_up_proj
+
+    def _v_up_proj(self, x, out):
+        lora_input = x.view(-1, self.num_heads, self.kv_lora_rank).transpose(0, 1)
+        out_view = out.view(-1, self.num_heads, self.v_head_dim)
+        original_v_up_proj(self, x, out)
+        self._apply_lora_projection(lora_input, out_view, is_query=False)
+
+    MLAAttention._v_up_proj = _v_up_proj
+
+    # Query projection: the call site sits mid-``forward_impl`` with no wrappable seam, so
+    # splice the one line into the method's source and recompile it in the module's own
+    # globals. The anchor must match exactly once -- a vLLM bump that moves it fails loudly
+    # here rather than silently leaving decode unpatched.
+    module = sys.modules[MLAAttention.__module__]
+    # Match against the source as it appears in the file (method body at its original
+    # indent), then dedent the result so the `def` is compilable at module level.
+    raw_src = inspect.getsource(MLAAttention.forward_impl)
+    if raw_src.count(_FORWARD_IMPL_ANCHOR) != 1:
+        raise RuntimeError(
+            "GLM-5.3-Flash LoRA patch: expected exactly one absorbed-query-projection call "
+            f"site in MLAAttention.forward_impl, found {raw_src.count(_FORWARD_IMPL_ANCHOR)}. "
+            "The pinned vLLM has moved; re-derive the patch against vllm#56327 commit ed6aaff3."
+        )
+    patched_src = textwrap.dedent(raw_src.replace(_FORWARD_IMPL_ANCHOR, _FORWARD_IMPL_REPLACEMENT))
+    namespace: dict = {}
+    exec(compile(patched_src, f"<skyrl-patch:{module.__name__}.forward_impl>", "exec"), module.__dict__, namespace)
+    MLAAttention.forward_impl = namespace["forward_impl"]
+
+    MLAAttention._skyrl_kv_b_proj_lora_patched = True
+    return True
