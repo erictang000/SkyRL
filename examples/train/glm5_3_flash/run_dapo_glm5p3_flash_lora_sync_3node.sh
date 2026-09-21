@@ -72,7 +72,11 @@ LR=1e-5                          # LoRA adapters, as in the reference LoRA scrip
 # dense rank-64 adapter; it requires rank % topk == 0, which 64 satisfies.
 LORA_RANK=64
 LORA_ALPHA=64
-MERGE_LORA=true                  # see the GSM8K script: vLLM's LoRA MoE path is not usable yet
+# merge_lora=false works (see .claude/docs/glm5_3_flash_lora.md -- the fix was naming `experts`
+# in lora_target_modules) and is now verified on the full 45-layer checkpoint, not just the
+# 4-layer slice: at this config it ships a 3.9 GiB adapter in 29s against ~112s for the ~599 GiB
+# merged path. Flip to false to use it; true is kept as the conservative default.
+MERGE_LORA=true
 SHARE_EXPERT_ADAPTERS=false
 NORMALIZE_MOE_LORA=true
 LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,linear_kv_up_proj,linear_proj,linear_fc1,linear_fc2,q_proj,k_proj,v_proj,b_proj,f_a_proj,g_a_proj,o_proj]'

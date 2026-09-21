@@ -111,8 +111,13 @@ Two things about that perturbation are worth keeping, because both cost a full r
   **not** a scale or packing mismatch, either of which would be linear in std and biased. The row
   runs at 0.002.
 
-Measured on 4xH100: Megatron vs vLLM `0.080`, pre/post-sync vLLM `0.132`. Adapter size 1.05 GiB at
-r=32 for the slice; each sync took 4.2-5.1s against a ~45 GiB full-weight alternative.
+Measured on 4xH100: Megatron vs vLLM `0.0587` (`0.080` before the MLA `kv_b_proj` patch below),
+pre/post-sync vLLM `0.136`. Adapter size 1.05 GiB at r=32 for the slice; each sync took 4.2-5.1s
+against a ~45 GiB full-weight alternative.
+
+**The full 45-layer checkpoint has now been run** with `merge_lora=false` on 2x8 B300 (r=64,
+`share_expert_adapters=false`, `normalize_moe_lora=true`): a 3.9 GiB adapter syncs in **29s**,
+against 111-119s steady-state for the ~599 GiB merged path.
 
 ## Already fixed on this branch
 
@@ -128,6 +133,32 @@ r=32 for the slice; each sync took 4.2-5.1s against a ~45 GiB full-weight altern
 - **A `.contiguous()` guard** in `PunicaWrapperGPU.add_shrink`. This is *not* part of #56327: KDA
   splits its fused projection into non-contiguous views, which trips
   `assert inputs.is_contiguous()` in the triton `lora_shrink`.
+
+## `kv_b_proj` only reaches prefill without the MLA patch
+
+MLA never runs its `kv_b_proj` module on the decode path. `MLAAttention.process_weights_after_loading`
+splits the weight into the absorbed `W_UK_T` / `W_UV` and decode does
+`torch.bmm(mqa_q_nope, W_UK_T)` / `torch.bmm(x, W_UV)` directly, so an adapter on `kv_b_proj` --
+which only applies inside the wrapped module's forward -- lands in prefill and is silently dropped
+in decode. A response is almost all decode tokens, so the adapter we train on `linear_kv_up_proj`
+was very nearly inert at generation time, and the trainer and sampler disagreed on the 11 DSA layers.
+
+Backported from vllm#56327 commit `ed6aaff3` as `_patch_mla_kv_b_proj_lora`: it computes the
+adapter delta against the absorbed, head-major layout and adds it to the bmm output, so nothing
+has to rebuild `W_UK_T`/`W_UV`. Measured on the 4-layer LoRA parity row, Megatron vs vLLM
+**0.080 -> 0.0587** -- i.e. with the adapter live on both sides the two now agree about as well as
+they do with no adapter at all (~0.06).
+
+Two things worth knowing about that path:
+
+- The **prefill** half of the same upstream bug (a stale pre-wrapping `kv_b_proj` reference held by
+  `MLAModules`) is already fixed in the pinned build: `lora/model_manager.py::_create_lora_modules`
+  iterates `named_modules(remove_duplicate=False)` and rewires aliases to the same wrapper via
+  `wrapped_by_id`. Only the decode half needed backporting.
+- `W_UK_T`/`W_UV` are **views** of `kv_b_proj.weight`, not copies -- `replace_parameter(...,
+  prefer_copy=True)` only copies into a pre-existing parameter, and there is none here. So a
+  full-weight RL sync (`merge_lora=true`) *does* propagate to decode; it is specifically the
+  runtime LoRA delta that the absorbed path cannot see.
 
 ## Settled, so nobody re-derives it
 
@@ -156,14 +187,7 @@ r=32 for the slice; each sync took 4.2-5.1s against a ~45 GiB full-weight altern
 1. **`f_b_proj` / `g_b_proj` are excluded from both target lists** because of the contiguity
    assert. The `add_shrink` guard above may now make them safe to re-add — untested. Note that
    the working multi-node reference config does list them.
-2. **Only the 4-layer slice has been run.** The full 45-layer checkpoint on 8xB300 has not been
-   exercised with `merge_lora=false`. At full size the per-expert adapter is 42 MoE layers rather
-   than 3, so consider `normalize_moe_lora=true` (see `MegatronLoraConfig.normalize_moe_lora`) to
-   keep the per-sync adapter from reaching multi-GB.
-3. **The DAPO recipes still carry no LoRA plumbing.** `run_dapo_glm5p3_flash_lora_*.sh` need
-   `VLLM_LORA_TARGET_MODULES` and the conditional `LORA_ENGINE_KWARG` block copied across from
-   `run_gsm8k_glm5p3_flash_lora_1node.sh` before they can flip `MERGE_LORA`.
-4. **Non-colocated only:** `lora_sync_path` must be a shared mount — see the warning at
+2. **Non-colocated only:** `lora_sync_path` must be a shared mount — see the warning at
    `inference_servers/utils.py:245-254`. `/data` is shared NFS across all three nodes.
 
 ## Reproducing a training run
