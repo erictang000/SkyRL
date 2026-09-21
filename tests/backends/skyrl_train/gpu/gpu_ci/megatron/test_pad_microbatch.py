@@ -67,9 +67,7 @@ def test_padded_sub_seq_lengths_agree_with_attention_mask(pad):
     attention_mask[1, :3] = 1
     micro = _micro_dict(2)
     micro["attention_mask"] = attention_mask
-    micro["sub_seq_lengths"] = TensorList(
-        [torch.tensor([5], dtype=torch.long), torch.tensor([3], dtype=torch.long)]
-    )
+    micro["sub_seq_lengths"] = TensorList([torch.tensor([5], dtype=torch.long), torch.tensor([3], dtype=torch.long)])
 
     padded = pad(micro, 5)
 
