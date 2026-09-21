@@ -1,123 +1,119 @@
-"""Tests for the grad-norm mixed-dtype homogenization.
+"""CPU contracts for the fused-kernel boundary; real TE coverage is in the GPU lane."""
 
-``homogenize_grads_for_norm`` is the pure part of
-``skyrl.backends.skyrl_train.patches.megatron.patch_grad_norm_mixed_dtype``; it needs no
-Megatron and no GPU, so it is tested in the CPU lane. Applying the patch itself is
-covered wherever a Megatron optimizer step runs.
-
-Run with:
-  uv run --extra dev -- pytest tests/backends/skyrl_train/distributed/test_grad_norm_mixed_dtype.py
-"""
+import sys
+from types import ModuleType
 
 import pytest
 import torch
 
 from skyrl.backends.skyrl_train.patches.megatron.patch_grad_norm_mixed_dtype import (
-    homogenize_grads_for_norm,
+    make_dtype_grouped_applier,
+    patch_grad_norm_mixed_dtype,
 )
 
 
-def test_uniform_list_is_returned_unchanged():
-    """The common case must not allocate: same list object, same tensors."""
-    grads = [torch.randn(8, dtype=torch.bfloat16), torch.randn(1024, dtype=torch.bfloat16)]
+@pytest.fixture
+def kernel():
+    calls = []
+    op = object()
 
-    homogenized, repairs = homogenize_grads_for_norm(grads)
+    def applier(operation, overflow, tensor_lists, per_tensor=False):
+        grads = tensor_lists[0]
+        assert operation is op
+        assert len({g.dtype for g in grads}) == 1
+        assert all(g.is_contiguous() for g in grads)
+        calls.append((overflow, tensor_lists))
+        norms = torch.stack([torch.linalg.vector_norm(g.float()) for g in grads])
+        return torch.linalg.vector_norm(norms).reshape(1), norms if per_tensor else torch.empty(0)
 
-    assert homogenized is grads
-    assert repairs == []
+    return op, calls, applier, make_dtype_grouped_applier(applier, op)
 
 
-def test_mixed_dtype_list_is_cast_to_the_majority_dtype():
-    """The bf16-grad-buffer shape: a few small fp32 tensors among large bf16 ones."""
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+def test_uniform_list_uses_original_tensors_and_list(kernel, dtype):
+    op, calls, _, grouped = kernel
+    lists = [[torch.randn(32, dtype=dtype), torch.randn(8, dtype=dtype)]]
+    grouped(op, None, lists, False)
+    assert len(calls) == 1
+    assert calls[0][1] is lists
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_mixed_norm_preserves_values_and_groups_without_copies(kernel, reverse):
+    op, calls, _, grouped = kernel
     grads = [
-        torch.randn(1_000_000, dtype=torch.bfloat16),
-        torch.randn(8, dtype=torch.float32),
-        torch.randn(1024, dtype=torch.float32),
+        torch.zeros(32, dtype=torch.float16),
+        torch.tensor([100000.123], dtype=torch.float32),
+        torch.tensor([1.125], dtype=torch.bfloat16),
+        torch.tensor([0.00391], dtype=torch.float32),
     ]
-
-    homogenized, repairs = homogenize_grads_for_norm(grads)
-
-    assert {g.dtype for g in homogenized} == {torch.bfloat16}
-    assert len(repairs) == 2
-    # The bf16 majority entry is passed through, not copied.
-    assert homogenized[0] is grads[0]
-
-
-def test_majority_is_by_element_count_not_tensor_count():
-    """Many tiny bf16 tensors behind a few huge fp32 ones must cast up, not down.
-
-    Deciding by tensor count would pick bf16 here and cast the large fp32 tensors, which
-    is the expensive direction and the one that loses precision on most of the elements.
-    """
-    grads = [torch.randn(4, dtype=torch.bfloat16) for _ in range(200)]
-    grads.append(torch.randn(500_000, dtype=torch.float32))
-
-    homogenized, repairs = homogenize_grads_for_norm(grads)
-
-    assert {g.dtype for g in homogenized} == {torch.float32}
-    assert len(repairs) == 200
+    if reverse:
+        grads.reverse()
+    snapshots = [g.clone() for g in grads]
+    overflow = object()
+    result, _ = grouped(op, overflow, [grads], False)
+    reference = torch.linalg.vector_norm(torch.cat([g.float() for g in grads])).reshape(1)
+    torch.testing.assert_close(result, reference, rtol=1e-6, atol=0)
+    assert torch.isfinite(result).all()
+    assert len(calls) == 3
+    assert all(buf is overflow for buf, _ in calls)
+    assert {id(g) for _, lists in calls for g in lists[0]} == {id(g) for g in grads}
+    for g, before in zip(grads, snapshots, strict=True):
+        torch.testing.assert_close(g, before, rtol=0, atol=0)
 
 
-def test_non_contiguous_entry_is_made_contiguous():
-    """A non-contiguous view has a stride the multi-tensor kernel does not read."""
-    base = torch.randn(4, 16, dtype=torch.float32)
-    view = base[:, ::2]
-    assert not view.is_contiguous()
-    grads = [torch.randn(64, dtype=torch.float32), view]
-
-    homogenized, repairs = homogenize_grads_for_norm(grads)
-
-    assert all(g.is_contiguous() for g in homogenized)
-    assert len(repairs) == 1
-    assert "not contiguous" in repairs[0]
+def test_fp32_contribution_is_not_rounded_to_bfloat16(kernel):
+    op, _, _, grouped = kernel
+    grads = [torch.zeros(1024, dtype=torch.bfloat16), torch.tensor([1.003], dtype=torch.float32)]
+    result, _ = grouped(op, None, [grads], False)
+    torch.testing.assert_close(result, grads[1], rtol=0, atol=0)
 
 
-def test_view_past_its_storage_raises_instead_of_being_cast():
-    """Out-of-bounds shard bookkeeping is not a dtype problem, so casting must not hide it."""
-    storage_holder = torch.randn(16, dtype=torch.float32)
-    oversized = torch.empty(0, dtype=torch.float32)
-    oversized.set_(storage_holder.untyped_storage(), storage_offset=0, size=(64,), stride=(1,))
-    grads = [torch.randn(1024, dtype=torch.float32), oversized]
-
-    with pytest.raises(RuntimeError, match="outside its own storage"):
-        homogenize_grads_for_norm(grads)
+def test_per_tensor_norms_keep_input_order(kernel):
+    op, _, _, grouped = kernel
+    grads = [torch.tensor([3.0], dtype=torch.bfloat16), torch.tensor([4.0]), torch.tensor([12.0], dtype=torch.bfloat16)]
+    norm, each = grouped(op, None, [grads], True)
+    torch.testing.assert_close(norm, torch.tensor([13.0]))
+    torch.testing.assert_close(each, torch.tensor([3.0, 4.0, 12.0]))
 
 
-def test_repairs_name_the_offending_index_and_dtypes():
-    grads = [torch.randn(4096, dtype=torch.bfloat16), torch.randn(8, dtype=torch.float32)]
-
-    _, repairs = homogenize_grads_for_norm(grads)
-
-    assert len(repairs) == 1
-    assert repairs[0].startswith("#1 ")
-    assert "torch.float32" in repairs[0]
-    assert "torch.bfloat16" in repairs[0]
+def test_strided_input_is_copied_without_changing_values(kernel):
+    op, calls, _, grouped = kernel
+    grad = torch.arange(32, dtype=torch.float32).reshape(4, 8)[:, ::2]
+    result, _ = grouped(op, None, [[grad]], False)
+    torch.testing.assert_close(result, torch.linalg.vector_norm(grad).reshape(1))
+    torch.testing.assert_close(calls[0][1][0][0], grad)
+    assert calls[0][1][0][0].is_contiguous()
 
 
-def test_norm_is_preserved_within_bfloat16_tolerance():
-    """The homogenized list must give the same norm the mix was meant to produce.
+def test_other_kernels_and_empty_lists_are_passed_through():
+    norm_op, scale_op, sentinel = object(), object(), object()
+    calls = []
 
-    The reference is the fp32 norm of the original values; the cast only feeds the
-    clipping decision, so bf16's relative error is the acceptable bound.
-    """
-    torch.manual_seed(0)
-    grads = [
-        torch.randn(100_000, dtype=torch.bfloat16),
-        torch.randn(8, dtype=torch.float32),
-        torch.randn(1024, dtype=torch.float32),
-    ]
-    reference = torch.linalg.vector_norm(torch.cat([g.float() for g in grads]))
+    def original(*args, **kwargs):
+        calls.append((args, kwargs))
+        return sentinel
 
-    homogenized, _ = homogenize_grads_for_norm(grads)
-    got = torch.linalg.vector_norm(torch.cat([g.float() for g in homogenized]))
-
-    assert torch.allclose(got, reference, rtol=1e-2)
+    grouped = make_dtype_grouped_applier(original, norm_op)
+    tensors = [[torch.ones(1)], [torch.ones(1)]]
+    assert grouped(scale_op, None, tensors, 0.5) is sentinel
+    assert calls[-1][0] == (scale_op, None, tensors, 0.5)
+    assert grouped(norm_op, None, [[]], False) is sentinel
 
 
-def test_single_dtype_float32_list_is_untouched():
-    grads = [torch.randn(32, dtype=torch.float32), torch.randn(64, dtype=torch.float32)]
-
-    homogenized, repairs = homogenize_grads_for_norm(grads)
-
-    assert homogenized is grads
-    assert repairs == []
+def test_patch_reaches_previously_bound_norm_function_and_is_idempotent(monkeypatch, kernel):
+    op, calls, original, _ = kernel
+    clip = ModuleType("megatron.core.optimizer.clip_grads")
+    clip.multi_tensor_applier, clip.l2_norm_impl = original, op
+    exec("def norm(grads):\n    return multi_tensor_applier(l2_norm_impl, None, [grads], False)[0]", clip.__dict__)
+    already_imported_norm = clip.norm
+    optimizer = ModuleType("megatron.core.optimizer")
+    optimizer.clip_grads = clip
+    monkeypatch.setitem(sys.modules, optimizer.__name__, optimizer)
+    patch_grad_norm_mixed_dtype()
+    installed = clip.multi_tensor_applier
+    patch_grad_norm_mixed_dtype()
+    assert clip.multi_tensor_applier is installed
+    result = already_imported_norm([torch.tensor([3.0], dtype=torch.bfloat16), torch.tensor([4.0])])
+    torch.testing.assert_close(result, torch.tensor([5.0]))
+    assert len(calls) == 2
