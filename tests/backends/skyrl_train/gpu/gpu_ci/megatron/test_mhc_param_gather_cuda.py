@@ -1,9 +1,15 @@
 """Two-rank regression for mHC functional reads and overlapped DDP gathers."""
 
+import importlib
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+# The production image must load the worker before torch's shared libraries.
+# The subprocess is also independent of pytest's already-imported parent state.
+if __name__ == "__main__":
+    importlib.import_module("skyrl.backends.skyrl_train.workers.megatron.megatron_worker")
 
 import pytest
 import torch
@@ -11,14 +17,10 @@ import torch
 
 def _distributed_main():
     """Isolate functional child-weight reads with the pinned Core DDP bucket lifecycle."""
-    import importlib
     import json
     import os
     import traceback
     from datetime import timedelta
-
-    # Load the worker's compatibility adapters before importing model components.
-    importlib.import_module("skyrl.backends.skyrl_train.workers.megatron.megatron_worker")
 
     import torch
     from megatron.core import parallel_state
