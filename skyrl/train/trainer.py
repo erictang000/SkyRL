@@ -1351,7 +1351,8 @@ class RayPPOTrainer:
         if training_input.get("router_padding_mask") is not None:
             fwd_keys.append("router_padding_mask")
         if training_input.get(SAMPLE_SUPPORT_FIELD) is not None:
-            fwd_keys.append(SAMPLE_SUPPORT_FIELD)
+            # The scorer validates that captured support backs every loss-active target.
+            fwd_keys.extend([SAMPLE_SUPPORT_FIELD, "loss_mask"])
         if training_input.get("pixel_values") is not None:
             fwd_keys.append("pixel_values")
         if training_input.get("image_grid_thw") is not None:
