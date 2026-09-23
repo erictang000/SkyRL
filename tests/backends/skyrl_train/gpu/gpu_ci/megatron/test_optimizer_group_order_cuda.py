@@ -195,9 +195,7 @@ def _distributed_main(checkpoint_root):
             compare(snapshot(restored, resumed_optimizer), expected)
             restored.disable_forward_pre_hook()
             torch.distributed.barrier()
-            print(
-                f"OPTIMIZER_DCP_ROUNDTRIP_PASS rank={rank} kind={kind} precision_aware={precision_aware}", flush=True
-            )
+            print(f"OPTIMIZER_DCP_ROUNDTRIP_PASS rank={rank} kind={kind} precision_aware={precision_aware}", flush=True)
             del restored, resumed_optimizer
     parallel_state.destroy_model_parallel()
     torch.distributed.destroy_process_group()
