@@ -59,10 +59,18 @@ from skyrl.backends.skyrl_train.utils.replay_utils import (
     setup_per_microbatch_replay_backward,
     setup_per_microbatch_replay_forward,
 )
-from skyrl.backends.skyrl_train.utils.sample_support import SAMPLE_SUPPORT_FIELD
+from skyrl.backends.skyrl_train.utils.sample_support import (
+    SAMPLE_SUPPORT_FIELD,
+    SAMPLE_SUPPORT_LOGPROBS_FIELD,
+)
 from skyrl.backends.skyrl_train.utils.sample_support_replay import (
     compute_sample_support_scores,
     reject_unsupported_sample_support_packing,
+)
+from skyrl.backends.skyrl_train.utils.score_centering_support import (
+    compute_score_centering_head_logprobs,
+    sampled_in_head_fraction,
+    sampler_head_for_actions,
 )
 from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
 from skyrl.backends.skyrl_train.workers.worker_utils import (
@@ -768,6 +776,42 @@ class MegatronModelWrapper:
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
+            # Score centering: trainer logprobs of the sampler head members (scored on this rank's vocab
+            # shard and TP-reduced) plus the sampler's own head logprobs at the response positions.
+            score_centering_kwargs = {}
+            score_centering_metrics = {}
+            if self.cfg.algorithm.score_centering.enabled:
+                sample_support = data.get(SAMPLE_SUPPORT_FIELD)
+                sample_support_logprobs = data.get(SAMPLE_SUPPORT_LOGPROBS_FIELD)
+                if sample_support is None or sample_support_logprobs is None:
+                    raise ValueError(
+                        "score centering is enabled but the microbatch has no rollout_sample_support(_logprobs); "
+                        "set generator.inference_engine.enable_return_sample_support_set/_logprobs=true"
+                    )
+                head_log_probs = compute_score_centering_head_logprobs(
+                    logits,
+                    sequences,
+                    sample_support,
+                    token_logprobs,
+                    num_actions,
+                    packed=packed_seq_params is not None,
+                    metadata_layout=metadata_layout,
+                    vocab_start_index=tp_rank * shard_vocab_size,
+                    vocab_end_index=(tp_rank + 1) * shard_vocab_size,
+                    tp_group=tp_grp,
+                    lm_head_weight=lm_head_weight if fused_lm_head else None,
+                    temperature=temperature,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                    renormalize_over_head=self.cfg.algorithm.enable_sample_support_replay,
+                )
+                head = sampler_head_for_actions(
+                    sample_support, sample_support_logprobs, data["attention_mask"].to(torch.bool), num_actions
+                )
+                score_centering_kwargs = dict(rollout_topk_logprobs=head.logprobs, topk_log_probs=head_log_probs)
+                score_centering_metrics["score_centering_sampled_in_head_frac"] = sampled_in_head_fraction(
+                    head.ids, sequences, num_actions, loss_mask
+                )
+
             # policy loss should be calculated based on the selected token logprobs
             policy_loss, loss_metrics = current_loss_fn(
                 action_log_probs,
@@ -776,7 +820,9 @@ class MegatronModelWrapper:
                 config=loss_config,
                 loss_mask=loss_mask,
                 rollout_logprobs=rollout_action_logprobs,
+                **score_centering_kwargs,
             )
+            loss_metrics = {**loss_metrics, **score_centering_metrics}
 
             # Decoupled MTP / draft loss: soft-CE distillation of the detached-input MTP head against
             # the policy's own next-token distribution (full-vocab, or top-k when mtp_loss_topk is
@@ -1085,7 +1131,9 @@ class MegatronModelWrapper:
             sub_seq_lengths = [t.tolist() for t in sub_seq_lengths_field] if sub_seq_lengths_field is not None else None
             batch["sub_seq_lengths_list"] = sub_seq_lengths
             sample_support = _microbatch_sample_support(
-                batch, sub_seq_lengths, enabled=self.cfg.algorithm.enable_sample_support_replay
+                batch,
+                sub_seq_lengths,
+                enabled=self.cfg.algorithm.enable_sample_support_replay or self.cfg.algorithm.score_centering.enabled,
             )
 
             vlm_inputs = {}
