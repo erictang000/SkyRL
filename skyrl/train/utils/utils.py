@@ -362,6 +362,15 @@ def validate_score_centering_cfg(cfg: SkyRLTrainConfig) -> None:
     ie_cfg = cfg.generator.inference_engine
     ie_cfg.enable_return_sample_support_set = True
     ie_cfg.enable_return_sample_support_logprobs = True
+    if cfg.trainer.strategy == "megatron" and not cfg.trainer.fused_lm_head_logprob:
+        # With materialized logits the head members would be gathered from a [tokens, vocab] tensor and
+        # their backward would allocate a second gradient of that size; the fused path projects the
+        # members through the LM head instead, so the head costs O(tokens * k).
+        logger.warning(
+            "`trainer.algorithm.score_centering` on Megatron requires `trainer.fused_lm_head_logprob=true`; "
+            "enabling it."
+        )
+        cfg.trainer.fused_lm_head_logprob = True
 
 
 def validate_cfg(cfg: SkyRLTrainConfig):

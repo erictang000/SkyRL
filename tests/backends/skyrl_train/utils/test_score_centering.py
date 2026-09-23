@@ -9,6 +9,9 @@ from skyrl.backends.skyrl_train.utils.off_policy_correction_utils import (
     compute_score_centering_loss,
 )
 from skyrl.backends.skyrl_train.utils.ppo_utils import PolicyLossRegistry
+from skyrl.backends.skyrl_train.utils.torch_utils import (
+    logprobs_and_topk_logprobs_from_logits,
+)
 from skyrl.train.config import AlgorithmConfig
 
 
@@ -267,3 +270,30 @@ def test_padding_members_with_neg_inf_on_both_heads_stay_finite():
     centering_loss.sum().backward()
     assert torch.isfinite(trainer.grad).all()
     assert all(math.isfinite(v) for v in metrics.values())
+
+
+@pytest.mark.parametrize("inplace_backward", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_logprobs_and_topk_logprobs_from_logits_matches_log_softmax(inplace_backward, dtype):
+    """Label and head logprobs from the chunked pass match a plain log_softmax, in value and gradient."""
+    torch.manual_seed(0)
+    logits = torch.randn(2, 5, 40, dtype=dtype, requires_grad=True)
+    labels = torch.randint(0, 40, (2, 5))
+    topk_ids = torch.randint(0, 40, (2, 5, 4))
+
+    # The in-place backward overwrites the logits buffer, so take the reference copy first.
+    reference = logits.detach().clone().float().requires_grad_(True)
+    label_logp, topk_logp = logprobs_and_topk_logprobs_from_logits(
+        logits, labels, topk_ids, chunk_size=2, inplace_backward=inplace_backward
+    )
+    (label_logp.sum() + topk_logp.sum()).backward()
+
+    log_softmax = torch.log_softmax(reference, dim=-1)
+    expected_label = log_softmax.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
+    expected_topk = log_softmax.gather(-1, topk_ids)
+    (expected_label.sum() + expected_topk.sum()).backward()
+
+    tol = 1e-2 if dtype == torch.bfloat16 else 1e-5
+    torch.testing.assert_close(label_logp.float(), expected_label, atol=tol, rtol=tol)
+    torch.testing.assert_close(topk_logp.float(), expected_topk, atol=tol, rtol=tol)
+    torch.testing.assert_close(logits.grad.float(), reference.grad, atol=tol, rtol=tol)

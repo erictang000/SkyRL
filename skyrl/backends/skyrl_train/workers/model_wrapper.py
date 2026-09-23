@@ -47,6 +47,7 @@ from skyrl.backends.skyrl_train.utils.score_centering_support import (
 )
 from skyrl.backends.skyrl_train.utils.torch_utils import (
     chunked_entropy_from_logits,
+    logprobs_and_topk_logprobs_from_logits,
     logprobs_from_logits,
 )
 
@@ -443,17 +444,30 @@ class HFModelWrapper(nn.Module):
             )
             log_probs = support_scores.logprobs
             support_entropy = support_scores.entropy
+        elif score_centering_head:
+            # Head ids at the logit positions that predict them; padding members stay -1. Label and head
+            # logprobs come out of one chunked pass whose backward writes a single [tokens, vocab]
+            # gradient in place; a separate gather over the logits would allocate a second one.
+            head_ids = gather_packed_rows(sample_support, support_channels.row_ids, SAMPLE_SUPPORT_PADDING).long()
+            log_probs, head_log_probs = logprobs_and_topk_logprobs_from_logits(
+                logits_BSV,
+                sequences_rolled,
+                head_ids.clamp(min=0),
+                chunk_size=self.logprobs_chunk_size,
+                inplace_backward=True,
+            )
+            head_log_probs = torch.where(head_ids >= 0, head_log_probs, float("-inf"))
         else:
             # NOTE: this is slightly inaccurate with sample packing because last token from nth seq -> first token of n+1th seq loss is added.
             log_probs = logprobs_from_logits(
                 logits_BSV,
                 sequences_rolled,
-                inplace_backward=not score_centering_head,
+                inplace_backward=True,
             )
 
-        head_log_probs = None
-        if score_centering_head:
-            # Head ids at the logit positions that predict them; padding members stay -1.
+        if score_centering_head and enable_sample_support_replay:
+            # Under replay the trainer's distribution is the support renormalization, so the head is
+            # renormalized over its members (a gather; replay already pays that cost for `log_probs`).
             head_ids = gather_packed_rows(sample_support, support_channels.row_ids, SAMPLE_SUPPORT_PADDING).long()
             head_log_probs = score_head_members(
                 logits_BSV,
@@ -462,9 +476,11 @@ class HFModelWrapper(nn.Module):
                 vocab_start_index=0,
                 vocab_end_index=logits_BSV.shape[-1],
                 tp_group=None,
-                sampled_logprobs=log_probs,
-                renormalize_over_head=enable_sample_support_replay,
+                sampled_logprobs=None,
+                renormalize_over_head=True,
             )
+        elif not score_centering_head:
+            head_log_probs = None
 
         batch_size, seqlen = attention_mask.shape
 
