@@ -567,7 +567,8 @@ async def test_generator_multi_turn_gsm8k_sample_support(ray_init_fixture):
             if is_loss_active:
                 assert token_id in support_row
             else:
-                assert support_row == [-1] * SAMPLE_SUPPORT_TOP_K
+                # Rows are NumPy arrays; an elementwise `==` has no single truth value.
+                assert all(candidate_id == -1 for candidate_id in support_row)
 
 
 @pytest.mark.asyncio
