@@ -428,7 +428,8 @@ def compute_score_centering_loss(
         sampler_logprobs = rollout_topk_logprobs.float()
         head_valid = torch.isfinite(sampler_logprobs)
         sampler_logprobs = torch.where(head_valid, sampler_logprobs, torch.zeros_like(sampler_logprobs))
-        trainer_logprobs = topk_log_probs.detach().float()
+        # Padding members carry -inf on both sides; zero them so 0 * -inf cannot turn the sum into NaN.
+        trainer_logprobs = torch.where(head_valid, topk_log_probs.detach().float(), torch.zeros_like(sampler_logprobs))
         zeros = torch.zeros_like(sampler_logprobs)
         q_head = torch.where(head_valid, sampler_logprobs.exp(), zeros)
         p_head = torch.where(head_valid, trainer_logprobs.exp(), zeros)
@@ -443,7 +444,8 @@ def compute_score_centering_loss(
         tail_scale = tail_mass_ratio * weight_fn(1.0 / tail_mass_ratio)
         residual = q_head * head_weights - tail_scale.unsqueeze(-1) * p_head
 
-    centering_term = (residual * topk_log_probs.float()).sum(dim=-1)
+    head_log_probs = torch.where(head_valid, topk_log_probs.float(), torch.zeros_like(topk_log_probs, dtype=torch.float32))
+    centering_term = (residual * head_log_probs).sum(dim=-1)
     centering_loss = advantages * centering_term
 
     metrics = {

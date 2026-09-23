@@ -245,3 +245,25 @@ def test_rollout_is_centering_vanishes_inside_the_calibration_band():
     )
     assert metrics["score_centering_residual_abs_sum"] < 1e-5
     torch.testing.assert_close(loss, torch.zeros_like(loss), atol=1e-5, rtol=0)
+
+
+def test_padding_members_with_neg_inf_on_both_heads_stay_finite():
+    """The support channel marks absent members with -inf on the sampler and the trainer side."""
+    torch.manual_seed(0)
+    batch, actions, k = 2, 3, 4
+    advantages = torch.randn(batch, actions)
+    sampler = torch.log_softmax(torch.randn(batch, actions, k), dim=-1)
+    trainer = torch.log_softmax(torch.randn(batch, actions, k), dim=-1).requires_grad_(True)
+    sampler = sampler.clone()
+    sampler[:, :, -1] = float("-inf")
+    trainer_padded = torch.where(torch.isfinite(sampler), trainer, torch.full_like(trainer, float("-inf")))
+    loss_mask = torch.ones(batch, actions)
+
+    centering_loss, metrics = compute_score_centering_loss(
+        advantages, trainer_padded, sampler, loss_mask, weight_fn=torch.ones_like
+    )
+
+    assert torch.isfinite(centering_loss).all()
+    centering_loss.sum().backward()
+    assert torch.isfinite(trainer.grad).all()
+    assert all(math.isfinite(v) for v in metrics.values())
