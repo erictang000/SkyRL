@@ -232,7 +232,6 @@ def test_scatter_packed_rows_to_batch_restores_canonical_order():
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
 def test_fused_label_and_head_logprobs_match_reference(dtype):
     """Label and head logprobs from the fused chunked pass match log_softmax of the same logits, with grads."""
-    pytest.importorskip("megatron")
     torch.manual_seed(3)
     hidden_size, positions, temperature = 16, 7, 0.9
     hidden = torch.randn(1, positions, hidden_size, dtype=dtype, requires_grad=True)

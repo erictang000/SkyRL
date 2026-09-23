@@ -227,6 +227,17 @@ def scatter_packed_rows_to_batch(
     return batch_values
 
 
+def _shard_log_softmax(logits: torch.Tensor, tp_group) -> torch.Tensor:
+    """Log-softmax over the full vocabulary from this rank's shard (plain log-softmax without TP)."""
+    if tp_group is None or torch.distributed.get_world_size(tp_group) == 1:
+        return torch.log_softmax(logits, dim=-1)
+    from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
+        _compute_distributed_log_softmax,
+    )
+
+    return _compute_distributed_log_softmax(logits, group=tp_group)
+
+
 class _FusedLMHeadLabelAndHeadLogprobs(torch.autograd.Function):
     """Fused LM-head token logprobs plus the logprobs of ``k`` extra ids per position.
 
@@ -243,9 +254,6 @@ class _FusedLMHeadLabelAndHeadLogprobs(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, hidden, weight, target, head_ids, vocab_start_index, vocab_end_index, chunk_size, tp_group):
-        from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
-            _compute_distributed_log_softmax,
-        )
 
         target_mask = (target < vocab_start_index) | (target >= vocab_end_index)
         masked_target = (target - vocab_start_index).masked_fill(target_mask, 0)
@@ -259,7 +267,7 @@ class _FusedLMHeadLabelAndHeadLogprobs(torch.autograd.Function):
         for chunk_idx in range(num_chunks):
             start, end = chunk_idx * chunk_size, min(seq_size, (chunk_idx + 1) * chunk_size)
             logits = torch.matmul(hidden[:, start:end, :].to(weight.dtype), weight.t()).to(dtype=torch.float32)
-            log_probs = _compute_distributed_log_softmax(logits, group=tp_group)
+            log_probs = _shard_log_softmax(logits, tp_group)
             label = torch.gather(log_probs, -1, masked_target[:, start:end].unsqueeze(-1)).squeeze(-1)
             label = label.masked_fill(target_mask[:, start:end], 0.0)
             head = torch.gather(log_probs, -1, masked_head[:, start:end]).masked_fill(~head_local[:, start:end], 0.0)
@@ -280,9 +288,6 @@ class _FusedLMHeadLabelAndHeadLogprobs(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_label, grad_head):
-        from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
-            _compute_distributed_log_softmax,
-        )
 
         hidden, weight, target_mask, masked_target, head_valid, head_local, masked_head = ctx.saved_tensors
         chunk_size, tp_group = ctx.chunk_size, ctx.tp_group
@@ -302,7 +307,7 @@ class _FusedLMHeadLabelAndHeadLogprobs(torch.autograd.Function):
             start, end = chunk_idx * chunk_size, min(seq_size, (chunk_idx + 1) * chunk_size)
             h_chunk = hidden[:, start:end, :]
             logits = torch.matmul(h_chunk.to(weight.dtype), weight.t()).to(dtype=torch.float32)
-            grad_logits = _compute_distributed_log_softmax(logits, group=tp_group).exp_()
+            grad_logits = _shard_log_softmax(logits, tp_group).exp_()
             grad_logits.neg_().mul_(total_grad[:, start:end].unsqueeze(-1))
             label_grad = grad_label[:, start:end].masked_fill(target_mask[:, start:end], 0.0)
             grad_logits.scatter_add_(-1, masked_target[:, start:end].unsqueeze(-1), label_grad.unsqueeze(-1))
