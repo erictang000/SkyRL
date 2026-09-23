@@ -694,7 +694,36 @@ class MegatronModelWrapper:
 
             shard_vocab_size = lm_head_weight.shape[0] if fused_lm_head else logits.shape[-1]
             support_entropy = None
-            if self.cfg.algorithm.enable_sample_support_replay:
+            score_centering = self.cfg.algorithm.score_centering.enabled
+            head_log_probs = None
+            token_logprobs = None
+            if score_centering and fused_lm_head and not self.cfg.algorithm.enable_sample_support_replay:
+                # One chunked pass yields the label logprobs and the sampler-head logprobs with a shared
+                # normalizer (see `fused_label_and_head_logprobs`), replacing the standard fused call.
+                sample_support = data.get(SAMPLE_SUPPORT_FIELD)
+                if sample_support is None:
+                    raise ValueError(
+                        "score centering is enabled but the microbatch has no rollout_sample_support; "
+                        "set generator.inference_engine.enable_return_sample_support_set=true"
+                    )
+                token_logprobs, head_log_probs = compute_score_centering_head_logprobs(
+                    logits,
+                    sequences,
+                    sample_support,
+                    None,
+                    num_actions,
+                    packed=packed_seq_params is not None,
+                    metadata_layout=metadata_layout,
+                    vocab_start_index=tp_rank * shard_vocab_size,
+                    vocab_end_index=(tp_rank + 1) * shard_vocab_size,
+                    tp_group=tp_grp,
+                    lm_head_weight=lm_head_weight,
+                    temperature=temperature,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                )
+            if token_logprobs is not None:
+                pass
+            elif self.cfg.algorithm.enable_sample_support_replay:
                 compute_support_entropy = resolved_loss_name != "cross_entropy"
                 support_scores = compute_sample_support_scores(
                     logits,
@@ -776,11 +805,12 @@ class MegatronModelWrapper:
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
-            # Score centering: trainer logprobs of the sampler head members (scored on this rank's vocab
-            # shard and TP-reduced) plus the sampler's own head logprobs at the response positions.
+            # Score centering: trainer logprobs of the sampler head members plus the sampler's own head
+            # logprobs at the response positions. With materialized logits the members are gathered here
+            # and normalized with the sampled-token logprobs computed above.
             score_centering_kwargs = {}
             score_centering_metrics = {}
-            if self.cfg.algorithm.score_centering.enabled:
+            if score_centering:
                 sample_support = data.get(SAMPLE_SUPPORT_FIELD)
                 sample_support_logprobs = data.get(SAMPLE_SUPPORT_LOGPROBS_FIELD)
                 if sample_support is None or sample_support_logprobs is None:
@@ -788,22 +818,23 @@ class MegatronModelWrapper:
                         "score centering is enabled but the microbatch has no rollout_sample_support(_logprobs); "
                         "set generator.inference_engine.enable_return_sample_support_set/_logprobs=true"
                     )
-                head_log_probs = compute_score_centering_head_logprobs(
-                    logits,
-                    sequences,
-                    sample_support,
-                    token_logprobs,
-                    num_actions,
-                    packed=packed_seq_params is not None,
-                    metadata_layout=metadata_layout,
-                    vocab_start_index=tp_rank * shard_vocab_size,
-                    vocab_end_index=(tp_rank + 1) * shard_vocab_size,
-                    tp_group=tp_grp,
-                    lm_head_weight=lm_head_weight if fused_lm_head else None,
-                    temperature=temperature,
-                    chunk_size=self.cfg.logprobs_chunk_size,
-                    renormalize_over_head=self.cfg.algorithm.enable_sample_support_replay,
-                )
+                if head_log_probs is None:
+                    _, head_log_probs = compute_score_centering_head_logprobs(
+                        logits,
+                        sequences,
+                        sample_support,
+                        token_logprobs,
+                        num_actions,
+                        packed=packed_seq_params is not None,
+                        metadata_layout=metadata_layout,
+                        vocab_start_index=tp_rank * shard_vocab_size,
+                        vocab_end_index=(tp_rank + 1) * shard_vocab_size,
+                        tp_group=tp_grp,
+                        lm_head_weight=lm_head_weight if fused_lm_head else None,
+                        temperature=temperature,
+                        chunk_size=self.cfg.logprobs_chunk_size,
+                        renormalize_over_head=self.cfg.algorithm.enable_sample_support_replay,
+                    )
                 head = sampler_head_for_actions(
                     sample_support, sample_support_logprobs, data["attention_mask"].to(torch.bool), num_actions
                 )

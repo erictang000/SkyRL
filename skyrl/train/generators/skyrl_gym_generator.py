@@ -7,6 +7,7 @@ For details, see https://docs.skyrl.ai/docs/tutorials/skyrl_gym_generator
 
 import asyncio
 import copy
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -358,8 +359,13 @@ class SkyRLGymGenerator(GeneratorInterface):
         weight_version = getattr(self.inference_engine_client, "weight_version", None)
         if weight_version is None:
             return None
-        version = f"{self.policy_model_name}@" if self.policy_model_name is not None else ""
-        return f"{version}{weight_version}"
+        if self.policy_model_name is None:
+            return str(weight_version)
+        # vLLM (>= 0.30) rejects salts longer than 128 characters or containing '@', '/', a backslash or
+        # NUL, and model paths carry '/'. Map those to '_' and keep the version suffix intact.
+        suffix = f"-{weight_version}"
+        model = re.sub(r"[@/\\\x00]", "_", str(self.policy_model_name))
+        return f"{model[: 128 - len(suffix)]}{suffix}"
 
     async def agent_loop(
         self,

@@ -24,6 +24,7 @@ from skyrl.backends.skyrl_train.utils.sample_support import (
 )
 from skyrl.backends.skyrl_train.utils.score_centering_support import (
     compute_score_centering_head_logprobs,
+    fused_label_and_head_logprobs,
     gather_packed_rows,
     sampled_in_head_fraction,
     sampler_head_for_actions,
@@ -182,7 +183,7 @@ def test_compute_head_logprobs_unpacked_layout_matches_reference():
     # Standard path: logprob of token t+1 at position t, canonical [batch, seq_len - 1].
     token_logprobs = log_softmax[:, :-1].gather(-1, sequences[:, 1:].unsqueeze(-1)).squeeze(-1)
     layout = canonical_token_metadata_layout(attention_mask)
-    head_logprobs = compute_score_centering_head_logprobs(
+    label_logprobs, head_logprobs = compute_score_centering_head_logprobs(
         logits,
         sequences,
         support,
@@ -197,6 +198,7 @@ def test_compute_head_logprobs_unpacked_layout_matches_reference():
         temperature=1.0,
         chunk_size=None,
     )
+    assert label_logprobs is None  # materialized logits: the caller keeps its own label logprobs
     assert head_logprobs.shape == (batch, num_actions, K)
     # Reference: the head at response position j is scored by the logits one position earlier.
     head_ids = sampler_head_for_actions(support, logprobs, attention_mask, num_actions).ids
@@ -225,3 +227,46 @@ def test_scatter_packed_rows_to_batch_restores_canonical_order():
     assert torch.all(out[0, 0] == -1.0)
     assert torch.equal(out[1, 2], values[0, 4])
     assert torch.all(out[1, :2] == -1.0)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_fused_label_and_head_logprobs_match_reference(dtype):
+    """Label and head logprobs from the fused chunked pass match log_softmax of the same logits, with grads."""
+    pytest.importorskip("megatron")
+    torch.manual_seed(3)
+    hidden_size, positions, temperature = 16, 7, 0.9
+    hidden = torch.randn(1, positions, hidden_size, dtype=dtype, requires_grad=True)
+    weight = torch.randn(VOCAB, hidden_size, dtype=dtype, requires_grad=True)
+    target = torch.randint(0, VOCAB, (1, positions))
+    head = torch.randint(0, VOCAB, (1, positions, K))
+    head[0, 2, 1:] = SAMPLE_SUPPORT_PADDING
+
+    label, members = fused_label_and_head_logprobs(
+        hidden,
+        weight,
+        target,
+        head,
+        vocab_start_index=0,
+        vocab_end_index=VOCAB,
+        tp_group=None,
+        temperature=temperature,
+        chunk_size=3,
+    )
+    valid = head >= 0
+    (label.sum() + members[valid].sum()).backward()
+
+    ref_hidden = hidden.detach().clone().requires_grad_(True)
+    ref_weight = weight.detach().clone().requires_grad_(True)
+    # Same numerics as the op: logits in the weight dtype (temperature folded into the weight), fp32 softmax.
+    logits = torch.matmul(ref_hidden, (ref_weight / temperature).t()).float()
+    log_softmax = torch.log_softmax(logits, dim=-1)
+    ref_label = log_softmax.gather(-1, target.unsqueeze(-1)).squeeze(-1)
+    ref_members = log_softmax.gather(-1, head.clamp(min=0))
+    (ref_label.sum() + ref_members[valid].sum()).backward()
+
+    tol = 2e-2 if dtype == torch.bfloat16 else 1e-5
+    torch.testing.assert_close(label, ref_label, atol=tol, rtol=tol)
+    torch.testing.assert_close(members[valid], ref_members[valid], atol=tol, rtol=tol)
+    assert torch.isneginf(members[~valid]).all()
+    torch.testing.assert_close(hidden.grad.float(), ref_hidden.grad.float(), atol=tol * 5, rtol=tol * 5)
+    torch.testing.assert_close(weight.grad.float(), ref_weight.grad.float(), atol=tol * 5, rtol=tol * 5)

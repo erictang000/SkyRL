@@ -310,8 +310,11 @@ def validate_generator_output(output: GeneratorOutput) -> bool:
     [
         (False, 3, None, None),  # disabled -> no salt
         (True, 3, None, "3"),  # enabled, no model name -> bare version
-        (True, 5, "my-model", "my-model@5"),  # enabled with model name
-        (True, 0, "my-model", "my-model@0"),  # pre-first-sync version (0) still salts
+        (True, 5, "my-model", "my-model-5"),  # enabled with model name
+        (True, 0, "my-model", "my-model-0"),  # pre-first-sync version (0) still salts
+        # vLLM rejects '@', '/', backslashes and NUL in a salt (and > 128 chars); model paths carry '/'.
+        (True, 5, "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "deepseek-ai_DeepSeek-R1-Distill-Qwen-1.5B-5"),
+        (True, 7, "x" * 200, "x" * 126 + "-7"),
     ],
 )
 async def test_cache_salt_threaded_to_engine_input(

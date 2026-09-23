@@ -19,7 +19,10 @@ from skyrl.backends.skyrl_train.utils.sample_support import (
     SAMPLE_SUPPORT_LOGPROBS_TORCH_DTYPE,
     SAMPLE_SUPPORT_PADDING,
 )
-from skyrl.backends.skyrl_train.utils.score_centering_support import score_head_members
+from skyrl.backends.skyrl_train.utils.score_centering_support import (
+    fused_label_and_head_logprobs,
+    score_head_members,
+)
 from skyrl.backends.skyrl_train.workers.megatron import (
     megatron_worker as megatron_worker_module,
 )
@@ -156,6 +159,9 @@ def test_score_centering_training_step(ray_init_fixture, tensor_parallel_size, r
     assert 0.0 < metrics["loss_metrics/score_centering_sampler_head_mass"] <= 1.0
     assert 0.0 < metrics["loss_metrics/score_centering_trainer_head_mass"] <= 1.0
     assert np.isfinite(metrics["loss_metrics/score_centering_tail_mass_ratio"])
+    # Head members scored with the label's own normalizer keep the tail-mass ratio O(1); a mismatch
+    # between the two normalizers blows it up (the first fused smoke run read 85).
+    assert metrics["loss_metrics/score_centering_tail_mass_ratio"] < 10.0
 
 
 class _HeadScoringTPProbeWorker(MegatronPolicyWorkerBase):
@@ -219,11 +225,40 @@ class _HeadScoringTPProbeWorker(MegatronPolicyWorkerBase):
         torch.testing.assert_close(sharded_gather[finite], expected[finite], rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(sharded_fused[finite], expected[finite], rtol=1e-5, atol=1e-5)
         assert torch.isneginf(sharded_gather[~finite]).all() and torch.isneginf(sharded_fused[~finite]).all()
+
+        # The fused label + head op, in bf16 like the real model, against the unsharded reference built
+        # with the same numerics (bf16 logits, fp32 softmax).
+        hidden_bf16 = hidden.to(torch.bfloat16).requires_grad_(True)
+        weight_bf16 = lm_head.to(torch.bfloat16)
+        local_weight = (
+            weight_bf16[tp_rank * local_vocab_size : (tp_rank + 1) * local_vocab_size].clone().requires_grad_(True)
+        )
+        label, members = fused_label_and_head_logprobs(
+            hidden_bf16,
+            local_weight,
+            sampled_ids,
+            head_ids,
+            vocab_start_index=tp_rank * local_vocab_size,
+            vocab_end_index=(tp_rank + 1) * local_vocab_size,
+            tp_group=tp_group,
+            temperature=temperature,
+            chunk_size=2,
+        )
+        (label.sum() + members[finite].sum()).backward()
+        ref_logits = torch.matmul(hidden_bf16.detach(), (weight_bf16 / temperature).t()).float()
+        ref_log_softmax = torch.log_softmax(ref_logits, dim=-1)
+        ref_label = ref_log_softmax.gather(-1, sampled_ids.unsqueeze(-1)).squeeze(-1)
+        ref_members = ref_log_softmax.gather(-1, head_ids.clamp(min=0).long())
+        torch.testing.assert_close(label, ref_label, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(members[finite], ref_members[finite], rtol=1e-4, atol=1e-4)
+        assert torch.isfinite(hidden_bf16.grad).all() and torch.isfinite(local_weight.grad).all()
         return {
             "rank": tp_rank,
             "max_abs_diff": max(
                 (sharded_gather[finite] - expected[finite]).abs().max().item(),
                 (sharded_fused[finite] - expected[finite]).abs().max().item(),
+                (label - ref_label).abs().max().item(),
+                (members[finite] - ref_members[finite]).abs().max().item(),
             ),
         }
 
@@ -250,4 +285,4 @@ def test_head_scoring_tp2_matches_unsharded(ray_init_fixture):
         megatron_worker_module.PolicyWorker = original_worker
 
     assert {result["rank"] for result in results} == {0, 1}
-    assert max(result["max_abs_diff"] for result in results) <= 1e-5
+    assert max(result["max_abs_diff"] for result in results) <= 1e-4
