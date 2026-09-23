@@ -683,10 +683,16 @@ async def _build_and_serve_vllm_server(
     # One uvicorn per port (no api_server_count fan-out), matching vLLM's own
     # single-server path, so SO_REUSEPORT stays off.
     sock = create_server_socket(sock_addr, reuse_port=False)
+
+    # SkyRL uses the scale-out token-in/token-out endpoint for generation.
+    cli_args.enable_scale_out = True
     app = build_app(cli_args)
 
     # Initialize the engine (this loads the model - takes time)
     engine_args = AsyncEngineArgs.from_cli_args(cli_args)
+    # Standalone parsing can leave the CUDA worker class unresolved.
+    if engine_args.worker_cls == "auto":
+        engine_args.worker_cls = "vllm.v1.worker.gpu_worker.Worker"
 
     stat_loggers = None
     if enable_ray_prometheus_stats:
@@ -737,7 +743,7 @@ def _build_standalone_cli_args(argv: Optional[List[str]] = None) -> Namespace:
     ``--worker-extension-cls``, ...).
     """
     from vllm import AsyncEngineArgs as _AsyncEngineArgs
-    from vllm.entrypoints.openai.cli_args import FrontendArgs
+    from vllm.entrypoints.launchers.cli_args import FrontendArgs
     from vllm.platforms import current_platform
     from vllm.utils.argparse_utils import FlexibleArgumentParser
 
