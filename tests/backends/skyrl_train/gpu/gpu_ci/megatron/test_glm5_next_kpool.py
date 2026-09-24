@@ -1,21 +1,19 @@
-"""GLM-5.3-Flash DSA k-pool indexer checks against the HF reference semantics.
+"""Contract test for megatron-core's DSA k-pool *selection*, on GPU.
 
-megatron-core gained the pooled indexer in NVIDIA/Megatron-LM#7054, which is what lets the
-Megatron path train on sequences longer than ``dsa_indexer_topk`` (2048 for this checkpoint).
-Before that, ``glm5_next/dsa.py`` refused them rather than silently attending to a different
-subset than the real model.
+Exercises the pinned megatron-core (NVIDIA/Megatron-LM#7054 / #7522), not SkyRL code:
+``fused_qk_topk_kpool`` and the varlen masking helpers come from ``megatron.core``. SkyRL
+pins megatron-core to a fork, and GLM-5.3-Flash trains on sequences past
+``dsa_indexer_topk``, so a regression in the selection kernel would otherwise only surface
+as a quality drop in a training run.
 
-Two properties are checked:
+Below ``index_topk`` every pool is selectable, so the pooled selection must reduce exactly to
+dense causal attention -- the regime SkyRL's ``glm5_next/dsa.py`` guard relies on when it
+falls back to the token-level indexer. Above it, selection genuinely drops tokens, and what
+must still hold is that it stays causal, respects the budget, and keeps the query's own
+trailing pool.
 
-- **Pooling math.** ``_kpool_compress_keys`` must match HF's
-  ``Glm5NextTextIndexer.compress_keys``: a per-dimension softmax over the pool's slots of
-  ``gate_score + ape``, used to weight the keys. Transcribed here independently from
-  ``modeling_glm5_next`` rather than imported, so a change on either side shows up.
-- **Selection behaviour.** Below ``index_topk`` the pooled selection
-  covers every causally visible token (every pool is selectable), so it must reduce exactly to
-  dense causal attention -- the regime the old ceiling allowed, which the working GSM8K/DAPO
-  runs already relied on. Above it, selection genuinely drops tokens, and what must still hold
-  is that it stays causal, respects the budget, and always keeps the query's own trailing pool.
+The pooling-math half is pure tensor math and runs on CPU, in
+``tests/backends/skyrl_train/models/test_glm5_next_kpool_math.py``.
 
 Run with:
 uv run --isolated --extra dev --extra megatron -- pytest -s \
@@ -33,28 +31,6 @@ INDEX_TOPK = 64  # small stand-in for the checkpoint's 2048; the invariant is to
 N_HEADS = 4
 
 
-def _hf_reference_pool(k: torch.Tensor, gate_score: torch.Tensor, ape: torch.Tensor, pool_size: int):
-    """Independent transcription of HF ``Glm5NextTextIndexer`` pooling.
-
-    HF works in [batch, seq, dim] and does::
-
-        logits        = grouped_gate_scores.float() + ape.float()[None, None]
-        probabilities = logits.softmax(dim=2)          # over the pool's slots
-        pool_keys     = (probabilities * grouped_keys).sum(dim=2)
-
-    megatron-core works in [tokens, batch, dim] and only compresses complete pools.
-    """
-    tokens, batch, dim = k.shape
-    n_pools = tokens // pool_size
-    trimmed = n_pools * pool_size
-    grouped_k = k[:trimmed].reshape(n_pools, pool_size, batch, dim)
-    grouped_gate = gate_score[:trimmed].reshape(n_pools, pool_size, batch, dim)
-
-    logits = grouped_gate.float() + ape.float()[None, :, None, :]
-    probs = logits.softmax(dim=1)
-    return (probs * grouped_k.float()).sum(dim=1)
-
-
 def _make_inputs(seqlen: int, batch: int = 1, device="cuda", dtype=torch.bfloat16, seed=0):
     gen = torch.Generator(device=device).manual_seed(seed)
     k = torch.randn(seqlen, batch, HEAD_DIM, device=device, dtype=dtype, generator=gen)
@@ -63,24 +39,6 @@ def _make_inputs(seqlen: int, batch: int = 1, device="cuda", dtype=torch.bfloat1
     q = torch.randn(seqlen, batch, N_HEADS, HEAD_DIM, device=device, dtype=dtype, generator=gen)
     weights = torch.randn(seqlen, batch, N_HEADS, device=device, dtype=torch.float32, generator=gen)
     return q, k, weights, gate, ape
-
-
-@pytest.mark.parametrize("seqlen", [64, 256, 1024])
-def test_kpool_compress_keys_matches_hf_reference(seqlen):
-    """The softmax-weighted pooling itself, against HF's formulation."""
-    from megatron.core.transformer.experimental_attention_variant.dsa import (
-        _kpool_compress_keys,
-    )
-
-    _, k, _, gate, ape = _make_inputs(seqlen)
-
-    got = _kpool_compress_keys(k, gate, ape, POOL_SIZE)
-    want = _hf_reference_pool(k, gate, ape, POOL_SIZE)
-
-    assert got.shape[0] == seqlen // POOL_SIZE, f"expected {seqlen // POOL_SIZE} pools, got {got.shape[0]}"
-    assert got.shape[1:] == k.shape[1:]
-    # megatron accumulates in fp32 and returns bf16; compare at bf16 resolution.
-    torch.testing.assert_close(got.float(), want.float(), rtol=2e-2, atol=2e-2)
 
 
 @pytest.mark.parametrize("seqlen", [32, 64, 250])
