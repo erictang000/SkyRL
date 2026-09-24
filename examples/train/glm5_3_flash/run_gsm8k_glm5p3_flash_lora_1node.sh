@@ -21,7 +21,6 @@ set -x
 # weights with blockwise *.weight_scale_inv sidecars, and Glm5NextBridge does not override
 # maybe_modify_loaded_hf_weight -- the import would cast fp8 -> bf16 and silently drop the block
 # scales (see DeepSeekV3Bridge for the override that handles this). BF16 sidesteps that entirely.
-# /data is one NFS export shared by every node, so this path is already staged cluster-wide.
 
 MODEL_PATH="${MODEL_PATH:-/data/trajectory/model-cache/glm5p3-flash-bf16}"
 DATA_DIR="${DATA_DIR:-$HOME/data/gsm8k}"
@@ -31,10 +30,8 @@ INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
 LOGGER="${LOGGER:-console}"  # change to "wandb" to log to wandb
 
 # Short context: GSM8K prompts are tiny, and a 2k response cap keeps the rollout phase short.
-# Hard ceiling: GLM-5.3-Flash's DSA layers index with dsa_indexer_topk=2048, and the Megatron
-# backend has no k-pool indexer, so glm5_next/dsa.py raises for any sequence longer than that
-# (a training-time failure, not a startup one). Keep MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH
-# <= 2048, and cap the engine so it cannot emit a sequence the trainer would then reject.
+# (Sequences past dsa_indexer_topk=2048 are fine on their own -- megatron-core's k-pool indexer
+# handles them -- this cap is just to keep the smoke run cheap.)
 MAX_PROMPT_LENGTH=512
 MAX_RESPONSE_LENGTH=1024
 INFERENCE_ENGINE_MAX_MODEL_LEN=2048
@@ -58,18 +55,14 @@ LR=1e-5             # LoRA: higher LR for adapters than the 1e-6 used for full-F
 # mcore_ext/kda.py (KDA), plus the MoE/dense MLP linears.
 LORA_RANK=32
 LORA_ALPHA=32
-# merge_lora=true: Megatron merges the adapter into the base weights and syncs full weights, so
-# vLLM runs with enable_lora=False. That is required on this vLLM build: oracle/unquantized.py:222
-# selects a LoRA-aware MoE expert kernel whenever LoRA is enabled *globally*, and that kernel
-# asserts a lora_context which is only set when the MoE layer is itself LoRA-wrapped -- which
-# neither lora_target_modules nor vllm#56327 arranges for GLM-5.3-Flash. Set false only once MoE
-# LoRA wrapping works; the vllm#56327 backport patch is already in place for that.
+# merge_lora=true keeps this smoke run on the simple path (vLLM runs without LoRA). false also
+# works -- naming `experts` in lora_target_modules is the whole fix -- and is what the DAPO
+# recipe uses; see .agents/docs/glm5_3_flash_lora.md.
 MERGE_LORA=true
-# f_b_proj / g_b_proj are deliberately absent. vLLM's KDA runs one fused GEMM
-# (in_proj_qkvbfg_a) and .split()s it, so f_a/g_a are non-contiguous views; a LoRA-wrapped
-# f_b_proj(f_a) then trips `assert inputs.is_contiguous()` in vLLM's triton lora_shrink
-# (lora_shrink_op.py:182) during the profile run. Unwrapped, the plain linear takes the
-# non-contiguous view fine. Every other KDA projection still gets an adapter.
+# f_b_proj / g_b_proj are deliberately absent: vLLM's KDA runs one fused GEMM (in_proj_qkvbfg_a)
+# and .split()s it, so f_a/g_a are non-contiguous views and a LoRA-wrapped f_b_proj(f_a) trips
+# `assert inputs.is_contiguous()` in the triton lora_shrink. Every other KDA projection is
+# adapted. They must be excluded on both sides -- see VLLM_LORA_TARGET_MODULES below.
 LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,linear_kv_up_proj,linear_proj,linear_fc1,linear_fc2,q_proj,k_proj,v_proj,b_proj,f_a_proj,g_a_proj,o_proj]'
 
 # Megatron mesh. EP is the scaling dimension for a MoE this sparse (36 experts/GPU); TP only
@@ -87,10 +80,9 @@ OPTIMIZER_OFFLOAD=true
 OPTIMIZER_OFFLOAD_FRACTION=1.0
 
 # Rollout router replay (R3): vLLM returns the experts it routed to and Megatron replays that
-# routing, which keeps rollout/train logprobs from drifting on a 288-expert MoE. Off for now --
-# flip to true once the basic run is healthy, and watch policy/rollout_train_logprobs_abs_diff_mean
-# to see what it buys. Both knobs move together; validate_cfg rejects replay without
-# enable_return_routed_experts.
+# routing, keeping rollout/train logprobs from drifting on a 288-expert MoE. Off for this smoke
+# run; both knobs move together (validate_cfg rejects replay without the other). R3 + LoRA needs
+# SkyRL #2269.
 ENABLE_ROUTING_REPLAY=false
 
 # GLM-5.3-Flash is shipped as a VL checkpoint; SkyRL bridges only the language model, and the
@@ -106,12 +98,9 @@ INFERENCE_ENGINE_MAX_NUM_SEQS=512
 # base, so it only fits because colocate_all sleeps vLLM during the training phase.
 INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION="${INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION:-0.7}"
 
-# lora_target_modules controls which modules vLLM *wraps* for LoRA -- it is not inferred from
-# the adapter, and the profile run pushes dummy LoRAs through every wrapped layer. So f_b_proj /
-# g_b_proj must be excluded here (not just from the trainer-side adapter) or KDA's non-contiguous
-# f_a/g_a views hit `assert inputs.is_contiguous()` in vLLM's triton lora_shrink. These are the
-# vLLM-side names for the same set in LORA_TARGET_MODULES: vLLM fuses KDA's q/k/v/b/f_a/g_a into
-# in_proj_qkvbfg_a and MLA's q_a/kv_a into fused_qkv_a_proj.
+# vLLM-side names for the same set as LORA_TARGET_MODULES: KDA's q/k/v/b/f_a/g_a fuse into
+# in_proj_qkvbfg_a, MLA's q_a/kv_a into fused_qkv_a_proj. This list controls which modules vLLM
+# *wraps* (it is not inferred from the adapter), so f_b_proj/g_b_proj must be excluded here too.
 # "experts" is required: setting lora_target_modules at all switches the MoE from
 # "unrestricted" to "filtered", and its module suffix is `experts`. vLLM picks a LoRA-aware
 # MoE expert kernel whenever LoRA is enabled globally (oracle/unquantized.py:222) but only

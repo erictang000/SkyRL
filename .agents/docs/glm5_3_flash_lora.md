@@ -17,10 +17,8 @@ the blocker actually was, what is now verified, and what is still untested.
 adapter into the base weights on the trainer and syncs **full weights** — correct, but it moves
 ~599 GiB of model every sync instead of a few hundred MB of adapter.
 
-It matters most for the non-colocated recipe
-(`run_dapo_glm5p3_flash_lora_async_3node.sh`, 2 trainer nodes + 1 inference node), where that
-traffic crosses the network rather than staying on-device. In the colocated recipes the cost is
-real but bounded.
+It matters most for a non-colocated setup, where that traffic crosses the network rather than
+staying on-device. In the colocated recipes the cost is real but bounded.
 
 ## The gate
 

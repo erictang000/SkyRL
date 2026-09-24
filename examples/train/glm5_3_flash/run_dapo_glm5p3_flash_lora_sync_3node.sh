@@ -1,25 +1,21 @@
 set -x
 
 # Colocated sync DAPO training+generation for GLM-5.3-Flash with Megatron + LoRA.
-# 3 nodes x 8xB300 (24 GPUs), all colocated. Stops after MAX_TRAINING_STEPS.
+# 2 nodes x 8xB300, all colocated. Stops after MAX_TRAINING_STEPS.
 #
 #   bash examples/train/algorithms/dapo/prepare_dapo_data.sh
 #   export WANDB_API_KEY=<key>
 #   bash examples/train/glm5_3_flash/run_dapo_glm5p3_flash_lora_sync_3node.sh
 #
-# Everything model-specific here is carried over from the GSM8K run that works; see
-# run_gsm8k_glm5p3_flash_lora_1node.sh for the reasoning behind each setting.
+# These are the settings of the 2k/8k merge_lora=false run that took held-out AIME-2024
+# avg_score 0.072 -> 0.561 in 25 steps; see .agents/docs/glm5_3_flash_r3_relaunch.md.
+# Per-setting reasoning lives in run_gsm8k_glm5p3_flash_lora_1node.sh.
 
 MODEL_PATH="${MODEL_PATH:-/data/trajectory/model-cache/glm5p3-flash-bf16}"
 DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 
-# NOTE: sized for 2 nodes. vmnode-6r3vaf61zkut was drained from the Ray cluster after its GPU0
-# lost P2P with every peer (nvidia-smi topo -p2p r shows NS across GPU0's row), which made vLLM's
-# TP=8 ncclCommInitRank fail on that node every time. It cannot be reset in-guest -- the GPUs are
-# passthrough -- and its NVLinks have been inactive since its fabric manager died on 2026-07-18.
-# Restore NUM_NODES=3 (and NUM_INFERENCE_ENGINES=3 for the sync recipe) once that node is fixed.
 NUM_NODES=2
 NUM_GPUS_PER_NODE=8
 NUM_INFERENCE_ENGINES=2          # one engine per node, colocated with that node's policy shard
@@ -28,22 +24,18 @@ LOGGER="${LOGGER:-wandb}"
 
 MAX_TRAINING_STEPS=50
 
-# Sequence budget. The DSA layers index with dsa_indexer_topk=2048, and megatron-core now
-# implements the k-pool indexer (NVIDIA/Megatron-LM#7054), so sequences past that are selected
-# rather than refused -- the earlier 896+1024 cap is gone. This is still short of the stock DAPO
-# recipe's 2k prompt + 8k response: an 8k response is ~8x the per-step cost of the 1024 runs that
-# measured ~10 min/step, which does not fit an overnight experiment. Overlong filtering absorbs
-# the truncated tail.
+# Sequence budget: the stock DAPO 2k prompt + 8k response. Sequences past
+# dsa_indexer_topk=2048 are handled by megatron-core's k-pool indexer (NVIDIA/Megatron-LM#7054).
+# Overlong filtering absorbs the truncated tail. ~40 min/step at this size.
 MAX_PROMPT_LENGTH=2048
-MAX_RESPONSE_LENGTH=4096
-INFERENCE_ENGINE_MAX_MODEL_LEN=6656          # prompt + response + headroom for chat-template tokens
-OVERLONG_BUFFER_LEN=1024                     # penalty starts at 3072; see the note below
+MAX_RESPONSE_LENGTH=8192
+INFERENCE_ENGINE_MAX_MODEL_LEN=10752         # prompt + response + chat-template headroom
+OVERLONG_BUFFER_LEN=2048                     # penalty starts at 6144
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
 
-# Batch shape. validate_cfg requires (policy_mini_batch_size * n_samples_per_prompt) % dp == 0,
-# and dp is pinned to 24/TP2 = 12 (KDA has no context-parallel path and megatron-core rejects
-# mHC with PP>1, so TP is the only divisor available). That forces n_samples to a multiple of 3,
-# hence 12 rather than DAPO's usual 16. 128/32 batch sizes are unchanged.
+# Batch shape. validate_cfg requires (policy_mini_batch_size * n_samples_per_prompt) % dp == 0;
+# dp = 16/TP4 = 4 here (KDA has no context-parallel path and megatron-core rejects mHC with
+# PP>1, so TP is the only divisor available). n_samples=12 rather than DAPO's usual 16.
 TRAIN_BATCH_SIZE=128
 MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=12
@@ -62,26 +54,20 @@ TOP_P=1.0
 EVAL_TOP_P=0.7
 LR=1e-5                          # LoRA adapters, as in the reference LoRA scripts
 
-# The previous 45-step run at rank 32 / shared expert adapters moved implied accuracy only
-# 0.482 -> 0.502 while reward tracked length at corr -0.93. Two changes to that:
-#
-# share_expert_adapters=False gives every expert its own adapter instead of one shared across all
-# local grouped experts -- with 288 experts holding ~97% of the parameters, the shared adapter was
-# the capacity bottleneck. normalize_moe_lora then divides the expert rank by moe_router_topk
-# (8 here, so expert rank 64//8 = 8), keeping the per-token expert contribution comparable to a
-# dense rank-64 adapter; it requires rank % topk == 0, which 64 satisfies.
+# share_expert_adapters=False gives every expert its own adapter; with 288 experts holding ~97%
+# of the parameters, one shared adapter was the capacity bottleneck. normalize_moe_lora then
+# divides the expert rank by moe_router_topk (64//8 = 8), keeping the per-token expert
+# contribution comparable to a dense rank-64 adapter; it requires rank % topk == 0.
 LORA_RANK=64
 LORA_ALPHA=64
-# merge_lora=false works (see .claude/docs/glm5_3_flash_lora.md -- the fix was naming `experts`
-# in lora_target_modules) and is now verified on the full 45-layer checkpoint, not just the
-# 4-layer slice: at this config it ships a 3.9 GiB adapter in 29s against ~112s for the ~599 GiB
-# merged path. Flip to false to use it; true is kept as the conservative default.
-MERGE_LORA=true
+# merge_lora=false ships a 3.9 GiB adapter in 29s against ~112s for the ~599 GiB merged path,
+# and is what produced the results above. See .agents/docs/glm5_3_flash_lora.md.
+MERGE_LORA=false
 SHARE_EXPERT_ADAPTERS=false
 NORMALIZE_MOE_LORA=true
 LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,linear_kv_up_proj,linear_proj,linear_fc1,linear_fc2,q_proj,k_proj,v_proj,b_proj,f_a_proj,g_a_proj,o_proj]'
 
-MEGATRON_TP=2
+MEGATRON_TP=4
 MEGATRON_PP=1
 MEGATRON_CP=1
 MEGATRON_EP=8
@@ -92,18 +78,14 @@ OPTIMIZER_OFFLOAD_FRACTION=1.0
 INFERENCE_ENGINE_MAX_NUM_SEQS=512
 INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION="${INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION:-0.7}"
 
-# The client fans out one HTTP request per sequence (batch x n_samples) and throttles only at
-# SKYRL_GENERATE_CONCURRENCY_PER_ENGINE (512) x num_engines, so the router sees the whole batch at
-# once. Its defaults -- queue_size=100, queue_timeout_secs=60 -- then drop the overflow, and the
-# client gets an empty body: "orjson.JSONDecodeError: unexpected character ... (char 0)". Size the
-# queue past the batch and give it the same deadline as request_timeout_secs. round_robin spreads
-# the load across engines (and drops consistent_hash's very chatty per-request debug logging).
+# The client fans out one request per sequence, so the router sees the whole batch at once; its
+# defaults (queue_size=100, queue_timeout_secs=60) drop the overflow and the client then sees an
+# empty body as "orjson.JSONDecodeError ... (char 0)". Size the queue past the batch.
 ROUTER_INIT_KWARGS='{"policy": "round_robin", "queue_size": 8192, "queue_timeout_secs": 1800}'
 
 # vLLM-side LoRA targets, only consulted when MERGE_LORA=false. "experts" is the whole fix for
-# "AssertionError: LoRA context must be set": supplying lora_target_modules at all flips the MoE
-# from unrestricted to filtered, and GLM-5.3-Flash's MoE module suffix is `experts`. See
-# .claude/docs/glm5_3_flash_lora.md. f_b_proj/g_b_proj stay out (KDA's non-contiguous f_a/g_a).
+# "AssertionError: LoRA context must be set" -- supplying lora_target_modules at all flips the MoE
+# from unrestricted to filtered. f_b_proj/g_b_proj stay out (KDA's non-contiguous f_a/g_a).
 VLLM_LORA_TARGET_MODULES='["fused_qkv_a_proj", "q_b_proj", "kv_b_proj", "o_proj", "gate_up_proj", "down_proj", "in_proj_qkvbfg_a", "experts"]'
 
 if [ "$MERGE_LORA" = "false" ]; then
@@ -113,27 +95,24 @@ else
 fi
 ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', "kv_cache_dtype": "bfloat16", '"$LORA_ENGINE_KWARG"'"compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "pass_config": {"fuse_allreduce_rms": false}}}'
 
-# The client fires one HTTP request per sequence and caps in-flight work at
-# SKYRL_GENERATE_CONCURRENCY_PER_ENGINE x num_engines. At the 512 default that is 1536 requests
-# released at once for the sync shape, and every backend then returns
-#   502 "Backend request failed: error sending request for url ..."
-# uniformly (all three engines failed in equal measure), which surfaces client-side only as
-# "orjson.JSONDecodeError ... (char 0)". This is the mitigation the env var documents.
-# The working GSM8K run peaked at ~256 in flight against one engine, so 128/engine is well inside
-# what the routers and uvicorn accept queues handled there.
-# DAPO steps are far heavier than the GSM8K ones (responses run to the full cap instead of
-# ~250 tokens), so a single fwd_logprobs pass took 37 min. DP ranks finish their microbatches
-# unevenly, and the ones that finish early then sit in a collective: past the 600s default here,
-# torch's NCCL watchdog calls std::terminate and the worker dies with
-#   c10d::ProcessGroupNCCL::Watchdog::run() -> SIGABRT / "Fatal Python error: Aborted",
-# which surfaces on the driver only as a Ray ActorUnavailableError (keepalive watchdog timeout).
+# NCCL timeout: DP ranks finish their microbatches unevenly and the early ones sit in a
+# collective. Past the 600s default torch's watchdog calls std::terminate, which surfaces on the
+# driver only as a Ray ActorUnavailableError. Concurrency 128/engine: the 512 default releases
+# the whole batch at once and every backend then returns 502.
 export SKYRL_WORKER_NCCL_TIMEOUT_IN_S=5400
 export SKYRL_GENERATE_CONCURRENCY_PER_ENGINE=128
 export FLA_TILELANG=0
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.3}"
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=1800
+# Host port 8000 is often already taken on a shared cluster; a LoadBalancer that claims it makes
+# /wake_up return someone else's 404 and the run dies at the next weight sync.
+export SKYRL_VLLM_START_PORT="${SKYRL_VLLM_START_PORT:-8400}"
+# Otherwise redirect_actor_output_to_file() swallows vLLM's errors.
+export SKYRL_DUMP_INFRA_LOG_TO_STDOUT=1
 
-RUN_NAME="glm5p3_flash_dapo_sync_lora_r${LORA_RANK}_3node"
+RUN_NAME="${RUN_NAME:-glm5p3_flash_dapo_sync_lora_r${LORA_RANK}_8k_tp${MEGATRON_TP}}"
+# Checkpoints are ~34G each (adapter + optimizer state, not the 599 GiB base).
+CKPT_PATH="${CKPT_PATH:-$HOME/ckpts/$RUN_NAME}"
 
 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
@@ -202,11 +181,11 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.max_training_steps=$MAX_TRAINING_STEPS \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   trainer.eval_batch_size=128 \
-  trainer.eval_before_train=false \
+  trainer.eval_before_train=true \
   trainer.eval_interval=25 \
-  trainer.ckpt_interval=-1 \
+  trainer.ckpt_interval=10 \
   trainer.resume_mode=null \
-  trainer.ckpt_path="$HOME/ckpts/$RUN_NAME" \
+  trainer.ckpt_path="$CKPT_PATH" \
   generator.inference_engine.backend=vllm \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \

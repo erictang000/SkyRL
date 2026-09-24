@@ -1,28 +1,22 @@
 """Backport of vllm-project/vllm#56327 (LoRA support for GLM-5.3-Flash).
 
-Two pieces, both absent from the pinned vLLM but both required for a Megatron-trained
+Still open upstream as of vLLM 0.30, and both pieces are required for a Megatron-trained
 GLM-5.3-Flash LoRA adapter to load into the engine (``merge_lora=false``):
 
-1. ``Glm5NextForConditionalGeneration.packed_modules_mapping``. Without it the class
-   inherits ``Glm4vForConditionalGeneration``'s ``{"qkv_proj": [q,k,v], "gate_up_proj": ...}``,
-   which names none of GLM-5.3-Flash's fused runtime projections. The adapter stores the HF
-   submodules separately (``q_proj``/``k_proj``/``v_proj``/``b_proj``/``f_a_proj``/``g_a_proj``
-   and ``q_a_proj``/``kv_a_proj_with_mqa``), so with no mapping there is nothing to assemble
-   them onto and the load fails.
+1. ``Glm5NextForConditionalGeneration.packed_modules_mapping``. Without it the class inherits
+   ``Glm4vForConditionalGeneration``'s mapping, which names none of this model's fused runtime
+   projections, so the adapter's separately-stored HF submodules have nothing to assemble onto.
 
-2. ``MergedColumnParallelLinearWithLoRA.output_ids`` honoring ``replicated_shard_ids``.
-   KDA's ``in_proj_qkvbfg_a`` is a ``_Glm5NextMergedColumnParallelLinear`` declaring
-   ``replicated_shard_ids=(4, 5)``: ``f_a_proj``/``g_a_proj`` are duplicated across TP ranks
-   rather than sharded (matching ``parallel_mode="duplicated"`` on the Megatron side), so
-   their LoRA-B must be kept whole on every rank instead of sliced by ``tp_rank``. The base
-   class already carries the attribute; only the LoRA layer's use of it is missing.
+2. ``MergedColumnParallelLinearWithLoRA.output_ids`` honoring ``replicated_shard_ids``. KDA's
+   ``in_proj_qkvbfg_a`` declares ``replicated_shard_ids=(4, 5)``: ``f_a_proj``/``g_a_proj`` are
+   duplicated across TP ranks rather than sharded (matching ``parallel_mode="duplicated"`` on
+   the Megatron side), so their LoRA-B must stay whole on every rank. The base class already
+   carries the attribute; only the LoRA layer's use of it is missing.
 
-Note the upstream PR does *not* address the ``assert inputs.is_contiguous()`` in
-``lora_shrink`` that a LoRA-wrapped ``f_b_proj``/``g_b_proj`` hits (KDA splits the fused
-projection into non-contiguous views). Those two modules must still be left out of
-``lora_target_modules``.
+The PR does *not* fix the ``assert inputs.is_contiguous()`` that a LoRA-wrapped
+``f_b_proj``/``g_b_proj`` hits, so those two stay out of ``lora_target_modules``.
 
-TODO: remove once https://github.com/vllm-project/vllm/pull/56327 lands in the pinned vLLM.
+TODO: remove once #56327 lands in the pinned vLLM.
 """
 
 import logging
