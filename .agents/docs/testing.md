@@ -1,12 +1,33 @@
 # Testing
 
 
+Mirrors `.github/workflows/cpu_skyrl.yaml` / `cpu_jax.yaml` -- keep in sync.
+
 ```bash
-# Core library tests
-uv run --extra dev pytest tests/train/ tests/backends/skyrl_train/ --ignore=tests/backends/skyrl_train/gpu/
+# Core library tests. A backend extra is required: `ray` ships in `skyrl-train`/`fsdp`, and
+# without one, collection fails in tests/backends/skyrl_train/conftest.py with
+# "No module named 'ray'". CI splits on the `vllm` marker since the halves need different extras.
+uv run --isolated --extra skyrl-train --extra dev pytest tests/train/ tests/backends/skyrl_train/ --ignore=tests/backends/skyrl_train/gpu -m "not vllm"
+uv run --isolated --extra fsdp --extra dev pytest tests/train/ tests/backends/skyrl_train/ --ignore=tests/backends/skyrl_train/gpu -m "vllm"
 
 # JAX / Tinker / Utils
-uv run --extra dev --extra jax pytest tests/tx/ tests/tinker/ tests/utils/
+uv run --isolated --extra tinker --extra jax --extra dev pytest --forked -s tests/tx tests/backends/test_jax_backend.py --ignore=tests/tx/gpu
+uv run --isolated --extra tinker --extra jax --extra dev pytest --forked -s tests/tinker tests/utils --ignore=tests/tinker/skyrl_train
+uv run --isolated --extra fsdp --extra tinker --extra dev pytest tests/tinker/skyrl_train/
+```
+
+**Running CPU tests on a machine with a live Ray cluster.** `tests/backends/skyrl_train/conftest.py`
+calls bare `ray.init()`, which attaches to whatever cluster is already up -- including a training
+cluster -- and its workers then die there, so the results are meaningless and the training job is
+disturbed. Set `RAY_ADDRESS=local` to force an isolated instance.
+
+## Opt-in hardware markers
+
+`h100` and `b300` mark tests needing hardware the default runners lack. `tests/backends/skyrl_train/gpu/conftest.py`
+auto-skips them unless the marker is named explicitly, so `-m megatron_models` never picks them up:
+
+```bash
+uv run --isolated --extra dev --extra megatron pytest -m h100 tests/backends/skyrl_train/gpu/gpu_ci/megatron/
 ```
 
 ## GPU Tests
