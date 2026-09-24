@@ -1,8 +1,15 @@
 # GLM-5.3-Flash LoRA weight sync (`merge_lora`)
 
-Status as of 2026-09-17, branch `glm5.3-flash`. **`merge_lora=false` works** on the pinned vLLM
-(`98ed0856f`) and is covered by a GPU test. This document records what the blocker actually was,
-what is now verified, and what is still untested.
+Status as of 2026-09-24, branch `glm5.3-flash`. **`merge_lora=false` works** and has now trained:
+25 DAPO steps took held-out AIME-2024 `avg_score` from 0.072 to 0.561. This document records what
+the blocker actually was, what is now verified, and what is still untested.
+
+> **The pinned `98ed0856f` dev wheel is gone.** Since the merge of `main` (vLLM 0.30, SkyRL #2271)
+> this branch resolves `vllm==0.30.0` from PyPI; 0.30.0 contains vllm#53906, which is why the pin
+> existed. References to the pinned wheel below are historical.
+>
+> For run results, the R3 relaunch procedure, and the cluster failure modes that killed the run
+> three times, see [`glm5_3_flash_r3_relaunch.md`](./glm5_3_flash_r3_relaunch.md).
 
 ## What the flag does and why it matters
 

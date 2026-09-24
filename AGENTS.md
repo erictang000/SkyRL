@@ -50,6 +50,7 @@ When working on these areas, read the corresponding doc first:
 | JAX/TPU backend | `.agents/docs/backends/jax.md` |
 | Weight sync | `.agents/docs/weight_sync.md` |
 | GLM-5.3-Flash LoRA weight sync (`merge_lora`) | `.agents/docs/glm5_3_flash_lora.md` |
+| GLM-5.3-Flash DAPO results + R3 relaunch | `.agents/docs/glm5_3_flash_r3_relaunch.md` |
 
 
 ## Troubleshooting
