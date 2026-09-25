@@ -3,13 +3,10 @@
 GLM-5.3-Flash's DSA layers are NoPE MLA (``qk_pos_emb_head_dim == 0``) with a *k-pool*
 compressed indexer: keys are pooled in groups of ``index_kpool`` consecutive tokens, the
 indexer scores and selects ``index_topk / index_kpool`` pools, the selected pools are expanded
-back to token indices and the query's own incomplete tail pool is always appended. For any
-sequence of at most ``index_topk`` tokens every pool is selectable, so the selection covers all
-causally visible tokens and sparse attention equals dense causal attention. megatron-core's
-token-level indexer with ``dsa_indexer_topk = index_topk`` gives the same all-visible selection
-in that regime, so it is reused as is; the pool-level scoring only changes which tokens are
-dropped once a sequence exceeds ``index_topk``, which this module does not implement yet and
-refuses instead of silently attending to a different subset.
+back to token indices and the query's own incomplete tail pool is always appended. The pinned
+megatron-core only has the token-level indexer, and its ``DSAttention.forward`` selects tokens
+itself, so ``Glm5NextDSAttention`` swaps that selection for the vendored k-pool kernels
+(``mcore_ext/dsa_kpool.py``, NVIDIA/Megatron-LM#7522) whenever ``dsa_indexer_kpool > 1``.
 """
 
 from typing import Optional, Tuple
@@ -49,20 +46,89 @@ class Glm5NextDSAttention(DSAttention):
 
     def forward(self, query, key, value, attention_mask, x, qr, *args, packed_seq_params=None, **kwargs):
         max_seqlen = self._max_sequence_length(x, packed_seq_params)
-        # megatron-core implements the pooled indexer when dsa_indexer_kpool > 1
-        # (NVIDIA/Megatron-LM#7054), which is the regime this guard used to refuse. Only the
-        # token-level path (kpool == 1) is still limited to dsa_indexer_topk tokens.
         # ``index_kpool`` is an attribute of DSAIndexer, not of DSAttention, so read the config.
         index_kpool = int(getattr(self.config, "dsa_indexer_kpool", 1) or 1)
-        if index_kpool <= 1 and max_seqlen > self.index_topk:
-            raise NotImplementedError(
-                f"GLM-5.3-Flash sparse attention with sequences longer than dsa_indexer_topk="
-                f"{self.index_topk} tokens (got {max_seqlen}) needs the k-pool indexer, which the "
-                "Megatron backend does not implement yet."
+        if index_kpool <= 1:
+            if max_seqlen > self.index_topk:
+                raise NotImplementedError(
+                    f"GLM-5.3-Flash sparse attention with sequences longer than dsa_indexer_topk="
+                    f"{self.index_topk} tokens (got {max_seqlen}) needs the k-pool indexer, which the "
+                    "Megatron backend does not implement yet."
+                )
+            return super().forward(
+                query, key, value, attention_mask, x, qr, *args, packed_seq_params=packed_seq_params, **kwargs
             )
-        return super().forward(
+        return self._forward_with_kpool_topk(
             query, key, value, attention_mask, x, qr, *args, packed_seq_params=packed_seq_params, **kwargs
         )
+
+    def _forward_with_kpool_topk(self, *args, packed_seq_params=None, **kwargs):
+        """Run the pinned ``DSAttention.forward`` with its top-k step swapped for k-pool selection.
+
+        The pinned ``DSAttention.forward`` picks tokens itself -- through the fused cuDNN DSA path,
+        the fused indexer top-k, or ``fused_qk_topk_naive`` -- and never calls
+        ``DSAIndexer.forward_with_scores``, so the pooled selection has to be injected here.
+        Mirrors NVIDIA/Megatron-LM#7522's ``DSAttention.forward``: both fused token-level indexer
+        paths decline (a supported fallback) and the naive top-k call runs ``fused_qk_topk_kpool``
+        on the same q/k/weights, masks and varlen bounds. The fused sparse-attention kernel that
+        consumes the indices is left alone. DELETE together with ``Glm5NextDSAIndexer``.
+        """
+        from megatron.core.transformer.experimental_attention_variant import dsa as mcore_dsa
+        from megatron.core.transformer.experimental_attention_variant import dsa_kernels
+
+        if self.index_share:
+            raise NotImplementedError("GLM-5.3-Flash k-pool DSA does not support cross-layer index sharing.")
+        if self.training and (self.config.dsa_indexer_loss_coeff or 0.0) > 0:
+            raise NotImplementedError("GLM-5.3-Flash k-pool DSA does not support the indexer loss.")
+
+        indexer = self.indexer
+        cu_seqlens_kv = None
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+            _, cu_seqlens_kv = dsa_layout.get_packed_qk_cu_seqlens(packed_seq_params)
+        kpool_calls = 0
+
+        def kpool_topk(q, k, weights, index_topk, mask=None, varlen_starts=None, varlen_ends=None,
+                       key_positions=None, use_relu=True):
+            nonlocal kpool_calls
+            kpool_calls += 1
+            if indexer._kpool_gate_score is None:
+                raise RuntimeError("k-pool gate score was not computed by Glm5NextDSAIndexer.forward_before_topk")
+            return fused_qk_topk_kpool(
+                q,
+                k,
+                weights,
+                index_topk,
+                indexer.index_kpool,
+                indexer._kpool_gate_score,
+                indexer.index_kpool_compress_ape,
+                mask=mask,
+                varlen_starts=varlen_starts,
+                varlen_ends=varlen_ends,
+                key_positions=key_positions,
+                cu_seqlens_kv=cu_seqlens_kv,
+                use_relu=use_relu,
+                always_select_tail=indexer.index_kpool_always_select_tail,
+            )
+
+        def decline(*_args, **_kwargs):
+            return None
+
+        saved = (mcore_dsa.fused_qk_topk_naive, dsa_kernels.run_fused_dsa_attention, dsa_kernels.run_fused_qk_topk)
+        mcore_dsa.fused_qk_topk_naive = kpool_topk
+        dsa_kernels.run_fused_dsa_attention = decline
+        dsa_kernels.run_fused_qk_topk = decline
+        try:
+            output = super().forward(*args, packed_seq_params=packed_seq_params, **kwargs)
+        finally:
+            mcore_dsa.fused_qk_topk_naive, dsa_kernels.run_fused_dsa_attention, dsa_kernels.run_fused_qk_topk = saved
+        # A pinned-megatron-core change that routes top-k elsewhere must fail here rather than
+        # silently fall back to token-level selection.
+        if not self.skip_topk and kpool_calls != 1:
+            raise RuntimeError(
+                f"GLM-5.3-Flash k-pool selection ran {kpool_calls} times in one DSAttention.forward "
+                "(expected 1); the pinned megatron-core top-k path has changed."
+            )
+        return output
 
 
 class Glm5NextDSAIndexer(DSAIndexer):
