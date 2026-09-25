@@ -265,10 +265,21 @@ class CaptureServer:
                 chat = parse_request(orjson.loads(raw))
             except (orjson.JSONDecodeError, RequestError) as error:
                 return _openai_error(str(error), 400)
-            return await self.backend.chat(trajectory, request, chat, raw)
+            return await trajectory.replay.call(
+                request.headers, raw, lambda: self._start(trajectory, request, chat, raw)
+            )
         finally:
             trajectory.inflight.discard(task)
             trajectory.touch()
+
+    def _start(
+        self, trajectory: Trajectory, request: web.Request, chat: ChatRequest, raw: bytes
+    ) -> asyncio.Future[web.StreamResponse]:
+        """Start the call as its own task. ``finish`` still cancels it, as in-flight work."""
+        work = asyncio.ensure_future(self.backend.chat(trajectory, request, chat, raw))
+        trajectory.inflight.add(work)
+        work.add_done_callback(trajectory.inflight.discard)  # type: ignore[arg-type]
+        return work
 
 
 def _changes(current: dict[str, Any], update: dict[str, Any] | None) -> bool:
