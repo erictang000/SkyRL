@@ -40,9 +40,11 @@ logger = logging.getLogger(__name__)
 class Backend(Protocol):
     """How a call reaches a model. One per server process: text or tokens."""
 
+    def describe(self) -> dict[str, Any]: ...
     async def start(self) -> None: ...
     async def close(self) -> None: ...
     async def release(self, trajectory: Trajectory) -> None: ...
+    async def finalize(self, trajectory: Trajectory) -> None: ...
     async def models(self, request: web.Request) -> web.Response: ...
     async def chat(
         self, trajectory: Trajectory, request: web.Request, chat: ChatRequest, raw: bytes
@@ -98,33 +100,48 @@ class CaptureServer:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._sweeper
         # Graceful shutdown: everything still in memory is unwritten, and is written as it stands.
+        # Sessions of trajectories that never ended are released: nothing here will continue them.
         for trajectory in list(self.trajectories.values()):
             await self._persist(trajectory)
+            if not trajectory.ended:
+                try:
+                    await self.backend.release(trajectory)
+                except Exception:
+                    logger.exception("releasing %s failed", trajectory.id)
         await self.backend.close()
 
     # -- ending a trajectory -----------------------------------------------------
     async def end(self, trajectory: Trajectory, status: Status, annotations: dict[str, Any] | None = None) -> None:
         """Seal, release the upstream session, write, and drop from memory.
 
-        It is written when this call sealed it (including one read back from a
-        shutdown-time record) or when it is still in memory, which means an
-        earlier write failed and is retried.
+        A trajectory that already failed keeps its status; ``annotations`` are
+        still recorded on it. It is written when this call ended it (including
+        one read back from a shutdown-time record) or when it is still in
+        memory, which means an earlier write failed and is retried.
         """
-        sealed_now = trajectory.is_open
-        if sealed_now:
+        ended_now = not trajectory.ended
+        if trajectory.is_open:
             trajectory.seal(status, annotations)
+        elif not trajectory.ended:
+            trajectory.annotations.update(annotations or {})
+        if not trajectory.ended:
+            trajectory.ended = True
             try:
                 await self.backend.release(trajectory)
             except Exception:
                 logger.exception("releasing %s failed", trajectory.id)
         unwritten = self.trajectories.get(trajectory.id) is trajectory
-        if (sealed_now or unwritten) and await self._persist(trajectory):
+        if (ended_now or unwritten) and await self._persist(trajectory):
             self.trajectories.pop(trajectory.id, None)
 
     async def _persist(self, trajectory: Trajectory) -> bool:
         """Best-effort write. Returns whether the trajectory is on disk."""
         if self.record_dir is None:
             return False
+        try:
+            await self.backend.finalize(trajectory)
+        except Exception:
+            logger.exception("finalizing %s failed; writing it without token text", trajectory.id)
         try:
             await asyncio.to_thread(record.write, self.record_dir, trajectory)
         except Exception:
@@ -133,11 +150,11 @@ class CaptureServer:
         return True
 
     async def sweep(self) -> list[str]:
-        """Abandon open trajectories idle for longer than the TTL. Returns their ids."""
+        """End trajectories nobody finished within the TTL; open ones as abandoned. Returns their ids."""
         cutoff = time.monotonic() - self.ttl
 
         def idle(trajectory: Trajectory) -> bool:
-            return trajectory.is_open and not trajectory.inflight and trajectory.last_active < cutoff
+            return not trajectory.ended and not trajectory.inflight and trajectory.last_active < cutoff
 
         abandoned = []
         for trajectory in [t for t in self.trajectories.values() if idle(t)]:
@@ -176,14 +193,14 @@ class CaptureServer:
     # -- control plane --------------------------------------------------------
     async def healthz(self, request: web.Request) -> web.Response:
         open_count = sum(1 for t in self.trajectories.values() if t.is_open)
-        return _json({"ok": True, "open_trajectories": open_count})
+        return _json({"ok": True, "open_trajectories": open_count, "capture": self.backend.describe()})
 
     async def create(self, request: web.Request) -> web.Response:
         body = await _read_json(request, default={})
         meta = body.get("meta") if isinstance(body, dict) else None
         if meta is not None and not isinstance(meta, dict):
             return _json({"error": "`meta` must be an object"}, 400)
-        trajectory = Trajectory(id=new_trajectory_id(), meta=meta or {})
+        trajectory = Trajectory(id=new_trajectory_id(), meta=meta or {}, capture=self.backend.describe())
         self.trajectories[trajectory.id] = trajectory
         # The route is on the host the pool reached us at: harnesses reach it the same way.
         base = f"{request.scheme}://{request.host}"
@@ -197,7 +214,7 @@ class CaptureServer:
         trajectory = await self._lookup(request.match_info["id"])
         if trajectory is None:
             return _json({"error": "unknown trajectory"}, 404)
-        if not trajectory.is_open and _changes(trajectory.annotations, annotations):
+        if trajectory.ended and _changes(trajectory.annotations, annotations):
             # A repeat is answered as the first finish was. New annotations on it would be
             # silently lost, so they are refused instead.
             return _json({"error": "trajectory already finished; its annotations can't change"}, 409)
