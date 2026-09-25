@@ -1,24 +1,24 @@
 set -x
 
 # Colocated sync DAPO training+generation for GLM-5.3-Flash with Megatron + LoRA.
-# 2 nodes x 8xB300, all colocated. Stops after MAX_TRAINING_STEPS.
+# 3 nodes x 8xB300, all colocated. Stops after MAX_TRAINING_STEPS.
 #
 #   bash examples/train/algorithms/dapo/prepare_dapo_data.sh
 #   export WANDB_API_KEY=<key>
 #   bash examples/train/glm5_3_flash/run_dapo_glm5p3_flash_lora_sync_3node.sh
 #
-# These are the settings of the 2k/8k merge_lora=false run that took held-out AIME-2024
-# avg_score 0.072 -> 0.561 in 25 steps; see .agents/docs/glm5_3_flash_r3_relaunch.md.
-# Per-setting reasoning lives in run_gsm8k_glm5p3_flash_lora_1node.sh.
+# The data and optimization settings follow the 2k/8k merge_lora=false AIME run documented in
+# .agents/docs/glm5_3_flash_r3_relaunch.md. The 3-node TP8/DP3 runtime settings were exercised by
+# the GLM-5.3-Flash Tinker canary. Per-setting reasoning lives in the 1-node GSM8K recipe.
 
 MODEL_PATH="${MODEL_PATH:-/data/trajectory/model-cache/glm5p3-flash-bf16}"
 DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 
-NUM_NODES=2
+NUM_NODES=3
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=2          # one engine per node, colocated with that node's policy shard
+NUM_INFERENCE_ENGINES=3          # one engine per node, colocated with that node's policy shard
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
 LOGGER="${LOGGER:-wandb}"
 
@@ -29,13 +29,13 @@ MAX_TRAINING_STEPS=50
 # Overlong filtering absorbs the truncated tail. ~40 min/step at this size.
 MAX_PROMPT_LENGTH=2048
 MAX_RESPONSE_LENGTH=8192
-INFERENCE_ENGINE_MAX_MODEL_LEN=10752         # prompt + response + chat-template headroom
+INFERENCE_ENGINE_MAX_MODEL_LEN=16384         # proven service limit; prompt + response stay below it
 OVERLONG_BUFFER_LEN=2048                     # penalty starts at 6144
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
 
 # Batch shape. validate_cfg requires (policy_mini_batch_size * n_samples_per_prompt) % dp == 0;
-# dp = 16/TP4 = 4 here (KDA has no context-parallel path and megatron-core rejects mHC with
-# PP>1, so TP is the only divisor available). n_samples=12 rather than DAPO's usual 16.
+# dp = 24/TP8 = 3 here (KDA has no context-parallel path and megatron-core rejects mHC with
+# PP>1, so TP is the only divisor available). 32 * 12 is divisible by all three DP ranks.
 TRAIN_BATCH_SIZE=128
 MINI_BATCH_SIZE=32
 N_SAMPLES_PER_PROMPT=12
@@ -67,15 +67,16 @@ SHARE_EXPERT_ADAPTERS=false
 NORMALIZE_MOE_LORA=true
 LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,linear_kv_up_proj,linear_proj,linear_fc1,linear_fc2,q_proj,k_proj,v_proj,b_proj,f_a_proj,g_a_proj,o_proj]'
 
-MEGATRON_TP=4
+MEGATRON_TP=8
 MEGATRON_PP=1
 MEGATRON_CP=1
 MEGATRON_EP=8
 MEGATRON_ETP=1
 
 OPTIMIZER_OFFLOAD=true
-OPTIMIZER_OFFLOAD_FRACTION=1.0
-INFERENCE_ENGINE_MAX_NUM_SEQS=512
+OPTIMIZER_OFFLOAD_FRACTION=0.25
+INFERENCE_ENGINE_MAX_NUM_SEQS=8
+INFERENCE_ENGINE_MAX_NUM_BATCHED_TOKENS=4096
 INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION="${INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION:-0.7}"
 
 # The client fans out one request per sequence, so the router sees the whole batch at once; its
@@ -144,11 +145,11 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.megatron_config.moe_token_dispatcher_type="alltoall" \
   trainer.policy.megatron_config.moe_router_score_function="sigmoid" \
   trainer.policy.megatron_config.moe_router_load_balancing_type="none" \
-  trainer.policy.megatron_config.moe_enable_routing_replay=false \
-  generator.inference_engine.enable_return_routed_experts=false \
+  trainer.policy.megatron_config.moe_enable_routing_replay=true \
+  generator.inference_engine.enable_return_routed_experts=true \
   trainer.policy.megatron_config.transformer_config_kwargs.sequence_parallel=true \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_granularity="selective" \
-  trainer.policy.megatron_config.transformer_config_kwargs.recompute_modules=[core_attn,moe] \
+  trainer.policy.megatron_config.transformer_config_kwargs.recompute_modules=[core_attn] \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_method=null \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_num_layers=null \
   trainer.policy.megatron_config.transformer_config_kwargs.mlp_chunks_for_training=64 \
@@ -193,8 +194,11 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.inference_engine.num_engines=$NUM_INFERENCE_ENGINES \
   generator.inference_engine.tensor_parallel_size=$INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE \
   generator.inference_engine.max_num_seqs=$INFERENCE_ENGINE_MAX_NUM_SEQS \
+  generator.inference_engine.max_num_batched_tokens=$INFERENCE_ENGINE_MAX_NUM_BATCHED_TOKENS \
   generator.inference_engine.gpu_memory_utilization=$INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION \
-  generator.inference_engine.enforce_eager=false \
+  generator.inference_engine.enforce_eager=true \
+  generator.inference_engine.enable_prefix_caching=true \
+  generator.inference_engine.enable_chunked_prefill=true \
   generator.inference_engine.engine_init_kwargs="$ENGINE_INIT_KWARGS" \
   generator.inference_engine.router_init_kwargs="$ROUTER_INIT_KWARGS" \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
