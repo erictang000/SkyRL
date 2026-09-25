@@ -22,7 +22,7 @@ from megatron.core.transformer.experimental_attention_variant.dsa import (
     rotate_activation,
 )
 
-from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.dsa_kpool import (
+from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.dsa_kpool import (
     fused_qk_topk_kpool,
 )
 

@@ -21,7 +21,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.core.models.gpt.gpt_model import GPTModel
 from torch import nn
 
-from skyrl.backends.skyrl_train.workers.megatron.glm5_next.provider import (
+from skyrl.backends.skyrl_train.patches.megatron.glm5_next.provider import (
     Glm5NextModelProvider,
 )
 

@@ -29,7 +29,7 @@ from megatron.core.transformer.transformer_layer import (
 from megatron.core.utils import make_viewless_tensor
 from torch import Tensor
 
-from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.hyper_connection import (
+from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.hyper_connection import (
     RMSNormInputHyperConnectionModule,
 )
 

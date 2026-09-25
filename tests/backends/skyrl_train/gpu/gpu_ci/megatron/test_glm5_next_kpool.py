@@ -54,7 +54,7 @@ def test_kpool_selects_every_visible_token_below_topk(seqlen):
         generate_varlen_mask_params_for_positions,
     )
 
-    from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.dsa_kpool import (
+    from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.dsa_kpool import (
         fused_qk_topk_kpool,
     )
 

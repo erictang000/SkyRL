@@ -41,7 +41,7 @@ def _hyper_connection_parity():
     )
 
     import skyrl.backends.skyrl_train.workers.megatron  # noqa: F401  (FA4 import guard)
-    from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.hyper_connection import (
+    from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.hyper_connection import (
         RMSNormInputHyperConnectionModule,
     )
 
@@ -141,7 +141,7 @@ def _kda_parity():
     )
 
     import skyrl.backends.skyrl_train.workers.megatron  # noqa: F401  (FA4 import guard)
-    from skyrl.backends.skyrl_train.workers.megatron.glm5_next.layer_specs import (
+    from skyrl.backends.skyrl_train.patches.megatron.glm5_next.layer_specs import (
         get_kda_module_spec,
     )
 

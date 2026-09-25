@@ -10,5 +10,5 @@ Shaped for an upstream home in Megatron-Bridge (``megatron/bridge/models/glm/``)
   ``Glm5NextForConditionalGeneration`` checkpoint. Importing it registers the bridge.
 
 The Megatron-Core-side building blocks (mHC layer, KDA module) live in
-``skyrl.backends.skyrl_train.workers.megatron.mcore_ext``.
+``skyrl.backends.skyrl_train.patches.megatron.mcore_ext``.
 """

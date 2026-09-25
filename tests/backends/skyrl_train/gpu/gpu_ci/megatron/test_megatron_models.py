@@ -176,7 +176,7 @@ def get_test_actor_config(model_name, lora: bool = False) -> SkyRLTrainConfig:
     if "glm-5.3-flash" in model_name.lower():
         # GLM-5.3-Flash (glm5_next) is a KDA + NoPE-MLA/DSA hybrid MoE with mHC residuals,
         # shipped as a VL checkpoint. SkyRL bridges only the language model
-        # (workers/megatron/glm5_next), so route both trainer and vLLM to the text-only path.
+        # (patches/megatron/glm5_next), so route both trainer and vLLM to the text-only path.
         # KDA needs packed (thd) sequences; the DSA layers run megatron-core's own sparse
         # attention, so the TE attention backend setting is irrelevant.
         cfg.trainer.remove_microbatch_padding = True

@@ -46,7 +46,7 @@ def _hf_reference_pool(k: torch.Tensor, gate_score: torch.Tensor, ape: torch.Ten
 @pytest.mark.parametrize("seqlen", [64, 256, 1024])
 def test_kpool_compress_keys_matches_hf_reference(seqlen):
     """The softmax-weighted pooling itself, against HF's formulation."""
-    from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.dsa_kpool import (
+    from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.dsa_kpool import (
         _kpool_compress_keys,
     )
 

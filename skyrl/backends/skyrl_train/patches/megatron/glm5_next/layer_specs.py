@@ -24,15 +24,15 @@ from megatron.core.transformer.transformer_layer import (
     get_transformer_layer_offset,
 )
 
-from skyrl.backends.skyrl_train.workers.megatron.glm5_next.dsa import (
+from skyrl.backends.skyrl_train.patches.megatron.glm5_next.dsa import (
     Glm5NextDSAIndexer,
     Glm5NextDSAttention,
 )
-from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.kda import (
+from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.kda import (
     KimiDeltaAttention,
     KimiDeltaAttentionSubmodules,
 )
-from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.mhc_transformer_layer import (
+from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.mhc_transformer_layer import (
     HyperConnectionTransformerLayer,
 )
 

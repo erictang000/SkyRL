@@ -170,7 +170,7 @@ Two things worth knowing about that path:
 - **`enable_moe_shared_loras` is a non-issue — leave it at vLLM's `False`.** SkyRL's Megatron LoRA
   defaults `share_expert_adapters=True` (`skyrl/train/config/config.py:122`), but the GLM5Next
   bridge maps routed experts to the **per-expert** HF layout
-  (`...mlp.experts.*.{gate,up,down}_proj`, `workers/megatron/glm5_next/bridge.py:250-310`), and
+  (`...mlp.experts.*.{gate,up,down}_proj`, `patches/megatron/glm5_next/bridge.py:250-310`), and
   the shared adapter is expanded to those per-expert names at export. That is exactly what vLLM's
   default 2D MoE LoRA path consumes (`is_3d_moe_weight=False` → `FusedMoEWithLoRA`).
   `enable_moe_shared_loras=True` would instead expect three pre-stacked `experts.w{1,2,3}` tensors

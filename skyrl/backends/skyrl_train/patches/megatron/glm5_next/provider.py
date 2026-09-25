@@ -6,7 +6,7 @@ from typing import Callable, Optional, Union
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.core.transformer.spec_utils import ModuleSpec
 
-from skyrl.backends.skyrl_train.workers.megatron.glm5_next.layer_specs import (
+from skyrl.backends.skyrl_train.patches.megatron.glm5_next.layer_specs import (
     build_glm5_next_layer_spec,
 )
 
