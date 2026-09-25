@@ -314,6 +314,8 @@ class MegatronWorker:
         # mapping. Its own suggestion -- selective recompute with "mhc" in recompute_modules --
         # needs the mHC recompute managers, which SkyRL's mHC layer does not implement, so
         # downgrade to selective recompute of the remaining modules instead of failing.
+        # Tied to the vendored mHC layer: see patches/megatron/README.md (Megatron-LM#7521) for
+        # when to change or delete this.
         if getattr(provider, "enable_mhc_connections", False) and provider.recompute_granularity == "full":
             provider.recompute_granularity = "selective"
             provider.recompute_modules = [m for m in (provider.recompute_modules or ["core_attn"]) if m != "mhc"]

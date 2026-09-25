@@ -275,8 +275,8 @@ class Glm5NextBridge(MegatronModelBridge):
         ]
         mappings.append(RowParallelMapping(f"{megatron_attn}.o_proj.weight", f"{hf_attn}.o_proj.weight"))
 
-        # DSA k-pool compression parameters. megatron-core only creates these when
-        # dsa_indexer_kpool > 1 (NVIDIA/Megatron-LM#7054) and initializes them randomly
+        # DSA k-pool compression parameters. Glm5NextDSAIndexer (vendored NVIDIA/Megatron-LM#7522)
+        # only creates these when dsa_indexer_kpool > 1 and initializes them randomly
         # (nn.init.normal_ on the gate), so a pooled run without these mappings would silently
         # train against random pooling weights. They are bare nn.Parameters on DSAIndexer rather
         # than module weights, so AutoMapping cannot infer a parallelism type for them

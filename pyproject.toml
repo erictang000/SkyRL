@@ -498,15 +498,9 @@ megatron-bridge = {git = "https://github.com/NVIDIA-NeMo/Megatron-Bridge", rev =
 # own CI validates against. Bump the two together, reading the submodule rev with
 # `git ls-tree <bridge-rev> 3rdparty/Megatron-LM`.
 #
-# GLM-5.3-Flash needs four things that are still open PRs against megatron-core; all four are
-# carried in-tree rather than by pinning a fork, so this stays on the rev main uses:
-#
-#   #7054 KDA           -> patches/megatron/mcore_ext/kda.py
-#   #7521 mHC           -> patches/megatron/mcore_ext/{hyper_connection,mhc_transformer_layer}.py
-#   #7522 KPool DSA     -> patches/megatron/mcore_ext/dsa_kpool.py + glm5_next/dsa.py
-#   #7523 FP8 wgrad     -> not needed; this model runs bf16 end to end
-#
-# Each vendored module names its PR and says to delete it once the pin includes it.
+# Upstream PRs not yet in these pins (GLM-5.3-Flash's KDA / mHC / k-pool DSA, and a few bug
+# fixes) are carried in skyrl/backends/skyrl_train/patches/megatron/. When bumping either pin,
+# follow skyrl/backends/skyrl_train/patches/megatron/README.md to retire whatever has landed.
 megatron-core = {git = "https://github.com/NVIDIA/Megatron-LM", rev = "d476c21be396dc666d2e04fa8c199c3851a1551f", marker = "sys_platform == 'linux'"}
 # vLLM 0.30.0 (from PyPI) supersedes the pinned 98ed0856f dev wheel this branch used for
 # GLM-5.3-Flash (vllm-project/vllm#53906, "[Model] add GLM-5.3-Flash support"): that commit is

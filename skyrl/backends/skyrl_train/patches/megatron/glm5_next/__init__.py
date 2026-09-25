@@ -1,5 +1,8 @@
 """GLM-5.3-Flash (HF ``glm5_next``) for the Megatron backend.
 
+Removal plan (what retires each module, touchpoints outside this package, tests):
+``skyrl/backends/skyrl_train/patches/megatron/README.md``.
+
 Shaped for an upstream home in Megatron-Bridge (``megatron/bridge/models/glm/``):
 
 - ``provider``: ``Glm5NextModelProvider`` (MLA provider + KDA / mHC / kpool fields).

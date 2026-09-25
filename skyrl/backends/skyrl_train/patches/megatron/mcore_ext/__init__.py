@@ -1,5 +1,8 @@
 """Megatron-Core extensions that SkyRL carries ahead of the pinned ``megatron-core``.
 
+Removal plan (what retires each module, touchpoints outside this package, tests):
+``skyrl/backends/skyrl_train/patches/megatron/README.md``.
+
 Everything in this package is shaped for an upstream home in ``megatron.core``:
 
 - ``hyper_connection``: ``RMSNormInputHyperConnectionModule``, megatron-core's mHC module with
