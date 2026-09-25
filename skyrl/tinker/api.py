@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from skyrl.env_vars import SKYRL_HTTP_CONNECTION_LIMIT
 from skyrl.tinker import types
 from skyrl.tinker.config import (
     EngineConfig,
@@ -92,6 +93,11 @@ _MISSING_PROFILER_ROW = "profiler control row is missing; the server did not ini
 PROFILER_START_ACK_TIMEOUT_SEC = 30.0
 PROFILER_STOP_ACK_TIMEOUT_SEC = 600.0
 
+# Idle keep-alive for client connections. Under a burst of completions the
+# event loop can be busy for many seconds; with uvicorn's 5s default every
+# idle SDK connection is closed during such a burst and all clients reconnect
+# at once, overflowing the accept backlog. Hold connections across bursts.
+HTTP_KEEP_ALIVE_TIMEOUT_SECONDS = 75
 
 # How often poll_futures looks for newly finished requests. A single query
 # covers every waiter, so this can stay tight without the load scaling up with
@@ -344,15 +350,19 @@ async def lifespan(app: FastAPI):
     # SkyRL-Train default is colocate_all=True; only opt into forwarding
     # when the operator explicitly sets it to False.
     is_colocated = bool(backend_cfg.get("trainer.placement.colocate_all", True))
+    store_ttls = dict(
+        retrieved_ttl_sec=app.state.engine_config.external_future_retrieved_ttl_sec,
+        completed_ttl_sec=app.state.engine_config.external_future_completed_ttl_sec,
+    )
     if app.state.engine_config.external_inference_url:
-        app.state.external_future_store = ExternalFutureStore()
+        app.state.external_future_store = ExternalFutureStore(**store_ttls)
         await app.state.external_future_store.start()
         app.state.external_inference_client = ExternalInferenceClient(
             app.state.engine_config, app.state.db_engine, app.state.external_future_store
         )
         logger.info(f"External engine configured: {app.state.engine_config.external_inference_url}")
     elif backend_name in ("megatron", "fsdp") and not is_colocated:
-        app.state.external_future_store = ExternalFutureStore()
+        app.state.external_future_store = ExternalFutureStore(**store_ttls)
         await app.state.external_future_store.start()
         app.state.external_inference_client = SkyRLTrainInferenceForwardingClient(
             app.state.engine_config, app.state.db_engine, app.state.external_future_store
@@ -1765,18 +1775,31 @@ async def retrieve_future(request: RetrieveFutureRequest, req: Request):
         # The SDK only accepts sample/forward/forward_backward results in proto
         # wire format. Errors and other result types stay JSON.
         if types.RequestType(request_type) in PROTO_SERIALIZABLE_REQUEST_TYPES:
-            async with req.app.state.proto_serialization_lock:
-                content = await asyncio.to_thread(
-                    _serialize_proto_result,
-                    types.RequestType(request_type),
-                    result_data,
-                )
+            # Forwarded samples are stored as proto already and go out as-is;
+            # anything stored as JSON is encoded once here and cached.
+            content = external_future_store.proto_result(request_id) if found_in_memory else None
+            if content is None:
+                async with req.app.state.proto_serialization_lock:
+                    content = external_future_store.proto_result(request_id) if found_in_memory else None
+                    if content is None:
+                        content = await asyncio.to_thread(
+                            _serialize_proto_result,
+                            types.RequestType(request_type),
+                            result_data,
+                        )
+                        if found_in_memory:
+                            external_future_store.cache_proto(request_id, content)
             response: Response = Response(content=content, media_type=PROTO_CONTENT_TYPE)
         else:
             response = raw_json_response(result_data)
         # Start the retry-grace clock now that the response is built and about to
-        # be sent, so a large result is never evicted mid-delivery.
-        if found_in_memory:
+        # be sent, so a large result is never evicted mid-delivery -- but only if
+        # this client is still there to receive it. The SDK abandons a poll after
+        # 45s and retries the same request_id; if the result lands after that,
+        # this handler wakes on a dead connection (uvicorn drops the send
+        # silently) and starting the short clock here would let the sweeper
+        # evict a result nobody received, turning the retry into a 404.
+        if found_in_memory and not await req.is_disconnected():
             external_future_store.mark_retrieved(request_id)
         return response
 
@@ -2109,4 +2132,13 @@ if __name__ == "__main__":
     # Store config in app.state so lifespan can access it
     app.state.engine_config = engine_config
 
-    uvicorn.run(app, host=args.host, port=args.port, log_config=get_uvicorn_log_config())
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_config=get_uvicorn_log_config(),
+        # Pending connections queue in the kernel while the loop is busy instead
+        # of being refused (effective value is capped by net.core.somaxconn).
+        backlog=SKYRL_HTTP_CONNECTION_LIMIT,
+        timeout_keep_alive=HTTP_KEEP_ALIVE_TIMEOUT_SECONDS,
+    )
