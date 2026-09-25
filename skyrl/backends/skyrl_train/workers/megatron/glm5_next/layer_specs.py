@@ -25,6 +25,7 @@ from megatron.core.transformer.transformer_layer import (
 )
 
 from skyrl.backends.skyrl_train.workers.megatron.glm5_next.dsa import (
+    Glm5NextDSAIndexer,
     Glm5NextDSAttention,
 )
 from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.kda import (
@@ -75,6 +76,8 @@ def build_glm5_next_layer_spec(config: TransformerConfig, vp_stage: Optional[int
     kda_spec = get_kda_module_spec(backend)
     dsa_spec = copy.deepcopy(get_dsa_module_spec_for_backend(config, backend))
     dsa_spec.submodules.core_attention.module = Glm5NextDSAttention
+    # k-pool indexer (NVIDIA/Megatron-LM#7522) is not in the pinned megatron-core.
+    dsa_spec.submodules.core_attention.submodules.indexer = Glm5NextDSAIndexer
 
     moe_mlp = get_moe_module_spec_for_backend(
         backend,

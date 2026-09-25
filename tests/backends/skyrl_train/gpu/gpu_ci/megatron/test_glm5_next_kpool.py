@@ -1,10 +1,9 @@
 """Contract test for megatron-core's DSA k-pool *selection*, on GPU.
 
-Exercises the pinned megatron-core (NVIDIA/Megatron-LM#7054 / #7522), not SkyRL code:
-``fused_qk_topk_kpool`` and the varlen masking helpers come from ``megatron.core``. SkyRL
-pins megatron-core to a fork, and GLM-5.3-Flash trains on sequences past
-``dsa_indexer_topk``, so a regression in the selection kernel would otherwise only surface
-as a quality drop in a training run.
+Exercises SkyRL's vendored ``fused_qk_topk_kpool`` (``mcore_ext/dsa_kpool.py``, from
+NVIDIA/Megatron-LM#7522), which the pinned megatron-core does not have. GLM-5.3-Flash trains
+on sequences past ``dsa_indexer_topk``, so a regression in the selection kernel would
+otherwise only surface as a quality drop in a training run.
 
 Below ``index_topk`` every pool is selectable, so the pooled selection must reduce exactly to
 dense causal attention -- the regime SkyRL's ``glm5_next/dsa.py`` guard relies on when it
@@ -51,11 +50,12 @@ def test_kpool_selects_every_visible_token_below_topk(seqlen):
     ships (``index_kpool=4``, ``index_head_dim=128``), so a change to either constant in the
     checkpoint surfaces here rather than in a training run.
     """
-    from megatron.core.transformer.experimental_attention_variant.dsa import (
-        fused_qk_topk_kpool,
-    )
     from megatron.core.transformer.experimental_attention_variant.dsa_masking import (
         generate_varlen_mask_params_for_positions,
+    )
+
+    from skyrl.backends.skyrl_train.workers.megatron.mcore_ext.dsa_kpool import (
+        fused_qk_topk_kpool,
     )
 
     device = "cuda"

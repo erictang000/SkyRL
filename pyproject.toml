@@ -489,19 +489,17 @@ harbor = { git = "https://github.com/laude-institute/harbor", rev = "3de07a0e01f
 # (kept at this rev for the k-pool experiment: bridge main needs hydra-core>=1.3.4 and SkyRL
 # pins ==1.3.2, so only megatron-core moves, isolating the variable under test.)
 megatron-bridge = {git = "https://github.com/NVIDIA-NeMo/Megatron-Bridge", rev = "8e5f0e13b7dff8a951c6676e2f7b4a1853a34845", marker = "sys_platform == 'linux'"}
-# megatron-core points at the head of NVIDIA/Megatron-LM#7054 ("GLM5.3 Flash (KDA + mHC + KPool
-# DSA) support + FP8", HollowMan6) rather than a rev megatron-bridge validates. That PR carries
-# the DSA k-pool indexer, which is what lets Megatron train on sequences longer than
-# dsa_indexer_topk (2048 for GLM-5.3-Flash); without it `glm5_next/dsa.py` refuses them rather
-# than attending to a different subset than the real model. It also supersedes our #7427, since
-# it carries the same KDA and mHC work.
+# megatron-core tracks upstream NVIDIA/Megatron-LM, the same rev as main. GLM-5.3-Flash needs
+# four things that are still open PRs against it; all four are carried in-tree rather than by
+# pinning a fork, so this stays on a rev megatron-bridge validates:
 #
-# Compatibility: megatron-bridge main pins `3rdparty/Megatron-LM` at
-# f6c33bde4cdc10805ee7157db746d47b758f5f02, and that commit is an ANCESTOR of this PR head
-# (ahead 60, behind 0), so the head is a strict superset of what Bridge's CI validated. Bridge
-# itself stays on 8e5f0e13 because its main needs hydra-core>=1.3.4 while SkyRL pins ==1.3.2.
-# Move back to an NVIDIA/Megatron-LM rev once #7054 lands upstream.
-megatron-core = {git = "https://github.com/HollowMan6/Megatron-LM", rev = "beb4be3a8d63d38cb9ef61bb0078f500bc10a5b0", marker = "sys_platform == 'linux'"}
+#   #7054 KDA           -> workers/megatron/mcore_ext/kda.py
+#   #7521 mHC           -> workers/megatron/mcore_ext/{hyper_connection,mhc_transformer_layer}.py
+#   #7522 KPool DSA     -> workers/megatron/mcore_ext/dsa_kpool.py + glm5_next/dsa.py
+#   #7523 FP8 wgrad     -> not needed; this model runs bf16 end to end
+#
+# Each vendored module names its PR and says to delete it once the pin includes it.
+megatron-core = {git = "https://github.com/NVIDIA/Megatron-LM", rev = "b3393bbb0b223223ee3f8becf95f408d231d0036", marker = "sys_platform == 'linux'"}
 # vLLM 0.30.0 (from PyPI) supersedes the pinned 98ed0856f dev wheel this branch used for
 # GLM-5.3-Flash (vllm-project/vllm#53906, "[Model] add GLM-5.3-Flash support"): that commit is
 # 0.28.1rc1.dev359, so #53906 is contained in 0.30.0. 0.30.0 also carries the R3 fix
