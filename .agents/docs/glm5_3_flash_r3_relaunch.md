@@ -114,19 +114,95 @@ reward average is flat or falling. That never happened through step 25.
 
 ## What changed on this branch since the run
 
-Merged `origin/main` (commit `b8784aad`), which brings:
+The 0.072 -> 0.561 results above were produced with **megatron-core pinned to a personal fork**
+(HollowMan6) and **vLLM 0.28.1rc1.dev359**. Both are gone. Anything you run now is on a
+different dependency stack than the one that produced those numbers, which is why the
+validation gates below exist.
 
-- **#2269** -- LoRA adapters on `/skyrl/v1/generate`. Previously that endpoint 400'd on
-  every request whenever vLLM ran with `enable_lora`, which is what blocked R3 for
-  Megatron + LoRA with `merge_lora=false`. This is the change that makes the relaunch
-  possible.
-- **#2271** -- vLLM 0.30, which carries the R3 fix (vllm#53240).
+- **Merged `origin/main`** (`b8784aad`): #2269 (LoRA adapters on `/skyrl/v1/generate` -- R3 +
+  LoRA works) and #2271 (vLLM 0.30, carrying the R3 fix vllm#53240). The
+  `[tool.uv.sources]` pin on the `98ed0856f` dev wheel was dropped: it was 0.28.1rc1.dev359,
+  pinned only for GLM-5.3-Flash support (vllm#53906), which 0.30.0 contains.
+- **megatron-core back on the NVIDIA pin** (`7e76219a`): `NVIDIA/Megatron-LM @ b3393bbb`, the
+  same rev as main, instead of `HollowMan6/Megatron-LM @ beb4be3a8`. All four of GLM-5.3-Flash's
+  open upstream PRs are carried in-tree instead:
 
-The branch's `[tool.uv.sources]` pin on the `98ed0856f` dev wheel was **removed**: it was
-`0.28.1rc1.dev359`, pinned only for GLM-5.3-Flash support (vllm#53906), and 0.30.0
-contains that. Keeping both would have made the resolution contradictory.
+  | PR | Carried as |
+  | --- | --- |
+  | #7054 KDA | `mcore_ext/kda.py` |
+  | #7521 mHC | `mcore_ext/{hyper_connection,mhc_transformer_layer}.py` |
+  | #7522 KPool DSA | `mcore_ext/dsa_kpool.py` + `Glm5NextDSAIndexer` in `glm5_next/dsa.py` |
+  | #7523 FP8 wgrad | not needed -- this model is bf16 end to end |
 
-Also added: `SKYRL_VLLM_START_PORT` (commit `12ed2f2e`) -- see "Port 8000" below.
+  Only three fork-only config fields are referenced anywhere in our code
+  (`dsa_indexer_kpool`, `dsa_indexer_kpool_always_select_tail`, `mhc_norm_eps_inside_sqrt`) and
+  the provider declares all three, so no `TransformerConfig` patching is involved.
+- **FA4 cute-import patch deleted** (`b5bd1825`): superseded by the combined FA2+FA4 wheels
+  from #2132; it was a no-op on a correctly-pinned tree.
+- `SKYRL_VLLM_START_PORT` added -- see "Port 8000" below.
+
+## Validation gates before trusting a run
+
+The k-pool indexer is the risky part. `mcore_ext/dsa_kpool.py` is copied verbatim from #7522,
+but `Glm5NextDSAIndexer` is a **hand-merge** onto the pinned `DSAIndexer`, because #7522
+interleaves k-pool with NoPE and FP8 changes the pin does not have. A wrong selection does not
+raise -- it silently attends to a different token subset than the real model. Work these gates
+in order.
+
+### Gate 1 -- kernels (no GPU, already passing)
+
+```bash
+uv run --isolated --extra dev --extra megatron pytest \
+    tests/backends/skyrl_train/models/test_glm5_next_kpool_math.py
+```
+
+Compares the vendored `_kpool_compress_keys` against an independent transcription of HF's
+`Glm5NextTextIndexer.compress_keys`. **3 passed** on the NVIDIA pin as of `7e76219a`.
+
+### Gate 2 -- selection kernel and wiring (4xH100)
+
+```bash
+uv run --isolated --extra dev --extra megatron -- pytest -s -m h100 \
+    tests/backends/skyrl_train/gpu/gpu_ci/megatron/
+```
+
+Covers `fused_qk_topk_kpool` (that below `index_topk` the pooled selection reduces exactly to
+dense causal attention, and above it stays causal, respects the budget and keeps the query's
+tail pool), the KDA/mHC modules against HF, and the 4-layer LoRA parity row. **This is the gate
+that has never been run against the vendored k-pool.**
+
+### Gate 3 -- a few steps without R3, compared against the pre-migration run
+
+Run the sync recipe unchanged (R3 off) and check these against the numbers the fork-pinned run
+produced. **The train/infer logprob diff is the sensitive one**: if the vendored k-pool selects
+a different subset than the real model, the trainer and vLLM disagree about which tokens were
+attended to, and the diff rises well above its baseline. It is a far better k-pool probe than
+reward, which is too noisy to read at this range.
+
+| check | expected (fork-pinned run) | reads as broken if |
+| --- | --- | --- |
+| `minibatch_rollout_logprobs_abs_diff_mean`, step 1 | **0.0201** | much above ~0.03 |
+| same, steps 1-5 | 0.020 / 0.021 / 0.023 / 0.030 / 0.032 | climbing far faster |
+| `policy_entropy`, step 1 | 0.218 | far off |
+| step-0 AIME `avg_score` | 0.072 (+/- 0.02) | outside that band |
+| `avg_response_length`, step 1 | ~3820 | far off |
+| step time | ~2400-3000s | far off |
+| `seq_len=` in worker logs | 8654 seen | capped near 2048 |
+| `NotImplementedError` from `glm5_next/dsa.py` | never | raised at all |
+
+Per-step reward is **not** a useful check here -- it ranged 0.070-0.556 over the first ten
+steps. Use the diff, entropy and eval instead.
+
+Two failure signatures worth naming:
+
+- **`NotImplementedError: ... needs the k-pool indexer`** means `dsa_indexer_kpool` came through
+  as 1, so the pooled path never engaged and the guard caught it. Check the bridge read
+  `index_kpool` from the HF config (it is 4 for this checkpoint).
+- **Training runs, diff much higher than 0.02** is the dangerous one: k-pool engaged but selects
+  the wrong tokens. Nothing raises. This is what gate 3 exists to catch.
+
+Only after gates 2 and 3 look right is an R3 run worth the GPU time -- otherwise a bad number
+cannot be attributed between R3 and the k-pool vendoring.
 
 ## Relaunching on a fresh set of nodes
 
@@ -184,10 +260,13 @@ The last good checkpoint is **step 20**:
     global_step_20/   34G      <- latest_ckpt_global_step.txt = 20
 ```
 
-Resuming needs `trainer.resume_mode=latest` (the recipe ships `null`). But note the
-results above were produced **without** R3; resuming from step 20 with R3 on mixes two
-regimes in one curve. For a clean R3 datapoint, start from step 0 and compare against the
-0.072 / 0.344 / 0.561 eval curve here.
+Resuming needs `trainer.resume_mode=latest` (the recipe ships `null`).
+
+**Prefer starting from step 0.** That checkpoint was produced on the old stack -- forked
+megatron-core and vLLM 0.28.1rc1.dev359 -- so resuming from it now changes the dependencies
+mid-curve, on top of whatever else you are varying. Starting clean also gives a step-0 eval to
+compare against 0.072, which is one of the gate-3 checks. Resuming from step 20 with R3 on
+would confound three things at once: R3, the k-pool vendoring, and the vLLM bump.
 
 ### 4. Set these two env vars
 
@@ -253,20 +332,21 @@ Check k8s, not Ray.
 
 ## Open items
 
-1. **The GLM5Next LoRA packing patch is unvalidated against vLLM 0.30.**
-   `skyrl/backends/skyrl_train/patches/vllm/patch_glm5next_lora_packing.py` backports
-   vllm#56327 (`packed_modules_mapping` for Glm5Next, `replicated_shard_ids` in merged
-   LoRA-B loading, a `.contiguous()` guard in `PunicaWrapperGPU.add_shrink`) plus the MLA
-   `kv_b_proj` decode fix. If 0.30 carries #56327 natively the backport is redundant and
-   may double-apply. **Check before the next GPU run** -- it is an import-and-inspect, not
-   a full run.
-2. **CPU test suite not yet re-validated post-merge.** `tests/backends/skyrl_train/conftest.py`
-   calls bare `ray.init()`, so the suite attaches to any live Ray cluster on the box and its
-   workers die there. Run it with `RAY_ADDRESS=local` to force an isolated instance, or on a
-   node with no training cluster up.
-3. `f_b_proj` / `g_b_proj` remain excluded from both target lists (contiguity assert). The
+1. **`Glm5NextDSAIndexer` has not been run on a GPU.** See gates 2 and 3 above. This is the
+   one that matters.
+2. `f_b_proj` / `g_b_proj` remain excluded from both target lists (contiguity assert). The
    `add_shrink` guard may make them safe to re-add -- untested. The working multi-node
    reference config does list them.
+3. The full CPU suite has not been run end to end since the `main` merge. Note it needs a
+   backend extra (`--extra skyrl-train` or `--extra fsdp`) or collection fails on `ray`, and
+   `RAY_ADDRESS=local` on a box with a live training cluster. See `.agents/docs/testing.md`.
+
+Resolved since the run:
+
+- *Is `patch_glm5next_lora_packing.py` redundant on vLLM 0.30?* No -- **vllm#56327 is still
+  open**, so no vLLM release contains it. The backport stays.
+- *Is the FA4 cute-import patch needed?* No -- superseded by the combined FA2+FA4 wheels
+  (#2132), verified a no-op, deleted in `b5bd1825`.
 
 ## wandb
 
