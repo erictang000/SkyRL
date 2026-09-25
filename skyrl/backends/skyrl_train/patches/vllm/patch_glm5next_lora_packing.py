@@ -151,16 +151,14 @@ def apply_glm5next_lora_packing_patch() -> None:
 #
 # TODO: remove together with the rest of this module once vllm#56327 lands in the pinned vLLM.
 
-# Inserted verbatim-in-spirit from the PR; the call site differs because our pinned vLLM
-# builds `mqa_ql_nope` as (N, B, L) and transposes afterwards, where the PR's base allocates
-# (B, N, L) up front.
-_FORWARD_IMPL_ANCHOR = """                # Convert from (N, B, L) to (B, N, L)
-                mqa_ql_nope = mqa_ql_nope.transpose(0, 1)
+# Inserted verbatim-in-spirit from the PR. vLLM 0.30 ends the query-projection branch chain
+# with the unpadded bmm writing straight into a (B, N, L) buffer; every branch leaves
+# `mqa_ql_nope` as (B, N, L) by the fp8-quant check, so the delta is added there.
+_FORWARD_IMPL_ANCHOR = """                    torch.bmm(mqa_q_nope, W_UK_T, out=mqa_ql_nope.transpose(0, 1))
 
             if fp8_attention and self.impl.supports_quant_query_input:"""
 
-_FORWARD_IMPL_REPLACEMENT = """                # Convert from (N, B, L) to (B, N, L)
-                mqa_ql_nope = mqa_ql_nope.transpose(0, 1)
+_FORWARD_IMPL_REPLACEMENT = """                    torch.bmm(mqa_q_nope, W_UK_T, out=mqa_ql_nope.transpose(0, 1))
 
             self._apply_lora_projection(mqa_q_nope, mqa_ql_nope, is_query=True)
 
