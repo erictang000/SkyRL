@@ -1,5 +1,5 @@
 """vLLM LoRA support for GLM-5.3-Flash (``merge_lora=false``), mostly a backport of
-vllm-project/vllm#56327 (open upstream; not in vLLM 0.30).
+vllm-project/vllm#56327 and #56718 (both open upstream; not in vLLM 0.30).
 
 Applied from ``new_inference_worker_wrap`` so it lands in every worker before model init:
 
@@ -17,11 +17,11 @@ Applied from ``new_inference_worker_wrap`` so it lands in every worker before mo
    re-adding them with this guard in place is untested.
 4. The ``kv_b_proj`` adapter on MLA's absorbed decode path (#56327 commit ed6aaff3). Decode never
    runs the ``kv_b_proj`` module, so without this the adapter is dropped for every decode token.
-
-Known gap, not patched: MLA *prefill* also skips the ``kv_b_proj`` adapter. The attention impl
-keeps a plain reference to the original ``kv_b_proj`` that LoRA wrapping never replaces, and
-sparse MLA prefills up to ``index_topk`` tokens (and prefix-cached context chunks) up-project
-K/V through it. vllm-project/vllm#56718 fixes this upstream.
+5. The ``kv_b_proj`` adapter on MLA's MHA *prefill* path (backport of vllm-project/vllm#56718).
+   The attention impl keeps a plain reference to the original ``kv_b_proj`` that LoRA wrapping
+   never replaces, and sparse MLA prefills up to ``index_topk`` tokens (and prefix-cached context
+   chunks) up-project K/V through it, so every prompt longer than ``reorder_batch_threshold``
+   (128 tokens at TP4/TP8) was prefilled without the adapter.
 
 TODO: remove once #56327 (and #56718) land in the pinned vLLM.
 """
@@ -116,7 +116,7 @@ def _patch_lora_shrink_contiguity() -> bool:
 
 
 def apply_glm5next_lora_packing_patch() -> None:
-    """Apply all four pieces once per process; a build without GLM-5.3-Flash is a no-op."""
+    """Apply all five pieces once per process; a build without GLM-5.3-Flash is a no-op."""
     global _PATCHED
     if _PATCHED:
         return
@@ -125,6 +125,7 @@ def apply_glm5next_lora_packing_patch() -> None:
         _patch_replicated_shard_ids()
         _patch_lora_shrink_contiguity()
         _patch_mla_kv_b_proj_lora()
+        _patch_mla_prefill_kv_b_proj_lora()
     except (ModuleNotFoundError, ImportError) as e:
         logger.info(f"Skipping GLM-5.3-Flash LoRA packing patch: {e}")
         return
@@ -133,7 +134,7 @@ def apply_glm5next_lora_packing_patch() -> None:
         "Patched vLLM for GLM-5.3-Flash LoRA (vllm#56327): packed_modules_mapping on "
         f"{patched_classes or '<none>'}, replicated_shard_ids honored in merged LoRA-B "
         "loading, non-contiguous LoRA shrink inputs accepted, kv_b_proj adapter applied "
-        "to the absorbed MLA projections"
+        "to the absorbed MLA projections and to MHA prefill (vllm#56718)"
     )
 
 
@@ -256,3 +257,141 @@ def _patch_mla_kv_b_proj_lora() -> bool:
 
     MLAAttention._skyrl_kv_b_proj_lora_patched = True
     return True
+
+
+# --------------------------------------------------------------------------------------
+# vllm#56718 ("Apply kv_b_proj LoRA in MLA prefill")
+# --------------------------------------------------------------------------------------
+#
+# `MLACommonBaseImpl.__init__` stores `self.kv_b_proj = kv_b_proj` before LoRA wraps the layer's
+# `kv_b_proj`, so the impl's MHA prefill (`forward_mha`, dense and sparse) and its context-chunk
+# re-projection (`_compute_prefill_context`, `_context_parallel_compute_prefill_context`,
+# sparse `_compute_context_mha` -> `_project_kv`) call the bare base layer.
+#
+# Upstream threads `kv_b_proj_lora` / `token_lora_mapping` through all of those signatures. Rather
+# than splice five method bodies, we swap `impl.kv_b_proj` for a proxy only for the duration of
+# `impl.forward_mha`. Inside it the impl calls `kv_b_proj` in a fixed order -- once for the new
+# prefill tokens, then once per `chunked_context.chunks` entry -- and every upstream hunk maps a
+# call's rows the same way: `per_request[chunk.request_slice][chunk.token_to_seq[:rows]]`. The
+# proxy consumes one queued mapping per call and asserts the row count, so a vLLM bump that
+# changes the call pattern fails loudly instead of misattributing adapters.
+#
+# TODO: remove once vllm#56718 lands in the pinned vLLM.
+
+
+def _apply_mla_kv_b_lora_linear(layer, input_, output, token_lora_mapping) -> None:
+    """``ColumnParallelLinearWithLoRA.apply_mla_kv_b_lora_linear`` from vllm#56718, verbatim.
+
+    Explicit per-row slots rather than the punica mapping, because context-chunk rows are cached
+    tokens that are not in the current batch's token order.
+    """
+    import torch
+    from vllm.distributed import tensor_model_parallel_all_gather
+
+    lora_a = layer.lora_a_stacked[0]
+    if layer.lora_config.fully_sharded_loras and layer.tp_size > 1:
+        lora_a = tensor_model_parallel_all_gather(lora_a, dim=2)
+    lora_b = layer.lora_b_stacked[0]
+    input_ = input_.reshape(input_.shape[0], -1)
+    flat_output = output.view(input_.shape[0], -1)
+    for slot in range(lora_a.shape[0]):
+        delta = input_.float() @ lora_a[slot, 0].float().T
+        delta = (delta @ lora_b[slot, 0].float().T).to(output.dtype)
+        flat_output.add_(torch.where((token_lora_mapping == slot)[:, None], delta, 0))
+
+
+class _PrefillKvBProjWithLoRA:
+    """Stands in for ``impl.kv_b_proj`` during one ``forward_mha`` call.
+
+    ``mappings`` holds one ``(per_row, index)`` entry per expected ``kv_b_proj`` call; the call's
+    slots are ``per_row[index[:rows]]`` (or ``per_row[:rows]`` when ``index`` is None).
+    Attribute reads (``weight``, ``params_dtype``, ``quant_method``) go to the base layer.
+    """
+
+    def __init__(self, base, lora_layer, mappings):
+        self._base = base
+        self._lora_layer = lora_layer
+        self._mappings = list(mappings)
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
+
+    def __call__(self, x):
+        out = self._base(x)
+        if not self._mappings:
+            raise RuntimeError(
+                "GLM-5.3-Flash LoRA patch: MLA forward_mha called kv_b_proj more times than "
+                "its prefill metadata accounts for. The pinned vLLM has moved; re-derive the "
+                "prefill patch against vllm#56718."
+            )
+        per_row, index = self._mappings.pop(0)
+        rows = x.shape[0]
+        mapping = per_row[:rows] if index is None else per_row[index[:rows].long()]
+        if mapping.shape[0] != rows:
+            raise RuntimeError(
+                f"GLM-5.3-Flash LoRA patch: kv_b_proj got {rows} rows but the LoRA mapping "
+                f"covers {mapping.shape[0]}; re-derive the prefill patch against vllm#56718."
+            )
+        _apply_mla_kv_b_lora_linear(self._lora_layer, x, out[0], mapping)
+        return out
+
+
+def _prefill_lora_mappings(lora_layer, attn_metadata, num_new_tokens: int):
+    """The ``(per_row, index)`` queue for one ``forward_mha`` call, in kv_b_proj call order."""
+    num_mqa_tokens = attn_metadata.num_decode_tokens
+    token_mapping = lora_layer.punica_wrapper.token_lora_indices[num_mqa_tokens : num_mqa_tokens + num_new_tokens]
+    mappings = [(token_mapping, None)]
+    prefill = attn_metadata.prefill
+    chunked_context = getattr(prefill, "chunked_context", None)
+    if chunked_context is not None:
+        per_request = token_mapping[prefill.query_start_loc[:-1].long()]
+        for chunk in chunked_context.chunks:
+            token_to_seq = chunk.token_to_seq
+            # The DCP gather uses the padded local layout, and vllm#56718 indexes by it there.
+            if getattr(chunk, "padded_local_token_to_seq", None) is not None:
+                token_to_seq = chunk.padded_local_token_to_seq
+            mappings.append((per_request[chunk.request_slice], token_to_seq))
+    return mappings
+
+
+def _patch_mla_prefill_kv_b_proj_lora() -> bool:
+    """Route MLA's MHA prefill through the ``kv_b_proj`` LoRA wrapper."""
+    from vllm.lora.layers.column_parallel_linear import ColumnParallelLinearWithLoRA
+    from vllm.model_executor.layers.attention.mla_attention import MLAAttention
+
+    if getattr(MLAAttention, "_skyrl_prefill_kv_b_proj_lora_patched", False):
+        return True
+
+    # LoRA wraps `kv_b_proj` after model init, so hook the impl lazily on the first forward.
+    original_forward_impl = MLAAttention.forward_impl
+
+    def forward_impl(self, *args, **kwargs):
+        if not getattr(self, "_skyrl_prefill_lora_hooked", False):
+            self._skyrl_prefill_lora_hooked = True
+            if isinstance(self.kv_b_proj, ColumnParallelLinearWithLoRA):
+                _hook_impl_forward_mha(self.impl, self.kv_b_proj)
+        return original_forward_impl(self, *args, **kwargs)
+
+    MLAAttention.forward_impl = forward_impl
+    MLAAttention._skyrl_prefill_kv_b_proj_lora_patched = True
+    return True
+
+
+def _hook_impl_forward_mha(impl, lora_layer) -> None:
+    # Instance attribute, so the sparse impl's `super().forward_mha(...)` still resolves to the
+    # class method and the proxy is installed exactly once per call.
+    original_forward_mha = impl.forward_mha
+
+    def forward_mha(q, kv_c_normed, k_pe, kv_c_and_k_pe_cache, attn_metadata, k_scale, *args, **kwargs):
+        base = impl.kv_b_proj
+        impl.kv_b_proj = _PrefillKvBProjWithLoRA(
+            base, lora_layer, _prefill_lora_mappings(lora_layer, attn_metadata, kv_c_normed.shape[0])
+        )
+        try:
+            return original_forward_mha(
+                q, kv_c_normed, k_pe, kv_c_and_k_pe_cache, attn_metadata, k_scale, *args, **kwargs
+            )
+        finally:
+            impl.kv_b_proj = base
+
+    impl.forward_mha = forward_mha
