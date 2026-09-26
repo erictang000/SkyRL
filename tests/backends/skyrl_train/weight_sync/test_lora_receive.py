@@ -170,12 +170,7 @@ class TestArmedRound:
 
 
 class TestUnarmedRound:
-    def test_is_an_ordinary_base_model_update(self, monkeypatch):
-        # No drafter in this process, so the reload proxy is not installed.
-        monkeypatch.setattr(
-            "skyrl.backends.skyrl_train.patches.vllm.patch_model_runner_registry.current_model_runner",
-            lambda: None,
-        )
+    def test_is_an_ordinary_base_model_update(self):
         engine = _Engine([("w", torch.ones(2))])
         _run_round(engine)
         assert engine.calls == ["start", "receive", "finish"]
