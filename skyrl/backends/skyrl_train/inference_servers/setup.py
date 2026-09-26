@@ -31,9 +31,9 @@ from .utils import (
 )
 from .vllm_router import VLLMRouter
 
-# Base port for the vLLM server group. Overridable because a colocated k8s
-# LoadBalancer can claim host port 8000 and silently hijack /wake_up (a
-# run died this way on 2026-09-22: the call 404'd from the other tenant's app).
+# Base port for the vLLM server group. Overridable because another service on the
+# host (e.g. a k8s LoadBalancer) can claim port 8000 and silently hijack /wake_up,
+# which then 404s from the other app.
 VLLM_START_PORT = int(os.environ.get("SKYRL_VLLM_START_PORT", 8000))
 # NOTE: We use the same base port for NIXL and Mooncake since they will not be
 # used together

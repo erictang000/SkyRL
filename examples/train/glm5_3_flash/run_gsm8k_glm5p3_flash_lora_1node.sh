@@ -55,9 +55,16 @@ LR=1e-5             # LoRA: higher LR for adapters than the 1e-6 used for full-F
 # mcore_ext/kda.py (KDA), plus the MoE/dense MLP linears.
 LORA_RANK=32
 LORA_ALPHA=32
-# merge_lora=true keeps this smoke run on the simple path (vLLM runs without LoRA). false also
-# works -- naming `experts` in lora_target_modules is the whole fix -- and is what the DAPO
-# recipe uses; see .agents/docs/glm5_3_flash_lora.md.
+# merge_lora=true keeps this smoke run on the simple path (vLLM runs without LoRA). false syncs
+# only the adapter (a few GiB instead of the ~599 GiB merged model) and is what the DAPO recipe
+# uses; it needs `experts` in vLLM's lora_target_modules, because supplying that list at all
+# switches vLLM's MoE LoRA wrapping from unrestricted to filtered, and an unwrapped MoE layer
+# fails vLLM's profile run with "AssertionError: LoRA context must be set". MERGE_LORA is a
+# plain assignment on purpose: VLLM_LORA_TARGET_MODULES gating below keys off this shell
+# variable, so flip it here rather than with a CLI override. Leave vLLM's
+# enable_moe_shared_loras at its default (False): the bridge exports per-expert adapters, which
+# is the layout vLLM's default MoE LoRA path consumes. language_model_only only zeroes the
+# multimodal limits, so vLLM still builds Glm5NextForConditionalGeneration (SupportsLoRA).
 MERGE_LORA=true
 # f_b_proj / g_b_proj are deliberately absent: vLLM's KDA runs one fused GEMM (in_proj_qkvbfg_a)
 # and .split()s it, so f_a/g_a are non-contiguous views and a LoRA-wrapped f_b_proj(f_a) trips
@@ -81,8 +88,8 @@ OPTIMIZER_OFFLOAD_FRACTION=1.0
 
 # Rollout router replay (R3): vLLM returns the experts it routed to and Megatron replays that
 # routing, keeping rollout/train logprobs from drifting on a 288-expert MoE. Off for this smoke
-# run; both knobs move together (validate_cfg rejects replay without the other). R3 + LoRA needs
-# SkyRL #2269.
+# run; both knobs move together (validate_cfg rejects replay without the other). R3 works with
+# merge_lora=false.
 ENABLE_ROUTING_REPLAY=false
 
 # GLM-5.3-Flash is shipped as a VL checkpoint; SkyRL bridges only the language model, and the
@@ -159,9 +166,8 @@ uv run --isolated --extra megatron -m skyrl.train.entrypoints.main_base \
   `# recompute_modules -- but SkyRL's HyperConnectionTransformerLayer then rejects 'mhc' itself (it` \
   `# does not thread mcore's CheckpointWithoutOutputManager, so accepting it would silently drop the` \
   `# recompute), and also rejects 'layernorm'/'mlp'. That leaves core_attn + moe. Selective` \
-  `# additionally requires recompute_num_layers to be None. The` \
-  `# multi-node reference config's [gdn,mhc,moe] does not apply here either: 'gdn' is not a valid choice` \
-  `# in this version (it has gdp_qkv/gdn_norm_out/gdp_in_proj instead, each gated on an attention variant).` \
+  `# additionally requires recompute_num_layers to be None. 'gdn' is not a valid choice either` \
+  `# (megatron-core has gdp_qkv/gdn_norm_out/gdp_in_proj instead, each gated on an attention variant).` \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_granularity="selective" \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_modules=[core_attn,moe] \
   `# DEFAULT_TRANSFORMER_CONFIG_KWARGS injects uniform/1, which selective rejects -- null them.` \

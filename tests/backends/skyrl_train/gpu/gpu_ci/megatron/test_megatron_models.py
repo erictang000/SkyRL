@@ -13,7 +13,7 @@ The glm-5.3-flash-full row loads the real 45-layer GLM-5.3-Flash checkpoint (~31
 ~627 GiB in bf16) and needs a single 8xB300 node. It carries pytest.mark.b300 and is
 auto-skipped everywhere else; run it with:
 
-uv run --isolated --extra dev --extra megatron -- pytest -s -m b300 \
+uv run --isolated --extra dev --extra megatron pytest -s -m b300 \
     tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_megatron_models.py
 """
 
@@ -568,8 +568,8 @@ async def construct_training_input_from_generator_output(generator_output, token
         # GSM8K prompts are ~100-250 tokens, so the length has to come from generation.
         #
         # Thresholds: megatron_threshold (Megatron vs vLLM) is the real check here and is kept at
-        # the short row's 1e-1 -- measured 0.054 / 0.053 over two runs, i.e. the pooled path
-        # agrees with vLLM just as closely past the budget as the dense path does below it.
+        # the short row's 1e-1 -- about 0.053 with the k-pool top-k, the same as the dense path
+        # below the budget. Token-level selection past the budget (no k-pool) gives about 0.059.
         #
         # vllm_threshold is looser than the other rows because it compares vLLM before vs after
         # weight sync, and over a 2048-token greedy generation that measures divergence, not sync
@@ -600,7 +600,7 @@ async def construct_training_input_from_generator_output(generator_output, token
         # merge_lora=false: the adapter goes to vLLM as a PEFT directory and is served
         # under SKYRL_LORA_ADAPTER_NAME, instead of being merged into the base weights
         # and pushed as a full weight update. This is the row that covers the LoRA path
-        # end to end for GLM-5.3-Flash -- see .claude/docs/glm5_3_flash_lora.md.
+        # end to end for GLM-5.3-Flash.
         #
         # What only this row can catch:
         #   * vLLM booting with enable_lora=True on a glm5_next model at all: the MoE
@@ -620,11 +620,11 @@ async def construct_training_input_from_generator_output(generator_output, token
         # models and pass even if the adapter never reached the engine. With it, both
         # sides must reproduce the *same* non-zero delta.
         #
-        # Thresholds mirror the short non-LoRA row above. Measured on 4xH100 with the
-        # live adapter: Megatron vs vLLM 0.080 (0.065 with lora_B left at zero, and
-        # ~0.06 on the non-LoRA row -- so applying the adapter on both sides costs
-        # about 0.015), and 0.132 on the pre/post-sync vLLM comparison, where the two
-        # greedy generations diverge at a near-tie exactly as they do without LoRA.
+        # Thresholds mirror the short non-LoRA row above. With the live adapter Megatron vs
+        # vLLM is about 0.06, the same as the non-LoRA row (it was 0.080 before the kv_b_proj
+        # decode-path patch in patches/vllm/patch_glm5next_lora_packing.py), and about 0.14 on
+        # the pre/post-sync vLLM comparison, where the two greedy generations diverge at a
+        # near-tie exactly as they do without LoRA.
         # See LORA_B_PERTURB_STD for the std sweep behind those numbers.
         pytest.param(
             2,

@@ -1,22 +1,29 @@
-"""Backport of vllm-project/vllm#56327 (LoRA support for GLM-5.3-Flash).
+"""vLLM LoRA support for GLM-5.3-Flash (``merge_lora=false``), mostly a backport of
+vllm-project/vllm#56327 (open upstream; not in vLLM 0.30).
 
-Still open upstream as of vLLM 0.30, and both pieces are required for a Megatron-trained
-GLM-5.3-Flash LoRA adapter to load into the engine (``merge_lora=false``):
+Applied from ``new_inference_worker_wrap`` so it lands in every worker before model init:
 
-1. ``Glm5NextForConditionalGeneration.packed_modules_mapping``. Without it the class inherits
-   ``Glm4vForConditionalGeneration``'s mapping, which names none of this model's fused runtime
-   projections, so the adapter's separately-stored HF submodules have nothing to assemble onto.
+1. ``Glm5NextForConditionalGeneration.packed_modules_mapping`` (#56327). Without it the class
+   inherits ``Glm4vForConditionalGeneration``'s mapping, which names none of this model's fused
+   runtime projections, so the adapter's separately-stored HF submodules have nothing to
+   assemble onto.
+2. ``MergedColumnParallelLinearWithLoRA.output_ids`` honoring ``replicated_shard_ids`` (#56327).
+   KDA's ``in_proj_qkvbfg_a`` declares ``replicated_shard_ids=(4, 5)``: ``f_a_proj``/``g_a_proj``
+   are duplicated across TP ranks (``parallel_mode="duplicated"`` on the Megatron side), so their
+   LoRA-B must stay whole on every rank.
+3. A ``.contiguous()`` guard in ``PunicaWrapperGPU.add_shrink`` (not in #56327): KDA splits its
+   fused projection into non-contiguous views, which trips ``assert inputs.is_contiguous()`` in
+   the triton ``lora_shrink``. ``f_b_proj``/``g_b_proj`` are still left out of the target lists;
+   re-adding them with this guard in place is untested.
+4. The ``kv_b_proj`` adapter on MLA's absorbed decode path (#56327 commit ed6aaff3). Decode never
+   runs the ``kv_b_proj`` module, so without this the adapter is dropped for every decode token.
 
-2. ``MergedColumnParallelLinearWithLoRA.output_ids`` honoring ``replicated_shard_ids``. KDA's
-   ``in_proj_qkvbfg_a`` declares ``replicated_shard_ids=(4, 5)``: ``f_a_proj``/``g_a_proj`` are
-   duplicated across TP ranks rather than sharded (matching ``parallel_mode="duplicated"`` on
-   the Megatron side), so their LoRA-B must stay whole on every rank. The base class already
-   carries the attribute; only the LoRA layer's use of it is missing.
+Known gap, not patched: MLA *prefill* also skips the ``kv_b_proj`` adapter. The attention impl
+keeps a plain reference to the original ``kv_b_proj`` that LoRA wrapping never replaces, and
+sparse MLA prefills up to ``index_topk`` tokens (and prefix-cached context chunks) up-project
+K/V through it. vllm-project/vllm#56718 fixes this upstream.
 
-The PR does *not* fix the ``assert inputs.is_contiguous()`` that a LoRA-wrapped
-``f_b_proj``/``g_b_proj`` hits, so those two stay out of ``lora_target_modules``.
-
-TODO: remove once #56327 lands in the pinned vLLM.
+TODO: remove once #56327 (and #56718) land in the pinned vLLM.
 """
 
 import logging

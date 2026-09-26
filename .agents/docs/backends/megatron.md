@@ -11,9 +11,9 @@ SkyRL uses Megatron-Bridge for HF-to-Megatron model conversion. Installed from g
 - GLM-5.3-Flash (`glm5_next`): `skyrl/backends/skyrl_train/patches/megatron/glm5_next/` (provider, block
   spec, bridge; Megatron-Bridge-shaped) on top of `skyrl/backends/skyrl_train/patches/megatron/mcore_ext/`
   (Megatron-Core-shaped: `hyper_connection.py` backport of Megatron-LM main's mHC module,
-  `mhc_transformer_layer.py` mHC layer with MoE support, `kda.py` KDA linear attention). The DSA layers reuse
-  megatron-core's `DSAttention` (NoPE MLA, token-level indexer) and are exact for sequences up to `index_topk`
-  (2048) tokens; the k-pool indexer for longer sequences is not implemented and raises. Requires
+  `mhc_transformer_layer.py` mHC layer with MoE support, `kda.py` KDA linear attention, `dsa_kpool.py` k-pool
+  DSA indexer kernels). The DSA layers are megatron-core's `DSAttention` (NoPE MLA) with the k-pool top-k
+  swapped in by `glm5_next/dsa.py`. Removal plan when bumping megatron: `patches/megatron/README.md`. Requires
   `language_model_only=True` (VL checkpoint) and packed sequences (`remove_microbatch_padding=True`).
 
 ## Parallelism Strategies

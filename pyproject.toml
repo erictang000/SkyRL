@@ -502,10 +502,6 @@ megatron-bridge = {git = "https://github.com/NVIDIA-NeMo/Megatron-Bridge", rev =
 # fixes) are carried in skyrl/backends/skyrl_train/patches/megatron/. When bumping either pin,
 # follow skyrl/backends/skyrl_train/patches/megatron/README.md to retire whatever has landed.
 megatron-core = {git = "https://github.com/NVIDIA/Megatron-LM", rev = "d476c21be396dc666d2e04fa8c199c3851a1551f", marker = "sys_platform == 'linux'"}
-# vLLM 0.30.0 (from PyPI) supersedes the pinned 98ed0856f dev wheel this branch used for
-# GLM-5.3-Flash (vllm-project/vllm#53906, "[Model] add GLM-5.3-Flash support"): that commit is
-# 0.28.1rc1.dev359, so #53906 is contained in 0.30.0. 0.30.0 also carries the R3 fix
-# (vllm-project/vllm#53240) that R3 + LoRA needs. See SkyRL #2271.
 # NOTE (sumanthrh): This custom wheel of vllm-router includes a fix for /chat/completions endpoint: https://github.com/vllm-project/router/pull/162  on top of 0.1.14 as well as a new `sticky_least_loaded` policy: https://github.com/SumanthRH/router/tree/session-aware-lb
 vllm-router = [
     { url = "https://github.com/SumanthRH/router/releases/download/0.1.14.post1/vllm_router-0.1.14.post1-cp38-abi3-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },

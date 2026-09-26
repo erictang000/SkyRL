@@ -118,8 +118,8 @@ different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (20
   - `test_glm5_next_kpool_math.py` and `test_glm5_next_kpool.py`.
   - `test_logprobs_matching_roundtrip[glm-5.3-flash-4layer_h100_tp2_ep4_kpool_beyond_topk]`. This
     is the only test that runs sequences past `index_topk`. Its logprob diff must not get worse
-    than with the vendored code: 0.0527 on B200 at `f1361472`. Before the dispatch fix, token-level
-    selection gave 0.0591.
+    than with the vendored code (about 0.053; token-level selection, i.e. no k-pool, gives about
+    0.059).
 
 ### NVIDIA/Megatron-LM#7523: FP8 wgrad
 
@@ -173,16 +173,14 @@ Qwen3-VL ViT attention-backend propagation.
 
 ### `patch_mla_thd_v_pad.py`: currently not applied
 
-Skips megatron-core's MLA THD value pad on Blackwell. **Nothing calls it.** Its call in
-`megatron_worker.py` was dropped by a stale-base squash (#2142), together with
-`disable_fa4_if_requested()`. Don't delete it silently: decide whether Blackwell MLA + CP training
+Skips megatron-core's MLA THD value pad on Blackwell. **Nothing calls it:** the call was removed
+from `megatron_worker.py` together with `disable_fa4_if_requested()`. Don't delete it silently: decide whether Blackwell MLA + CP training
 still needs it. If yes, re-wire the call. If no, delete the module and this entry.
 
 ## Verification
 
-GPU tests need `NCCL_NET=IB` on clusters whose login profile sets the gIB plugin, and
-`RAY_ADDRESS=local` if a training cluster is up on the box. Don't put `--` after `uv run`: it
-breaks Ray's uv worker hook.
+Use `RAY_ADDRESS=local` if a Ray cluster is already up on the box. Don't put `--` after
+`uv run`: it breaks Ray's uv worker hook.
 
 ```bash
 # CPU
@@ -196,7 +194,7 @@ uv run --isolated --extra dev --extra megatron pytest -s -v -m "h100 or not h100
   -k "kpool_selects or glm5_next_modules or glm-5.3"
 ```
 
-Reference values (B200, `f1361472`, Megatron vs vLLM logprob diff; threshold 0.1):
+Expected Megatron-vs-vLLM logprob diffs (threshold 0.1):
 - `glm-5.3-flash-4layer_h100_tp2_ep4`: 0.0651
 - `..._kpool_beyond_topk`: 0.0527
 - `..._lora`: 0.0620

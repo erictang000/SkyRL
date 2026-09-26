@@ -7,9 +7,8 @@ set -x
 #   export WANDB_API_KEY=<key>
 #   bash examples/train/glm5_3_flash/run_dapo_glm5p3_flash_lora_sync_3node.sh
 #
-# These are the settings of the 2k/8k merge_lora=false run that took held-out AIME-2024
-# avg_score 0.072 -> 0.561 in 25 steps; see .agents/docs/glm5_3_flash_r3_relaunch.md.
-# Per-setting reasoning lives in run_gsm8k_glm5p3_flash_lora_1node.sh.
+# Stock DAPO 2k prompt / 8k response budget with merge_lora=false LoRA sync. Per-setting
+# reasoning lives in run_gsm8k_glm5p3_flash_lora_1node.sh.
 
 MODEL_PATH="${MODEL_PATH:-/data/trajectory/model-cache/glm5p3-flash-bf16}"
 DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
@@ -42,6 +41,16 @@ N_SAMPLES_PER_PROMPT=12
 EVAL_N_SAMPLES_PER_PROMPT=12
 MAX_TOKENS_PER_MICROBATCH=8192  # must hold one full sequence; 16384 OOM'd at step 1 on GSM8K
 
+# Rollout router replay (R3): vLLM returns the experts it routed each token to and Megatron
+# replays that routing, so the trainer scores rollouts with the router the sampler used. On a
+# 288-expert sigmoid MoE this removes most of the rollout/train logprob gap (~4x smaller
+# policy/rollout_train_logprobs_abs_diff_mean). Needs distributed_executor_backend=mp (set
+# below). SkyRLGymGenerator refuses R3 together with step_wise_trajectories,
+# use_conversation_multi_turn=false, a custom chat_template, or vision_language_generator; this
+# recipe leaves all four at R3-compatible defaults. Routing is fixed across the
+# train_batch_size / policy_mini_batch_size mini-batches of a step, a small known bias.
+ENABLE_ROUTING_REPLAY="${ENABLE_ROUTING_REPLAY:-false}"
+
 # DAPO algorithm knobs (from run_megatron_dapo_qwen3.6_35b_a3b_lora.sh)
 CLIP_RATIO_LOW=0.2
 CLIP_RATIO_HIGH=0.28
@@ -61,7 +70,7 @@ LR=1e-5                          # LoRA adapters, as in the reference LoRA scrip
 LORA_RANK=64
 LORA_ALPHA=64
 # merge_lora=false ships a 3.9 GiB adapter in 29s against ~112s for the ~599 GiB merged path,
-# and is what produced the results above. See .agents/docs/glm5_3_flash_lora.md.
+# vLLM then needs `experts` in lora_target_modules (see VLLM_LORA_TARGET_MODULES below).
 MERGE_LORA=false
 SHARE_EXPERT_ADAPTERS=false
 NORMALIZE_MOE_LORA=true
@@ -70,6 +79,8 @@ LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,li
 MEGATRON_TP=4
 MEGATRON_PP=1
 MEGATRON_CP=1
+# On 180 GiB GPUs (B200) use EP=16: at EP=8 every GPU still holds 1/8 of the experts
+# (~78 GiB of frozen base) and the policy backward runs out of memory.
 MEGATRON_EP=8
 MEGATRON_ETP=1
 
@@ -144,8 +155,8 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.megatron_config.moe_token_dispatcher_type="alltoall" \
   trainer.policy.megatron_config.moe_router_score_function="sigmoid" \
   trainer.policy.megatron_config.moe_router_load_balancing_type="none" \
-  trainer.policy.megatron_config.moe_enable_routing_replay=false \
-  generator.inference_engine.enable_return_routed_experts=false \
+  trainer.policy.megatron_config.moe_enable_routing_replay=$ENABLE_ROUTING_REPLAY \
+  generator.inference_engine.enable_return_routed_experts=$ENABLE_ROUTING_REPLAY \
   trainer.policy.megatron_config.transformer_config_kwargs.sequence_parallel=true \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_granularity="selective" \
   trainer.policy.megatron_config.transformer_config_kwargs.recompute_modules=[core_attn,moe] \
