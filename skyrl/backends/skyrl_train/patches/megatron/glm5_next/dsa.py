@@ -73,7 +73,9 @@ class Glm5NextDSAttention(DSAttention):
         on the same q/k/weights, masks and varlen bounds. The fused sparse-attention kernel that
         consumes the indices is left alone. DELETE together with ``Glm5NextDSAIndexer``.
         """
-        from megatron.core.transformer.experimental_attention_variant import dsa as mcore_dsa
+        from megatron.core.transformer.experimental_attention_variant import (
+            dsa as mcore_dsa,
+        )
         from megatron.core.transformer.experimental_attention_variant import dsa_kernels
 
         if self.index_share:
@@ -87,8 +89,17 @@ class Glm5NextDSAttention(DSAttention):
             _, cu_seqlens_kv = dsa_layout.get_packed_qk_cu_seqlens(packed_seq_params)
         kpool_calls = 0
 
-        def kpool_topk(q, k, weights, index_topk, mask=None, varlen_starts=None, varlen_ends=None,
-                       key_positions=None, use_relu=True):
+        def kpool_topk(
+            q,
+            k,
+            weights,
+            index_topk,
+            mask=None,
+            varlen_starts=None,
+            varlen_ends=None,
+            key_positions=None,
+            use_relu=True,
+        ):
             nonlocal kpool_calls
             kpool_calls += 1
             if indexer._kpool_gate_score is None:
