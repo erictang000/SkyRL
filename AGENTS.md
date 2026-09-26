@@ -29,7 +29,7 @@ uv run --isolated --extra fsdp --extra tinker --extra dev pytest tests/tinker/sk
 uv run --isolated --extra dev --extra fsdp pytest tests/backends/skyrl_train/gpu/gpu_ci/test_engine_generation.py
 uv run --isolated --extra dev --extra megatron pytest tests/backends/skyrl_train/gpu/gpu_ci/test_megatron_worker.py
 
-# Opt-in GPU markers (h100, b300) are auto-skipped unless requested by name:
+# The opt-in h100 GPU marker is auto-skipped unless requested by name:
 uv run --isolated --extra dev --extra megatron pytest -m h100 tests/backends/skyrl_train/gpu/gpu_ci/megatron/
 
 # Lint / format (needs pre-commit; `bash format.sh` fails if it is not on PATH)
