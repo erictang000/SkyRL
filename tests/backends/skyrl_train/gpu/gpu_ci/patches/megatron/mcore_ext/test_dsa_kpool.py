@@ -12,11 +12,11 @@ must still hold is that it stays causal, respects the budget, and keeps the quer
 trailing pool.
 
 The pooling-math half is pure tensor math and runs on CPU, in
-``tests/backends/skyrl_train/models/test_glm5_next_kpool_math.py``.
+``tests/backends/skyrl_train/patches/megatron/mcore_ext/test_dsa_kpool_math.py``.
 
 Run with:
-uv run --isolated --extra dev --extra megatron -- pytest -s \
-    tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_glm5_next_kpool.py
+uv run --isolated --extra dev --extra megatron pytest -s \
+    tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py
 """
 
 import pytest

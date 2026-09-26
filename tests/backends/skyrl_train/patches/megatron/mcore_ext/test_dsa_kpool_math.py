@@ -9,13 +9,16 @@ side shows up.
 
 Pure tensor math, so it runs on CPU and lives outside ``gpu/``; the selection-behaviour half
 needs the CUDA kernels and stays in
-``tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_glm5_next_kpool.py``.
+``tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py``.
 """
 
 import pytest
 import torch
 
 pytest.importorskip("megatron.core", reason="requires the megatron extra")
+
+# Runs in the CPU megatron job (`-m megatron`); without the marker that job deselects it.
+pytestmark = pytest.mark.megatron
 
 POOL_SIZE = 4
 HEAD_DIM = 128

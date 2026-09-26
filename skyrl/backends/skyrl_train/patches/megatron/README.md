@@ -8,6 +8,26 @@ already contains that change, and every place *outside* this folder that has to 
 This file is the removal plan. When you bump `megatron-core` or `megatron-bridge` in
 `pyproject.toml`, work through it top to bottom.
 
+## Tests
+
+Tests for this folder mirror its layout, so they are found and deleted together with the code:
+
+- CPU: `tests/backends/skyrl_train/patches/megatron/` (marked `megatron`; run by the CPU megatron job)
+- GPU: `tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/` (marked `megatron`; run by the
+  Megatron GPU suites, ignored by the FSDP one)
+
+| test | covers |
+|---|---|
+| `patches/megatron/mcore_ext/test_dsa_kpool_math.py` (CPU) | `mcore_ext/dsa_kpool.py` key compression vs HF |
+| `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` | `mcore_ext/dsa_kpool.py` pooled top-k selection |
+| `gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py` | `mcore_ext/kda.py`, `mcore_ext/hyper_connection.py` vs HF |
+| `gpu_ci/patches/megatron/test_dsa_index_share_recompute.py` | `patch_dsa_index_share.py` |
+| `gpu_ci/patches/megatron/test_shared_expert_lora_tp.py` | `patch_shared_expert_lora_tp.py` |
+
+The end-to-end GLM-5.3-Flash rows stay with the other models: `glm-5.3-flash-4layer_*` in
+`gpu_ci/megatron/test_megatron_models.py` and `test_megatron_lora_models.py`. When removing a patch,
+delete its tests here in the same change.
+
 ## Upgrade procedure
 
 1. Bump the pins together. `megatron-core` must match the `3rdparty/Megatron-LM` submodule of the
@@ -46,7 +66,7 @@ model, `glm5_next/` is deleted too.
   - `glm5_next/bridge.py`: re-check the KDA parameter names (`q/k/v_conv1d`, `A_log`, `dt_bias`,
     `f_a/f_b/g_a/g_b_proj`) against upstream's module.
   - Delete `mcore_ext/kda.py`.
-- **Verify:** `test_glm5_next_modules.py::test_kda_matches_hf`; the GLM roundtrip rows.
+- **Verify:** `gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py::test_kda_matches_hf`; the GLM roundtrip rows.
 
 ### NVIDIA/Megatron-LM#7521: mHC (manifold-constrained hyper-connections)
 
@@ -78,7 +98,7 @@ Two pieces, which may land separately.
     full recompute with mHC. SkyRL's default config is full recompute, and the GLM roundtrip
     tests run on defaults.
   - Delete `mcore_ext/mhc_transformer_layer.py`.
-- **Verify:** `test_glm5_next_modules.py::test_hyper_connection_matches_hf`; the GLM roundtrip rows.
+- **Verify:** `gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py::test_hyper_connection_matches_hf`; the GLM roundtrip rows.
   These run with the default full recompute, so they exercise the worker block above.
 
 ### NVIDIA/Megatron-LM#7522: k-pool DSA indexer
@@ -110,12 +130,12 @@ different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (20
     HF config into the provider. Upstream's parameter names for the compress gate/ape must match
     the bridge mapping.
   - Tests:
-    - `tests/backends/skyrl_train/models/test_glm5_next_kpool_math.py` imports
+    - `tests/backends/skyrl_train/patches/megatron/mcore_ext/test_dsa_kpool_math.py` imports
       `mcore_ext.dsa_kpool._kpool_compress_keys`. Repoint it at megatron-core.
-    - `tests/.../megatron/test_glm5_next_kpool.py` (GPU kernel checks): same.
+    - `tests/.../gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` (GPU kernel checks): same.
   - Delete `mcore_ext/dsa_kpool.py`.
 - **Verify** (all required):
-  - `test_glm5_next_kpool_math.py` and `test_glm5_next_kpool.py`.
+  - `patches/megatron/mcore_ext/test_dsa_kpool_math.py` (CPU) and `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` (GPU).
   - `test_logprobs_matching_roundtrip[glm-5.3-flash-4layer_h100_tp2_ep4_kpool_beyond_topk]`. This
     is the only test that runs sequences past `index_topk`. Its logprob diff must not get worse
     than with the vendored code (about 0.053; token-level selection, i.e. no k-pool, gives about
@@ -184,12 +204,12 @@ Use `RAY_ADDRESS=local` if a Ray cluster is already up on the box. Don't put `--
 
 ```bash
 # CPU
-uv run --isolated --extra dev --extra megatron pytest tests/backends/skyrl_train/models/test_glm5_next_kpool_math.py
+uv run --isolated --extra dev --extra megatron pytest tests/backends/skyrl_train/patches/megatron/mcore_ext/test_dsa_kpool_math.py
 
 # GPU (4+ GPUs): kernels, KDA/mHC vs HF, and the three GLM roundtrip rows vs vLLM
 uv run --isolated --extra dev --extra megatron pytest -s -v -m "h100 or not h100" \
-  tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_glm5_next_kpool.py \
-  tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_glm5_next_modules.py \
+  tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py \
+  tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py \
   tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_megatron_models.py \
   -k "kpool_selects or glm5_next_modules or glm-5.3"
 ```

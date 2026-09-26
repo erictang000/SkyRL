@@ -21,9 +21,16 @@ calls bare `ray.init()`, which attaches to whatever cluster is already up -- inc
 cluster -- and its workers then die there, so the results are meaningless and the training job is
 disturbed. Set `RAY_ADDRESS=local` to force an isolated instance.
 
+## Tests for `patches/`
+
+Tests that target code under `skyrl/backends/skyrl_train/patches/` mirror that layout so they can be
+tracked and deleted with the patch: CPU tests under `tests/backends/skyrl_train/patches/`, GPU tests
+under `tests/backends/skyrl_train/gpu/gpu_ci/patches/` (keep the `megatron` marker on Megatron
+ones). See `skyrl/backends/skyrl_train/patches/megatron/README.md`.
+
 ## Opt-in hardware markers
 
-`h100` and `b300` mark tests needing hardware the default runners lack. `tests/backends/skyrl_train/gpu/conftest.py`
+`h100` marks tests needing hardware the default runners lack. `tests/backends/skyrl_train/gpu/conftest.py`
 auto-skips them unless the marker is named explicitly, so `-m megatron_models` never picks them up:
 
 ```bash

@@ -7,7 +7,7 @@ Single-GPU checks of the two modules SkyRL adds on top of megatron-core for GLM-
 - ``KimiDeltaAttention`` (KDA) against ``Glm5NextTextLinearAttention`` on packed sequences.
 
 Run with:
-uv run --isolated --extra dev --extra megatron -- pytest -s tests/backends/skyrl_train/gpu/gpu_ci/megatron/test_glm5_next_modules.py
+uv run --isolated --extra dev --extra megatron pytest -s tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py
 """
 
 import os
