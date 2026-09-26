@@ -96,10 +96,10 @@ GLM5_3_FLASH_VLLM_LORA_TARGET_MODULES = [
     "in_proj_qkvbfg_a",
     "experts",
 ]
-# The 4-layer GLM-5.3-Flash slice has a very flat next-token distribution, so the Megatron-vs-vLLM
-# diff with a live adapter grows faster than the adapter itself (about 0.06 at a LoRA-B std of
-# 0.002, 0.18 at 0.01). Keep its perturbation small enough for phase 3 to stay within threshold.
-LORA_B_MULTIPLIER_OVERRIDES = {"glm-5.3-flash": 2.0}
+# The 4-layer GLM-5.3-Flash slice is far more sensitive to its adapter than the default rows. At a
+# LoRA-B std of 0.008 the stale-sampler diff is about 0.155 (phase 2) and the updated adapter
+# still matches at about 0.062 (phase 3, same as the zero adapter).
+LORA_B_MULTIPLIER_OVERRIDES = {"glm-5.3-flash": 8.0}
 
 
 def _lora_b_multiplier(model_name: str) -> float:
