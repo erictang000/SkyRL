@@ -317,6 +317,36 @@ def _apply_mtp_config(cfg: SkyRLTrainConfig):
         }
 
 
+def _validate_draft_weight_sync_cfg(cfg: SkyRLTrainConfig):
+    """Speculative decoding drafts with the policy's MTP head, so every weight sync must reach it."""
+    ie_cfg = cfg.generator.inference_engine
+    spec = ie_cfg.speculative_config
+    if spec is None:
+        return
+    if cfg.trainer.strategy != "megatron":
+        raise ValueError(
+            f"speculative_config={spec} syncs the drafter from the policy's MTP head, which requires "
+            f"trainer.strategy='megatron' (got {cfg.trainer.strategy!r}): the FSDP model carries no MTP head"
+        )
+    from skyrl.backends.skyrl_train.weight_sync import get_transfer_strategy
+
+    if get_transfer_strategy(ie_cfg.weight_sync_backend, cfg.trainer.placement.colocate_all) == "sharded_rdt":
+        raise ValueError(
+            f"speculative_config={spec} is not supported with weight_sync_backend={ie_cfg.weight_sync_backend!r}: "
+            "its pull plan targets one model. Use 'nccl' or 'delta'."
+        )
+    if ie_cfg.fp8_weight_sync_mode is not None:
+        raise ValueError(
+            f"speculative_config={spec} is not supported with fp8_weight_sync_mode={ie_cfg.fp8_weight_sync_mode!r}: "
+            "the drafter has no loader for the serialized FP8 wire format"
+        )
+    if cfg.trainer.policy.model.lora.rank > 0 and not cfg.trainer.policy.megatron_config.lora_config.merge_lora:
+        raise ValueError(
+            f"speculative_config={spec} needs full-weight sync to keep the drafter aligned; "
+            "Megatron LoRA with merge_lora=false syncs adapters only"
+        )
+
+
 def validate_cfg(cfg: SkyRLTrainConfig):
     if cfg.trainer.strategy == "fsdp2":
         import warnings
@@ -339,6 +369,7 @@ def validate_cfg(cfg: SkyRLTrainConfig):
     # Propagate it to the training side (Megatron MTP heads + decoupled draft loss) and the inference
     # side (vLLM MTP speculative decoding) so both stay consistent.
     _apply_mtp_config(cfg)
+    _validate_draft_weight_sync_cfg(cfg)
 
     from skyrl.backends.skyrl_train.utils.ppo_utils import (
         AdvantageEstimatorRegistry,
@@ -623,6 +654,26 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
             raise ValueError(
                 "blockwise FP8 weight sync requires full-weight updates; "
                 "Megatron LoRA with merge_lora=false syncs adapters only"
+            )
+
+    lora_cfg = cfg.trainer.policy.model.lora
+    if lora_cfg.sync_mode not in {"disk", "memory"}:
+        raise ValueError(f"trainer.policy.model.lora.sync_mode must be 'disk' or 'memory', got {lora_cfg.sync_mode!r}")
+    if lora_cfg.sync_mode == "memory":
+        # The adapter rides the base-model transport (NCCL broadcast / CUDA IPC)
+        # into the receive engine, which stages it for vLLM's LoRA manager. The
+        # other backends have no such stream to carry it: delta publishes
+        # checkpoint diffs and sharded_rdt bakes a pull plan into model params.
+        if cfg.trainer.strategy != "megatron":
+            raise ValueError("lora.sync_mode='memory' is only implemented for trainer.strategy='megatron'")
+        if lora_cfg.rank <= 0 or cfg.trainer.policy.megatron_config.lora_config.merge_lora:
+            raise ValueError(
+                "lora.sync_mode='memory' requires lora.rank > 0 and megatron_config.lora_config.merge_lora=false"
+            )
+        if ie_cfg.weight_sync_backend != "nccl":
+            raise ValueError(
+                "lora.sync_mode='memory' requires generator.inference_engine.weight_sync_backend='nccl' "
+                f"(CUDA IPC when colocated), got {ie_cfg.weight_sync_backend!r}"
             )
 
     if ie_cfg.enable_pd:
