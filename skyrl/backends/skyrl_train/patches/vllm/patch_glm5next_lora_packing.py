@@ -1,6 +1,9 @@
 """vLLM LoRA support for GLM-5.3-Flash (``merge_lora=false``), mostly a backport of
 vllm-project/vllm#56327 and #56718 (both open upstream; not in vLLM 0.30).
 
+Credit: #56327 is by @HollowMan6 and #56718 by @hershg. Pieces 1, 2 and 4 below are
+@HollowMan6's code; piece 5 applies @hershg's fix through a proxy instead of new signatures.
+
 Applied from ``new_inference_worker_wrap`` so it lands in every worker before model init:
 
 1. ``Glm5NextForConditionalGeneration.packed_modules_mapping`` (#56327). Without it the class

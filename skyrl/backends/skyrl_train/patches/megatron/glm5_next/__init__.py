@@ -1,5 +1,9 @@
 """GLM-5.3-Flash (HF ``glm5_next``) for the Megatron backend.
 
+Credit: the upstream counterpart of this package is @HollowMan6's
+NVIDIA-NeMo/Megatron-Bridge#6044 ("add GLM-5.3-Flash support"), built on their Megatron-LM PRs
+vendored in ``mcore_ext``.
+
 Removal plan (what retires each module, touchpoints outside this package, tests):
 ``skyrl/backends/skyrl_train/patches/megatron/README.md``.
 

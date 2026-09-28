@@ -145,7 +145,7 @@ different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (20
 
 Not carried. GLM-5.3-Flash runs bf16 end to end.
 
-### Megatron-Bridge: the GLM-5.3-Flash model
+### NVIDIA-NeMo/Megatron-Bridge#6044: the GLM-5.3-Flash model
 
 - **Carried as:** `glm5_next/`: `provider.py`, `layer_specs.py`, `dsa.py`, and `bridge.py`
   (`Glm5NextBridge`, registered for `Glm5NextForConditionalGeneration` on import, plus the
