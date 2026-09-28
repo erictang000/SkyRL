@@ -52,7 +52,14 @@ class TokensBackend:
         sampling_overrides: Mapping[str, Any] | None = None,
         sampling_mask: bool = False,
         logprobs_mode: str = "processed_logprobs",
+        use_raw_content: bool = False,
     ) -> None:
+        """
+        ``use_raw_content`` answers with the completion's own text as ``content``, as vLLM does with no
+        reasoning or tool-call parser: a thinking model's reasoning stays inline, and tool calls
+        stay text. For a harness written against such a server, which replays ``content`` and
+        drops ``reasoning_content``; with parsed replies it would edit every turn it replays.
+        """
         self.engine_url = engine_url.rstrip("/")
         self.renderer = renderer
         self.engine = engine or VLLMEngine()
@@ -62,6 +69,7 @@ class TokensBackend:
         self.sampling_overrides = dict(sampling_overrides or {})
         self.sampling_mask = sampling_mask
         self.logprobs_mode = logprobs_mode
+        self.use_raw_content = use_raw_content
         self._locks: dict[str, asyncio.Lock] = {}
         self._session: aiohttp.ClientSession | None = None
 
@@ -72,6 +80,7 @@ class TokensBackend:
             "tokenizer": self.renderer.name,
             "logprobs_mode": self.logprobs_mode,
             "sampling_overrides": self.sampling_overrides,
+            "use_raw_content": self.use_raw_content,
         }
 
     async def start(self) -> None:
@@ -209,7 +218,10 @@ class TokensBackend:
             self._fail(trajectory, None, f"engine: {error}")
             return _error(f"engine: {error}", 502, kind="api_error")
 
-        reply = await asyncio.to_thread(self.renderer.parse, output.completion_ids, chat.tools)
+        if self.use_raw_content:
+            reply = await asyncio.to_thread(self._raw_reply, output.completion_ids, planned.prompt_ids)
+        else:
+            reply = await asyncio.to_thread(self.renderer.parse, output.completion_ids, chat.tools)
         reason = response.finish_reason(output.finish_reason, reply)
         call = CallInfo(
             t_start=started,
@@ -241,7 +253,9 @@ class TokensBackend:
                 trajectory.seal("failed", cancel=False)
                 status = "failed"
         body_out = response.completion(
-            reply,
+            # vLLM with no reasoning parser still sends `reasoning_content: null`, and clients rely on
+            # it: LiteLLM splits `<think>` out of `content` only when the field is absent.
+            {**reply, "reasoning_content": None} if self.use_raw_content else reply,
             model=chat.model or model,
             reason=reason,
             prompt_tokens=len(planned.prompt_ids),
@@ -259,6 +273,32 @@ class TokensBackend:
                 headers={"Cache-Control": "no-cache", **headers},
             )
         return retry.committed(out) if recorded else out
+
+    def _raw_reply(self, completion_ids: list[int], prompt_ids: list[int]) -> dict[str, Any]:
+        """The completion as text, without its stop token: what vLLM returns with no parsers.
+
+        The harness replays this ``content`` as the assistant message of its next request, so it
+        has to be the text that renders back to exactly the sampled tokens. The chat template
+        closes every assistant turn with its own end-of-turn token, so the text must not carry
+        one. With Qwen3, a completion sampled as ``done<|im_end|>``, ids ``[10438, 151645]``:
+
+        * returned as ``"done"``, the replayed turn renders as ``done <|im_end|>``,
+          ``[10438, 151645]``, the sampled tokens;
+        * returned as ``"done<|im_end|>"``, the literal ``<|im_end|>`` encodes to 151645 too, and
+          the template adds its own: ``[10438, 151645, 151645]``, an end token the model never
+          sampled. Wherever skycap renders that history rather than reusing the sampled tokens, the
+          turn no longer matches what was sampled and the trajectory forks. The harness also sees
+          a stray ``<|im_end|>`` that vLLM would never have returned.
+
+        So trailing stop tokens are dropped before decoding. Only trailing ones: generation ends at
+        the first stop token, so none can sit mid-completion. The recorded tokens keep theirs.
+        """
+        stops = set(self.renderer.stop_token_ids())
+        end = len(completion_ids)
+        while end and completion_ids[end - 1] in stops:
+            end -= 1
+        text, _ = self.renderer.decode_spans(completion_ids[:end], prompt_ids[-self.DECODE_CONTEXT :])
+        return {"role": "assistant", "content": text}
 
     @staticmethod
     def _fail(trajectory: Trajectory, status: int | None, error: str) -> None:
