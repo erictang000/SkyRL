@@ -1,27 +1,32 @@
 set -x
 
-# Colocated sync DAPO training+generation for GLM-5.3-Flash with Megatron + LoRA.
-# 2 nodes x 8xB300, all colocated. Stops after MAX_TRAINING_STEPS.
+# Colocated sync DAPO training+generation for GLM-5.3-Flash with Megatron, full fine-tuning.
+# 8 nodes x 8xB200, all colocated. Stops after MAX_TRAINING_STEPS.
 #
 #   bash examples/train/algorithms/dapo/prepare_dapo_data.sh
 #   export WANDB_API_KEY=<key>
-#   bash examples/train/glm5_3_flash/run_dapo_glm5p3_flash_lora_sync_3node.sh
+#   bash examples/train/glm5_3_flash/run_dapo_glm5p3_flash_fullft_sync_8node.sh
 #
-# Stock DAPO 2k prompt / 8k response budget with merge_lora=false LoRA sync. Per-setting
-# reasoning lives in run_gsm8k_glm5p3_flash_lora_1node.sh.
+# Same DAPO 2k prompt / 8k response budget and algorithm knobs as
+# run_dapo_glm5p3_flash_lora_sync_2node.sh (settings unchanged from it are explained there), with
+# every parameter trained and the full ~599 GiB of weights synced to vLLM each step (~45s).
+#
+# On 8x8 B200 with R3 this reached held-out AIME-2024 avg_score 0.072 -> 0.711 in 30 steps, still
+# rising (0.494 at step 10, 0.672 at step 25), at ~15-21 min/step. Policy entropy held at
+# ~0.18-0.25 and the rollout/train logprob gap at ~0.008 throughout.
 
 MODEL_PATH="${MODEL_PATH:-/data/trajectory/model-cache/glm5p3-flash-bf16}"
 DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 
-NUM_NODES=2
+NUM_NODES=8
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=2          # one engine per node, colocated with that node's policy shard
+NUM_INFERENCE_ENGINES=8          # one engine per node, colocated with that node's policy shard
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
 LOGGER="${LOGGER:-wandb}"
 
-MAX_TRAINING_STEPS=50
+MAX_TRAINING_STEPS=30
 
 # Sequence budget: the stock DAPO 2k prompt + 8k response. Sequences past
 # dsa_indexer_topk=2048 are handled by megatron-core's k-pool indexer (NVIDIA/Megatron-LM#7054).
@@ -33,7 +38,7 @@ OVERLONG_BUFFER_LEN=2048                     # penalty starts at 6144
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
 
 # Batch shape. validate_cfg requires (policy_mini_batch_size * n_samples_per_prompt) % dp == 0;
-# dp = 16/TP4 = 4 here (KDA has no context-parallel path and megatron-core rejects mHC with
+# dp = 64/TP4 = 16 here (KDA has no context-parallel path and megatron-core rejects mHC with
 # PP>1, so TP is the only divisor available). n_samples=12 rather than DAPO's usual 16.
 TRAIN_BATCH_SIZE=128
 MINI_BATCH_SIZE=32
@@ -49,7 +54,7 @@ MAX_TOKENS_PER_MICROBATCH=8192  # must hold one full sequence; 16384 OOM'd at st
 # use_conversation_multi_turn=false, a custom chat_template, or vision_language_generator; this
 # recipe leaves all four at R3-compatible defaults. Routing is fixed across the
 # train_batch_size / policy_mini_batch_size mini-batches of a step, a small known bias.
-ENABLE_ROUTING_REPLAY="${ENABLE_ROUTING_REPLAY:-false}"
+ENABLE_ROUTING_REPLAY="${ENABLE_ROUTING_REPLAY:-true}"
 
 # DAPO algorithm knobs (from run_megatron_dapo_qwen3.6_35b_a3b_lora.sh)
 CLIP_RATIO_LOW=0.2
@@ -61,28 +66,16 @@ USE_KL_LOSS=false
 TEMPERATURE=1.0
 TOP_P=1.0
 EVAL_TOP_P=0.7
-LR=1e-5                          # LoRA adapters, as in the reference LoRA scripts
-
-# share_expert_adapters=False gives every expert its own adapter; with 288 experts holding ~97%
-# of the parameters, one shared adapter was the capacity bottleneck. normalize_moe_lora then
-# divides the expert rank by moe_router_topk (64//8 = 8), keeping the per-token expert
-# contribution comparable to a dense rank-64 adapter; it requires rank % topk == 0.
-LORA_RANK=64
-LORA_ALPHA=64
-# merge_lora=false ships a 3.9 GiB adapter in 29s against ~112s for the ~599 GiB merged path,
-# vLLM then needs `experts` in lora_target_modules (see VLLM_LORA_TARGET_MODULES below).
-MERGE_LORA=false
-SHARE_EXPERT_ADAPTERS=false
-NORMALIZE_MOE_LORA=true
-LORA_TARGET_MODULES='[linear_q_down_proj,linear_q_up_proj,linear_kv_down_proj,linear_kv_up_proj,linear_proj,linear_fc1,linear_fc2,q_proj,k_proj,v_proj,b_proj,f_a_proj,g_a_proj,o_proj]'
+LR=1e-6                          # full fine-tuning, as in the full-FT Megatron MoE recipes
 
 MEGATRON_TP=4
 MEGATRON_PP=1
 MEGATRON_CP=1
-# On 180 GiB GPUs (B200) use EP=16: at EP=8 every GPU still holds 1/8 of the experts
-# (~78 GiB of frozen base) and the policy backward runs out of memory.
-MEGATRON_EP=8
-MEGATRON_ETP=1
+# Full fine-tuning keeps bf16 params and fp32 main grads for every local expert on the GPU. EP=32
+# x ETP=2 shards each expert over all 64 GPUs (~30 GiB/GPU); at EP=32 x ETP=1 the backward's
+# DSA softmax recompute ran out of memory on 180 GiB B200s. 288 experts divide by 32.
+MEGATRON_EP=32
+MEGATRON_ETP=2
 
 OPTIMIZER_OFFLOAD=true
 OPTIMIZER_OFFLOAD_FRACTION=1.0
@@ -94,17 +87,7 @@ INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION="${INFERENCE_ENGINE_GPU_MEMORY_UTILIZATI
 # empty body as "orjson.JSONDecodeError ... (char 0)". Size the queue past the batch.
 ROUTER_INIT_KWARGS='{"policy": "round_robin", "queue_size": 8192, "queue_timeout_secs": 1800}'
 
-# vLLM-side LoRA targets, only consulted when MERGE_LORA=false. "experts" is the whole fix for
-# "AssertionError: LoRA context must be set" -- supplying lora_target_modules at all flips the MoE
-# from unrestricted to filtered. f_b_proj/g_b_proj stay out (KDA's non-contiguous f_a/g_a).
-VLLM_LORA_TARGET_MODULES='["fused_qkv_a_proj", "q_b_proj", "kv_b_proj", "o_proj", "gate_up_proj", "down_proj", "in_proj_qkvbfg_a", "experts"]'
-
-if [ "$MERGE_LORA" = "false" ]; then
-  LORA_ENGINE_KWARG='"lora_target_modules": '"$VLLM_LORA_TARGET_MODULES"', '
-else
-  LORA_ENGINE_KWARG=''
-fi
-ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', "kv_cache_dtype": "bfloat16", '"$LORA_ENGINE_KWARG"'"compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "pass_config": {"fuse_allreduce_rms": false}}}'
+ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', "kv_cache_dtype": "bfloat16", "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "pass_config": {"fuse_allreduce_rms": false}}}'
 
 # NCCL timeout: DP ranks finish their microbatches unevenly and the early ones sit in a
 # collective. Past the 600s default torch's watchdog calls std::terminate, which surfaces on the
@@ -121,8 +104,10 @@ export SKYRL_VLLM_START_PORT="${SKYRL_VLLM_START_PORT:-8400}"
 # Otherwise redirect_actor_output_to_file() swallows vLLM's errors.
 export SKYRL_DUMP_INFRA_LOG_TO_STDOUT=1
 
-RUN_NAME="${RUN_NAME:-glm5p3_flash_dapo_sync_lora_r${LORA_RANK}_8k_tp${MEGATRON_TP}}"
-# Checkpoints are ~34G each (adapter + optimizer state, not the 599 GiB base).
+RUN_NAME="${RUN_NAME:-glm5p3_flash_dapo_sync_fullft_8k_tp${MEGATRON_TP}_ep${MEGATRON_EP}_etp${MEGATRON_ETP}}"
+# A full checkpoint is ~4 TiB (bf16 weights plus fp32 master weights and Adam state), so saving is
+# off by default. Set CKPT_INTERVAL (e.g. 5) and point CKPT_PATH at storage that can hold it.
+CKPT_INTERVAL="${CKPT_INTERVAL:-0}"
 CKPT_PATH="${CKPT_PATH:-$HOME/ckpts/$RUN_NAME}"
 
 uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
@@ -169,12 +154,6 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.policy.megatron_config.optimizer_config_kwargs.optimizer_offload_fraction=$OPTIMIZER_OFFLOAD_FRACTION \
   trainer.policy.megatron_config.optimizer_config_kwargs.overlap_cpu_optimizer_d2h_h2d=false \
   trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer=false \
-  trainer.policy.model.lora.rank=$LORA_RANK \
-  trainer.policy.model.lora.alpha=$LORA_ALPHA \
-  trainer.policy.model.lora.target_modules="$LORA_TARGET_MODULES" \
-  trainer.policy.megatron_config.lora_config.merge_lora=$MERGE_LORA \
-  trainer.policy.model.lora.share_expert_adapters=$SHARE_EXPERT_ADAPTERS \
-  trainer.policy.megatron_config.lora_config.normalize_moe_lora=$NORMALIZE_MOE_LORA \
   trainer.policy.optimizer_config.lr=$LR \
   trainer.policy.optimizer_config.max_grad_norm=1.0 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
@@ -193,8 +172,8 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   trainer.eval_batch_size=128 \
   trainer.eval_before_train=true \
-  trainer.eval_interval=25 \
-  trainer.ckpt_interval=10 \
+  trainer.eval_interval=5 \
+  trainer.ckpt_interval=$CKPT_INTERVAL \
   trainer.resume_mode=null \
   trainer.ckpt_path="$CKPT_PATH" \
   generator.inference_engine.backend=vllm \
