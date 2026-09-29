@@ -18,6 +18,8 @@ def test_ragged_topk_backward_matches_dense_attention(width):
 
     if torch.cuda.get_device_capability()[0] < 9:
         pytest.skip("DSA kernel qualification requires SM90 or newer")
+    # megatron-core's cuDNN DSA forward runs on FlashMLA, which SkyRL's megatron extra does not ship.
+    pytest.importorskip("flash_mla", reason="cuDNN DSA sparse attention forward requires FlashMLA")
     patch_dsa_backward_topk_align()
     torch.manual_seed(42)
     sq, b, heads, dim, skv = 4, 1, 8, 512, width + 61
