@@ -10,6 +10,7 @@ generator points each trial at its own trajectory on one of them.
         generator.step_wise_trajectories=true data.train_data="['/path/to/harbor/tasks']" ...
 """
 
+import asyncio
 import os
 import sys
 from dataclasses import dataclass, field
@@ -93,16 +94,18 @@ def start_skycap(cfg: Any, engine_url: str) -> SkycapServers:
 
 class HarborSkycapExp(HarborExp):
     skycap: Optional[SkycapServers] = None
+    generator: Optional[HarborSkycapGenerator] = None
 
     def get_generator(self, cfg, tokenizer, inference_engine_client):
         if self.skycap is None:
             self.skycap = start_skycap(cfg, inference_engine_client.get_endpoint_url())
-        return HarborSkycapGenerator(
+        self.generator = HarborSkycapGenerator(
             generator_cfg=cfg.generator,
             harbor_cfg=cfg.harbor_trial_config,
             capture_urls=self.skycap.urls,
             inference_engine_client=inference_engine_client,
         )
+        return self.generator
 
     def run(self):
         try:
@@ -111,6 +114,8 @@ class HarborSkycapExp(HarborExp):
             if self.skycap is not None:
                 logger.info("stopping skycap, writing the trajectories still in memory")
                 self.skycap.stop()
+            if self.generator is not None:
+                asyncio.run(self.generator.close())
 
 
 @ray.remote(num_cpus=1)
