@@ -2,10 +2,12 @@
 
 ``align_topk_axis`` and ``_check_backward_contract`` are the parts of
 ``skyrl.backends.skyrl_train.patches.megatron.patch_dsa_backward_topk_align`` that carry
-the logic; neither needs Megatron or a GPU, so they are tested in the CPU lane.
+the logic; neither needs Megatron or a GPU, so they are tested in the CPU lane. The
+kernel-level check against dense autograd needs SM90+ and FlashMLA and lives in
+``tests/backends/skyrl_train/gpu/gpu_ci/patches/megatron/test_dsa_backward_topk_align_cuda.py``.
 
 Run with:
-  uv run --extra dev -- pytest tests/backends/skyrl_train/distributed/test_dsa_backward_topk_align.py
+uv run --isolated --extra dev --extra megatron pytest tests/backends/skyrl_train/patches/megatron/test_dsa_backward_topk_align.py
 """
 
 import pytest
@@ -16,6 +18,9 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_backward_topk_align i
     _check_backward_contract,
     align_topk_axis,
 )
+
+# Marked like the rest of this folder, so the CPU megatron job runs it.
+pytestmark = pytest.mark.megatron
 
 
 @pytest.mark.parametrize(
@@ -127,3 +132,15 @@ def test_contract_check_error_reports_the_observed_ranges():
     message = str(excinfo.value)
     assert "global_idxs=[-7, 0]" in message
     assert f"width={width} skv={skv} b={b}" in message
+
+
+def test_contract_check_error_survives_an_empty_index_tensor():
+    """A zero-width index tensor must still produce the contract error, not a secondary
+    ``min()``-of-empty failure while formatting it."""
+    idxs = torch.zeros((4, 0), dtype=torch.int32)
+    lengths = torch.ones((4,), dtype=torch.int32)
+
+    with pytest.raises(RuntimeError, match="topk_length_gt_width=True") as excinfo:
+        _check_backward_contract(idxs, lengths, 128, 2, 0)
+
+    assert "global_idxs=empty topk_length=[1, 1]" in str(excinfo.value)

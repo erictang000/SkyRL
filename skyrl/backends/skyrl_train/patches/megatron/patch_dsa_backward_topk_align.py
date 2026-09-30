@@ -128,8 +128,7 @@ def _check_backward_contract(global_idxs, topk_length, skv: int, b: int, width: 
             f"negative_index={negative_index} index_ge_skv_times_b={index_too_large} "
             f"negative_topk_length={negative_length} topk_length_gt_width={length_too_large}; "
             f"width={width} skv={skv} b={b} num_rows={global_idxs.shape[0]} "
-            f"global_idxs=[{int(global_idxs.min())}, {int(global_idxs.max())}] "
-            f"topk_length=[{int(topk_length.min())}, {int(topk_length.max())}]"
+            f"global_idxs={_value_range(global_idxs)} topk_length={_value_range(topk_length)}"
         )
     if global_idxs.dtype != torch.int32 or topk_length.dtype != torch.int32:
         raise RuntimeError(
@@ -142,3 +141,10 @@ def _check_backward_contract(global_idxs, topk_length, skv: int, b: int, width: 
             f"global_idxs.is_contiguous()={global_idxs.is_contiguous()} "
             f"topk_length.is_contiguous()={topk_length.is_contiguous()}"
         )
+
+
+def _value_range(tensor) -> str:
+    """``[min, max]`` for the error message; ``min()`` raises on an empty tensor."""
+    if tensor.numel() == 0:
+        return "empty"
+    return f"[{int(tensor.min())}, {int(tensor.max())}]"
