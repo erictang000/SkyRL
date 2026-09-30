@@ -65,6 +65,7 @@ from skyrl.backends.skyrl_train.training_batch import (
     TrainingInputBatch,
     TrainingOutputBatch,
     append_packed_field_padding,
+    append_tensor_list_padding,
     packed_dummy_row_segments,
 )
 from skyrl.backends.skyrl_train.utils.packed_tensor import PackedTensor
@@ -675,7 +676,7 @@ class MegatronWorker:
         microbatches (especially with PP > 1). Scalar keys (``num_actions``,
         ``num_microbatches``, ``num_real_microbatches``) are passed through unchanged.
         Ragged per-sample fields carried as a ``TensorList`` (``sub_seq_lengths``,
-        ``pixel_values``, ``image_grid_thw``) grow by ``_pad_tensor_list_rows``.
+        ``pixel_values``, ``image_grid_thw``) grow by ``append_tensor_list_padding``.
 
         Defined on the base worker so the shared ``_forward_logprobs`` path works for
         policy, ref, and critic workers alike.
@@ -725,32 +726,11 @@ class MegatronWorker:
                     pad_tensor = torch.zeros((pad_count, *value.shape[1:]), dtype=value.dtype, device=device)
                 padded[key] = torch.cat([value, pad_tensor], dim=0)
             elif isinstance(value, TensorList):
-                padded[key] = TensorList(list(value.tensors) + self._pad_tensor_list_rows(key, value, pad_count))
+                padded[key] = append_tensor_list_padding(key, value, pad_count)
             else:
                 padded[key] = value
 
         return padded
-
-    @staticmethod
-    def _pad_tensor_list_rows(key: str, value: TensorList, pad_count: int) -> list[torch.Tensor]:
-        """Build the dummy rows appended to a ragged ``TensorList`` field.
-
-        ``TensorList`` fields are indexed by batch position, so they must grow with the
-        rest of the micro-batch: every consumer either checks their length against
-        ``sequences.shape[0]`` or derives the batch size from them.
-
-        ``sub_seq_lengths`` gets ``[1]``: one sub-sequence of one valid token, which is
-        what the dummy row's ``attention_mask`` (a single 1 at column 0) describes.
-        Multimodal fields get a zero-row tensor of the same trailing shape and dtype,
-        matching the placeholder the batch builder uses for text-only samples in a mixed
-        batch; those contribute no rows when concatenated for the vision tower.
-        """
-        reference = value.tensors[0]
-        if key == "sub_seq_lengths":
-            row = torch.ones(1, dtype=reference.dtype, device=reference.device)
-        else:
-            row = torch.empty(0, *reference.shape[1:], dtype=reference.dtype, device=reference.device)
-        return [row.clone() for _ in range(pad_count)]
 
     def save_hf_model(self, export_dir: str, tokenizer):
         # Save model in HuggingFace safetensors format
