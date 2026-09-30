@@ -147,6 +147,34 @@ async def test_routed_experts_align_and_the_placeholder_is_replaced() -> None:
         assert routed[-1, 0, 0] == routed[-2, 0, 0]
 
 
+class _FullRoutesEngine(VLLMEngine):
+    routes_from_supported = False
+
+
+async def test_a_wire_without_routes_from_gets_every_calls_full_routes() -> None:
+    async with token_stack(engine=_FullRoutesEngine()) as stack:
+        created = await stack.create()
+        await converse(client(created["base_url"]), "hi", "more")
+        (sample,) = build_samples(stack.server.trajectories[created["id"]].graph)
+
+        assert not any("routed_experts_prompt_start" in r["sampling_params"] for r in stack.engine.requests)
+        np.testing.assert_array_equal(sample.routed_experts[:-1, 0, 0], np.arange(len(sample.input_ids) - 1) % 256)
+
+
+async def test_a_turn_fetches_only_the_routes_it_lacks_and_they_still_align() -> None:
+    async with token_stack() as stack:
+        created = await stack.create()
+        await converse(client(created["base_url"]), "hi", "more", "again")
+        (sample,) = build_samples(stack.server.trajectories[created["id"]].graph)
+        routed = sample.routed_experts
+
+        starts = [r["sampling_params"].get("routed_experts_prompt_start", 0) for r in stack.engine.requests]
+        # The first call has no history; each later one starts at the previous reply's last token.
+        assert starts[0] == 0 and all(0 < a < b for a, b in zip(starts[1:], starts[2:]))
+        assert routed is not None and routed.shape == (len(sample.input_ids), 2, 2)
+        np.testing.assert_array_equal(routed[:-1, 0, 0], np.arange(len(sample.input_ids) - 1) % 256)
+
+
 async def test_the_sampling_mask_covers_each_trained_token() -> None:
     async with token_stack(sampling_mask=True) as stack:
         created = await stack.create()
