@@ -113,6 +113,23 @@ from skyrl.backends.skyrl_train.patches.vllm_kimi_k25_lora import (  # noqa: E40
 
 apply_kimi_k25_lora_patch()
 
+# Online fp8_per_block quantization hands the torch.compile'd per_block_cast_to_fp8 a vLLM
+# parameter subclass, which dynamo cannot trace (RecursionError on the first weight sync).
+from skyrl.backends.skyrl_train.patches.vllm.patch_per_block_fp8_param import (  # noqa: E402
+    apply_per_block_fp8_param_patch,
+)
+
+apply_per_block_fp8_param_patch()
+
+# Full-weight syncs go through vLLM's layerwise reload, which buffers each incoming tensor at
+# its unsharded size until the whole layer has arrived (~19 GiB per GLM-5.3 MoE layer on every
+# TP rank). Load them into the local shard as they arrive instead.
+from skyrl.backends.skyrl_train.patches.vllm.patch_layerwise_reload_eager import (  # noqa: E402
+    apply_layerwise_reload_eager_patch,
+)
+
+apply_layerwise_reload_eager_patch()
+
 
 VLLM_NEW_INFERENCE_WORKER_EXTENSION_CLS = f"{__name__}.NewInferenceWorkerWrap"
 
