@@ -66,9 +66,11 @@ from skyrl.backends.skyrl_train.patches.te.patch_fa2_head_dim import (
     patch_fa2_head_dim_allowlist,
 )
 from skyrl.backends.skyrl_train.training_batch import (
+    TensorList,
     TrainingInputBatch,
     TrainingOutputBatch,
     append_packed_field_padding,
+    append_tensor_list_padding,
     packed_dummy_row_segments,
 )
 from skyrl.backends.skyrl_train.utils.packed_tensor import PackedTensor
@@ -687,6 +689,8 @@ class MegatronWorker:
         because Megatron's forward_backward_func requires uniform micro_batch_size across all
         microbatches (especially with PP > 1). Scalar keys (``num_actions``,
         ``num_microbatches``, ``num_real_microbatches``) are passed through unchanged.
+        Ragged per-sample fields carried as a ``TensorList`` (``sub_seq_lengths``,
+        ``pixel_values``, ``image_grid_thw``) grow by ``append_tensor_list_padding``.
 
         Defined on the base worker so the shared ``_forward_logprobs`` path works for
         policy, ref, and critic workers alike.
@@ -735,6 +739,8 @@ class MegatronWorker:
                 else:
                     pad_tensor = torch.zeros((pad_count, *value.shape[1:]), dtype=value.dtype, device=device)
                 padded[key] = torch.cat([value, pad_tensor], dim=0)
+            elif isinstance(value, TensorList):
+                padded[key] = append_tensor_list_padding(key, value, pad_count)
             else:
                 padded[key] = value
 
