@@ -56,8 +56,18 @@ def apply_routed_experts_rebind_patch() -> bool:
                 "Routed-experts capture is not supported with monolithic MoE "
                 f"kernel {type(getattr(kernel.impl, 'fused_experts', None)).__name__}."
             )
-        if fused_experts.routing_replay_capture_fn is not capture_fn:
+        if fused_experts.routing_replay_capture_fn is capture_fn:
+            return
+        # Move the previous replay buffer over instead of letting set_capture_fn allocate a new
+        # one: decode CUDA graphs recorded at startup write into the old buffer's address, so it
+        # must stay alive and stay the buffer the eager path reads. Freeing it let the graphs
+        # write int16 expert IDs into whatever reused that memory (device-side index asserts).
+        buffer = getattr(previous, "_routing_replay_buffer", None)
+        if buffer is None:
             fused_experts.set_capture_fn(capture_fn)
+            return
+        fused_experts.routing_replay_capture_fn = capture_fn
+        fused_experts._routing_replay_buffer = buffer
 
     FusedMoEMethodBase.moe_kernel = property(_get, _set)
     _PATCHED = True
