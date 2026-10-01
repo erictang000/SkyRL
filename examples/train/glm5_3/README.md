@@ -24,7 +24,11 @@ and does not fit a B200; FP8 is ~89 GiB/GPU. No `fp8_weight_sync_mode`.
 - `patches/vllm/patch_per_block_fp8_param.py` — `quantization=fp8_per_block` crashed on the
   first sync (`InternalTorchDynamoError: RecursionError`): the torch.compile'd
   `per_block_cast_to_fp8` was handed a vLLM parameter subclass. The patch passes `.data`.
-- Both are installed from `inference_servers/new_inference_worker_wrap.py`.
+- `patches/vllm/patch_routed_experts_rebind.py` — backport of vllm-project/vllm#59455 (fixes
+  #59449). R3's routed-experts capture callback is bound once at startup and was lost when a weight
+  sync rebuilt the monolithic FlashInfer TRT-LLM FP8 MoE kernel, so capture returned the startup
+  profile run's routing for every prefill token. The patch carries the callback over.
+- All three are installed from `inference_servers/new_inference_worker_wrap.py`.
 - `weight_sync/fp8/models/glm5.py` (+ test) — GLM-5.3 `ModelFp8Spec` for
   `fp8_weight_sync_mode=blockwise` (stage 3). Follows zai-org/GLM-5-FP8's split; the indexer's
   `wk`/`weights_proj` stay bf16 because vLLM fuses them into an unquantized linear.
@@ -48,27 +52,30 @@ and does not fit a B200; FP8 is ~89 GiB/GPU. No `fp8_weight_sync_mode`.
 - Trainer TP8 (not TP4) and LoRA r64 in the GSM8K recipe: at TP4 / r256 the post-step sync OOMed
   by 1–2 GiB (before the eager-reload patch and precision-aware optimizer existed; probably fits
   now, untested).
-- R3 needs `moe_backend=deep_gemm` (the recipe adds it when `ENABLE_ROUTING_REPLAY=true`). On B200
-  vLLM picks the FlashInfer TRT-LLM FP8 MoE kernel, whose routed-experts capture callback is lost
-  when a weight sync rebuilds the kernel: capture then returns the startup profile run's routing
-  for every prefill token, and R3 made the logprob gap **worse** (0.063 → 0.164).
-  Upstream: vllm-project/vllm#59449 (issue), #59455 (fix). DeepGEMM costs ~1.7× generation time.
+- R3 works on vLLM's default FP8 MoE backend (FlashInfer TRT-LLM) only with
+  `patch_routed_experts_rebind`. Without it R3 made the logprob gap **worse** (0.063 → 0.164)
+  because every prompt token was replayed with one stale expert set.
+  `R3_MOE_BACKEND=deep_gemm` (router-side capture, not affected) is the fallback; it costs ~1.7×
+  generation time.
 
-## Results so far (DAPO full FT, AIME-2024 eval, ±1 scale)
+## Results so far (DAPO full FT, AIME-2024, 12 samples/problem)
 
-| | Stage 1: no R3 (`1o4x7v31`) | Stage 2: R3 + deep_gemm (`z9wad610`) |
+The eval is truncation-bound at the 8k budget: accuracy among responses that finish is 98-100% at
+every checkpoint, so the score is effectively the fraction of responses that finish. Report
+`eval/all/mean_positive_reward` (fraction correct) alongside the ±1 `avg_score`.
+
+| Fraction correct (eval step 0 / 5 / 10 / 15) | Run | Notes |
 |---|---|---|
-| Eval before training | 0.050 | 0.089 |
-| Eval at step 5 | 0.133 | running |
-| Train reward, step 1 → 10 | −0.09 → +0.21 | running |
-| Rollout/train logprob gap, step 1 | 0.063 (→ 0.049 at step 10) | **0.037** |
-| Entropy | 0.107 → 0.043 by step 8 | 0.103 at step 1 |
-| Step time | 36–47 min | ~44 min (slower generate) |
-| Trainer / sync peak per GPU | 117 / 151 GiB | similar |
+| 52.5% / 56.7% / – / – | no R3, `1o4x7v31` | died at the sync after step 10 (`unspecified launch failure`, one vLLM engine, no hardware Xid) |
+| 54.4% / 62.2% / 51.7% / 48.3% | R3 + `deep_gemm`, `z9wad610` | stopped after 16 steps |
+| 55.0% / running | R3 + TRT-LLM + rebind patch, `8l9ng63u` | removes the MoE-backend confounder vs `1o4x7v31` |
 
-Stage 1 ended at the sync after step 10 with `CUDA error: unspecified launch failure` in one vLLM
-engine (ray-3), ~1 s into `update_weights`; no hardware Xid, first occurrence in ~25 syncs, root
-cause unknown. Entropy falling to 0.043 without R3 was the main reason to turn R3 on.
+Training-side, steps 1→10: no R3 shortened responses (4.46k → 3.81k tokens) while entropy
+collapsed (0.107 → 0.043) and train reward rose (−0.09 → +0.21). R3 + `deep_gemm` lengthened them
+(4.5k → 5.1k by step 12), entropy rose to 0.15 then fell to 0.064 by step 15, and reward stayed
+mostly negative. Logprob gap: 0.063 → 0.049 without R3; flat ~0.035-0.040 with R3 (both
+backends). Step time ~40 min on TRT-LLM, ~44 min on `deep_gemm`; trainer peak 117 GiB, sync peak
+~151 GiB per GPU.
 
 ## Open items
 
@@ -76,7 +83,9 @@ cause unknown. Entropy falling to 0.043 without R3 was the main reason to turn R
   nothing else done.
 - `policy_train` is ~2× slower with TileLang DSA than with the naive kernels (~1,550 s vs ~850 s
   per step) even though the kernels are faster in isolation; not profiled.
-- Port the vLLM #59455 fix as a SkyRL patch so R3 can go back to TRT-LLM.
+- Why R3 + `deep_gemm` diverged from no-R3 after step 5 (`8l9ng63u` answers whether the MoE
+  backend was the cause).
+- Raise the response budget: at 8k both reward and eval mostly measure length.
 - The step-10 `unspecified launch failure`; if it recurs, test the sync with and without the
   eager-reload patch.
 - Eval at 8k response budget is truncation-bound: every finished AIME response was correct at

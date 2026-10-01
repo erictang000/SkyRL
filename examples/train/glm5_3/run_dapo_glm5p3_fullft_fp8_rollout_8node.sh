@@ -96,14 +96,15 @@ ROUTER_INIT_KWARGS='{"policy": "round_robin", "queue_size": 8192, "queue_timeout
 # fp8_per_block needs SkyRL's per_block_cast_to_fp8 patch (installed in every vLLM worker); fp8
 # is per-tensor. load_format=dummy: SkyRL syncs the trainer's weights before the first rollout.
 VLLM_QUANTIZATION="${VLLM_QUANTIZATION:-fp8_per_block}"
-# R3 needs moe_backend=deep_gemm. On B200 vLLM picks FlashInfer's monolithic TRT-LLM FP8 MoE kernel,
-# whose routed-experts capture callback is bound once at startup; every weight sync rebuilds the
-# kernel (process_weights_after_loading -> _init_moe_kernel) without it, so from the first sync on
-# the capture returns the startup profile run's routing for every prefill token. The trainer then
-# replayed one fixed expert set over every prompt and the rollout/train logprob gap went UP
-# (0.063 -> 0.164). DeepGEMM captures on the router, which survives the reload.
-if [ "$ENABLE_ROUTING_REPLAY" = "true" ]; then
-  MOE_BACKEND_KWARG='"moe_backend": "deep_gemm", '
+# R3 on vLLM's default FP8 MoE backend on B200 (FlashInfer TRT-LLM, monolithic) needs SkyRL's
+# patch_routed_experts_rebind (backport of vllm#59455, installed in every vLLM worker): without it
+# the capture callback is lost when a weight sync rebuilds the kernel, the capture returns the
+# startup profile run's routing for every prefill token, and R3 made the rollout/train logprob gap
+# WORSE (0.063 -> 0.164). R3_MOE_BACKEND=deep_gemm (router-side capture, unaffected by the bug)
+# is the fallback; it costs ~1.7x generation time.
+R3_MOE_BACKEND="${R3_MOE_BACKEND:-auto}"
+if [ "$ENABLE_ROUTING_REPLAY" = "true" ] && [ "$R3_MOE_BACKEND" != "auto" ]; then
+  MOE_BACKEND_KWARG='"moe_backend": "'"$R3_MOE_BACKEND"'", '
 else
   MOE_BACKEND_KWARG=''
 fi
