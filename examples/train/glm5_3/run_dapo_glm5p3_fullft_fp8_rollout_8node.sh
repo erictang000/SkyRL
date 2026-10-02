@@ -96,6 +96,31 @@ ROUTER_INIT_KWARGS='{"policy": "round_robin", "queue_size": 8192, "queue_timeout
 # fp8_per_block needs SkyRL's per_block_cast_to_fp8 patch (installed in every vLLM worker); fp8
 # is per-tensor. load_format=dummy: SkyRL syncs the trainer's weights before the first rollout.
 VLLM_QUANTIZATION="${VLLM_QUANTIZATION:-fp8_per_block}"
+
+# FULL_FP8=true: MXFP8 GEMMs on the trainer (fp8_recipe=auto resolves to MXFP8 on Blackwell) and
+# fp8_weight_sync_mode=blockwise, as in examples/train/fp8/run_fp8_blackwell_mxfp8_qwen35_*.sh.
+# The trainer casts the bf16 export to 128x128 blockwise FP8 (power-of-2 scales, consumed by
+# DeepGEMM as E8M0) using the GLM5 ModelFp8Spec, and SkyRL configures vLLM for checkpoint-format
+# FP8 itself (quantization=fp8 + quantization_config), so the online VLLM_QUANTIZATION is unused.
+# Primary weights stay bf16: fp8_param is not supported on the MXFP8 path yet.
+FULL_FP8="${FULL_FP8:-false}"
+FP8_OVERRIDES=()
+if [ "$FULL_FP8" = "true" ]; then
+  QUANT_KWARG=''
+  QUANT_LABEL=mxfp8_blockwise
+  export NVTE_FP8_BLOCK_SCALING_FP32_SCALES=0
+  export VLLM_USE_DEEP_GEMM_E8M0=1
+  FP8_OVERRIDES=(
+    trainer.policy.megatron_config.fp8=e4m3
+    trainer.policy.megatron_config.fp8_recipe=auto
+    trainer.policy.megatron_config.fp8_amax_compute_algo=most_recent
+    trainer.policy.megatron_config.transformer_config_kwargs.tp_only_amax_red=false
+    generator.inference_engine.fp8_weight_sync_mode=blockwise
+  )
+else
+  QUANT_KWARG='"quantization": "'"$VLLM_QUANTIZATION"'", '
+  QUANT_LABEL=$VLLM_QUANTIZATION
+fi
 # R3 on vLLM's default FP8 MoE backend on B200 (FlashInfer TRT-LLM, monolithic) needs SkyRL's
 # patch_routed_experts_rebind (backport of vllm#59455, installed in every vLLM worker): without it
 # the capture callback is lost when a weight sync rebuilds the kernel, the capture returns the
@@ -108,7 +133,7 @@ if [ "$ENABLE_ROUTING_REPLAY" = "true" ] && [ "$R3_MOE_BACKEND" != "auto" ]; the
 else
   MOE_BACKEND_KWARG=''
 fi
-ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', '"$MOE_BACKEND_KWARG"'"quantization": "'"$VLLM_QUANTIZATION"'", "load_format": "dummy", "kv_cache_dtype": "bfloat16", "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "max_cudagraph_capture_size": '"$MAX_CUDAGRAPH_CAPTURE_SIZE"', "pass_config": {"fuse_allreduce_rms": false}}}'
+ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', '"$MOE_BACKEND_KWARG$QUANT_KWARG"'"load_format": "dummy", "kv_cache_dtype": "bfloat16", "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "max_cudagraph_capture_size": '"$MAX_CUDAGRAPH_CAPTURE_SIZE"', "pass_config": {"fuse_allreduce_rms": false}}}'
 
 export SKYRL_WORKER_NCCL_TIMEOUT_IN_S=5400
 export SKYRL_GENERATE_CONCURRENCY_PER_ENGINE=128
@@ -117,7 +142,7 @@ export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=1800
 export SKYRL_VLLM_START_PORT="${SKYRL_VLLM_START_PORT:-8400}"
 export SKYRL_DUMP_INFRA_LOG_TO_STDOUT=1
 
-RUN_NAME="${RUN_NAME:-glm5p3_dapo_fullft_${VLLM_QUANTIZATION}_tp${MEGATRON_TP}_ep${MEGATRON_EP}_r3${ENABLE_ROUTING_REPLAY}}"
+RUN_NAME="${RUN_NAME:-glm5p3_dapo_fullft_${QUANT_LABEL}_tp${MEGATRON_TP}_ep${MEGATRON_EP}_r3${ENABLE_ROUTING_REPLAY}}"
 # A full checkpoint is several TB (bf16 weights plus fp32 master weights and Adam state), so
 # saving is off by default.
 CKPT_INTERVAL="${CKPT_INTERVAL:-0}"
@@ -213,4 +238,5 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   trainer.logger="$LOGGER" \
   trainer.project_name="glm5p3_dapo" \
   trainer.run_name="$RUN_NAME" \
+  "${FP8_OVERRIDES[@]}" \
   "$@"

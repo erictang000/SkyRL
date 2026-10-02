@@ -57,6 +57,11 @@ and does not fit a B200; FP8 is ~89 GiB/GPU. No `fp8_weight_sync_mode`.
   because every prompt token was replayed with one stale expert set.
   `R3_MOE_BACKEND=deep_gemm` (router-side capture, not affected) is the fallback; it costs ~1.7×
   generation time.
+- `FULL_FP8=true` (DAPO recipe): MXFP8 GEMMs on the trainer (`fp8=e4m3`, `fp8_recipe=auto`) plus
+  `fp8_weight_sync_mode=blockwise`: the trainer casts its bf16 export to 128×128 FP8 with the GLM5
+  `ModelFp8Spec` and SkyRL configures vLLM for checkpoint-format FP8 (the online
+  `VLLM_QUANTIZATION` is then unused). Pre-training eval on this path matched the online-FP8 runs
+  (55.8% vs 52–55%), so the spec and sync produce correct weights.
 
 ## Results so far (DAPO full FT, AIME-2024, 12 samples/problem)
 
@@ -64,23 +69,40 @@ The eval is truncation-bound at the 8k budget: accuracy among responses that fin
 every checkpoint, so the score is effectively the fraction of responses that finish. Report
 `eval/all/mean_positive_reward` (fraction correct) alongside the ±1 `avg_score`.
 
-| Fraction correct (eval step 0 / 5 / 10 / 15) | Run | Notes |
+| Fraction correct (eval step 0 / 5 / 10 / 15 / 20) | Run | Notes |
 |---|---|---|
-| 52.5% / 56.7% / – / – | no R3, `1o4x7v31` | died at the sync after step 10 (`unspecified launch failure`, one vLLM engine, no hardware Xid) |
-| 54.4% / 62.2% / 51.7% / 48.3% | R3 + `deep_gemm`, `z9wad610` | stopped after 16 steps |
-| 55.0% / running | R3 + TRT-LLM + rebind patch, `8l9ng63u` | removes the MoE-backend confounder vs `1o4x7v31` |
+| 52.5% / 56.7% / – / – / – | no R3, bf16 trainer, `1o4x7v31` | died at the sync after step 10 (`unspecified launch failure`, one vLLM engine, no hardware Xid) |
+| 54.4% / 62.2% / 51.7% / 48.3% / – | R3 + `deep_gemm`, bf16 trainer, `z9wad610` | stopped after 16 steps |
+| 52.8% / 54.7% / 43.3% / – / – | R3 + TRT-LLM + rebind patch, bf16 trainer, `x7lm538i` | stopped after 10 steps for the R3 gradient check |
+| **55.8% / 76.1% / 80.3% / 83.1% / 84.4%** | **full FP8 + R3** (`FULL_FP8=true`), `bz2t3wg9` | completed 20 steps; finished/truncated 200/160 → 309/51 |
 
 Training-side, steps 1→10: no R3 shortened responses (4.46k → 3.81k tokens) while entropy
-collapsed (0.107 → 0.043) and train reward rose (−0.09 → +0.21). R3 + `deep_gemm` lengthened them
-(4.5k → 5.1k by step 12), entropy rose to 0.15 then fell to 0.064 by step 15, and reward stayed
-mostly negative. Logprob gap: 0.063 → 0.049 without R3; flat ~0.035-0.040 with R3 (both
-backends). Step time ~40 min on TRT-LLM, ~44 min on `deep_gemm`; trainer peak 117 GiB, sync peak
-~151 GiB per GPU.
+collapsed (0.107 → 0.043) and train reward rose (−0.09 → +0.21). Both R3 runs with the bf16
+trainer lengthened them instead (4.5k → ~5.0k) and reward stayed mostly negative. Full FP8 + R3
+shortened them fastest (4.2k → 3.1k by step 10, 2.75k by step 15), train reward −0.00 → +0.41
+(step 10) → +0.55 (step 15), entropy 0.108 → 0.033.
+
+| Step 1 | no R3, bf16 | R3, bf16 | full FP8 + R3 |
+|---|---|---|---|
+| rollout/old logprob gap (mean / max) | 0.063 / 17.6 | 0.037 / 6.9 | 0.028 / 9.6 |
+| PPO clip ratio | 0.50% | 0.01% | 0.27% |
+| generate / fwd_logprobs / policy_train | ~410 / ~320 / ~1,550 s | ~410 / ~320 / ~1,530 s | 406 / 658 / 2,485 s |
+| step | ~40 min | ~40 min | ~60 min (43–60 as responses shortened) |
+| trainer / sync peak per GPU | 117 / ~151 GiB | similar | 123 / 159 GiB |
+
+Caveats: one run per arm. The full-FP8 run's rollouts already differed at step 1 (shorter, higher
+reward from the same weights) because its FP8 weights come from the trainer's blockwise cast
+(power-of-2 scales) instead of vLLM's online per-block quantization, so part of its gain may be
+serving numerics rather than MXFP8 training. The two runs that learned (no R3; full FP8 + R3) both
+clip ~0.3-0.5% of tokens per update, the two R3 + bf16-trainer runs that did not clip ~0.02%.
+R3's gradients were checked directly (replay with vs without MoE recompute match to 7e-4 relative
+on a 5-layer GLM-5.3 at TP8/EP8), so the divergence is not a replay bug.
 
 ## Open items
 
-- Stage 3 (full FP8: MXFP8 trainer + `fp8_weight_sync_mode=blockwise`) — the GLM5 spec is ready;
-  nothing else done.
+- Separate the full-FP8 gain into rollout numerics vs MXFP8 training: bf16 trainer with
+  `fp8_weight_sync_mode=blockwise`.
+- MXFP8 training is ~1.6× slower than bf16 at TP8/EP64 (fwd 658 vs ~320 s, train 2,485 vs ~1,550 s).
 - `policy_train` is ~2× slower with TileLang DSA than with the naive kernels (~1,550 s vs ~850 s
   per step) even though the kernels are faster in isolation; not profiled.
 - Why R3 + `deep_gemm` diverged from no-R3 after step 5 (`8l9ng63u` answers whether the MoE
