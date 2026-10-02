@@ -17,14 +17,32 @@ _CURRENT_MODEL_RUNNER: weakref.ReferenceType[Any] | None = None
 
 
 def apply_model_runner_registry_patch() -> None:
-    """Install the process-local runner recorder on ``GPUModelRunner.load_model``."""
+    """Install the process-local runner recorder on every ``GPUModelRunner.load_model``.
+
+    vLLM ships two runners and picks one per engine (``VllmConfig.use_v2_model_runner``,
+    the default in vLLM 0.30), so both classes are wrapped.
+    """
     global _PATCHED
     if _PATCHED:
         return
 
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
-    original = GPUModelRunner.load_model
+    runner_classes = [GPUModelRunner]
+    try:
+        from vllm.v1.worker.gpu.model_runner import GPUModelRunner as GPUModelRunnerV2
+    except ImportError:
+        pass
+    else:
+        runner_classes.append(GPUModelRunnerV2)
+
+    for runner_cls in runner_classes:
+        _record_runner_on_load(runner_cls)
+    _PATCHED = True
+
+
+def _record_runner_on_load(runner_cls: type[Any]) -> None:
+    original = runner_cls.load_model
 
     def load_model(self: Any, *args: Any, **kwargs: Any) -> Any:
         result = original(self, *args, **kwargs)
@@ -33,8 +51,7 @@ def apply_model_runner_registry_patch() -> None:
         return result
 
     load_model.__wrapped__ = original
-    GPUModelRunner.load_model = load_model
-    _PATCHED = True
+    runner_cls.load_model = load_model
 
 
 def current_model_runner() -> Any | None:

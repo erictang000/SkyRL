@@ -517,8 +517,10 @@ class MegatronWorker:
             DistributedDataParallelConfig,
         )
 
-        # TE patch to allow FA2 for head_dim 256 on SM103 (B300)
-        # Delete along with the patch module once the TE pin includes NVIDIA/TransformerEngine#3360.
+        # TE patch to allow FA2 for head_dim 256 on SM103 (B300) and other arches
+        # outside TE's allowlist. Still needed on 2.19.0: NVIDIA/TransformerEngine#3360
+        # is open and unmerged, and the gate it removes is present in every release
+        # through 2.19.0 (renamed from head_dim_qk to fa2_padded_head_dim in 2.17.0).
         patch_fa2_head_dim_allowlist()
 
         # Isolate the DSA index-share holder per checkpointed forward (GLM 5 and
