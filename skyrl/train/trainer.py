@@ -48,6 +48,7 @@ from skyrl.backends.skyrl_train.utils.ppo_utils import (
 from skyrl.backends.skyrl_train.utils.sample_support import (
     SAMPLE_SUPPORT_FIELD,
     SAMPLE_SUPPORT_LOGPROBS_FIELD,
+    SAMPLE_SUPPORT_PADDING,
 )
 from skyrl.backends.skyrl_train.utils.torch_utils import masked_mean
 from skyrl.backends.skyrl_train.workers.worker import PPORayActorGroup
@@ -62,7 +63,7 @@ from skyrl.train.dataset.preprocess import (
     convert_prompts_responses_to_batch_tensors,
     make_router_padding_mask,
 )
-from skyrl.train.evaluate import evaluate, evaluate_step_wise
+from skyrl.train.evaluate import evaluate
 from skyrl.train.generators.base import (
     GeneratorInput,
     GeneratorInterface,
@@ -248,29 +249,16 @@ class RayPPOTrainer:
         Returns:
             A dictionary of evaluation metrics.
         """
-        if self.cfg.generator.step_wise_trajectories:
-            eval_metrics = await evaluate_step_wise(
-                eval_dataloader=self.eval_dataloader,
-                generator=self.generator,
-                cfg=self.cfg,
-                global_step=self.global_step,
-                tokenizer=self.tokenizer,
-                trajectory_logger=self.trajectory_logger,
-                tracker=self.tracker,
-                vllm_metrics_scraper=vllm_metrics_scraper,
-            )
-        else:
-            eval_metrics = await evaluate(
-                eval_dataloader=self.eval_dataloader,
-                generator=self.generator,
-                cfg=self.cfg,
-                global_step=self.global_step,
-                tokenizer=self.tokenizer,
-                trajectory_logger=self.trajectory_logger,
-                tracker=self.tracker,
-                vllm_metrics_scraper=vllm_metrics_scraper,
-            )
-        return eval_metrics
+        return await evaluate(
+            eval_dataloader=self.eval_dataloader,
+            generator=self.generator,
+            cfg=self.cfg,
+            global_step=self.global_step,
+            tokenizer=self.tokenizer,
+            trajectory_logger=self.trajectory_logger,
+            tracker=self.tracker,
+            vllm_metrics_scraper=vllm_metrics_scraper,
+        )
 
     async def train(self):
         """
@@ -990,12 +978,26 @@ class RayPPOTrainer:
         training_input.metadata["response_length"] = response_masks_tensor.shape[1]
         batch_num_seq, batch_padded_seq_len = sequences_tensor.shape
         logger.info(f"batch_num_seq: {batch_num_seq}, batch_padded_seq_len: {batch_padded_seq_len}")
-        self.all_metrics.update(
-            {
-                "generate/batch_num_seq": batch_num_seq,
-                "generate/batch_padded_seq_len": batch_padded_seq_len,
-            }
-        )
+        batch_metrics = {
+            "generate/batch_num_seq": batch_num_seq,
+            "generate/batch_padded_seq_len": batch_padded_seq_len,
+        }
+        # Add metrics for sample support replay if enabled
+        if rollout_sample_support_tensor is not None:
+            sample_support = rollout_sample_support_tensor.values
+            valid_per_token = (sample_support != SAMPLE_SUPPORT_PADDING).sum(dim=1)
+            valid_per_token = valid_per_token[valid_per_token > 0]
+            if valid_per_token.numel() > 0:
+                batch_metrics.update(
+                    {
+                        "generate/sample_support_size_mean": valid_per_token.float().mean().item(),
+                        "generate/sample_support_full_fraction": (valid_per_token == sample_support.shape[1])
+                        .float()
+                        .mean()
+                        .item(),
+                    }
+                )
+        self.all_metrics.update(batch_metrics)
         training_input.metadata["avg_response_length"] = sum(
             len(sample_response_ids) for sample_response_ids in response_ids
         ) / len(response_ids)
@@ -1034,6 +1036,7 @@ class RayPPOTrainer:
             len(input_batch["prompts"]),
             generator_output,
             step_wise=self.cfg.generator.step_wise_trajectories,
+            routes_expected=self.cfg.generator.inference_engine.enable_return_routed_experts,
         )
 
         return generator_output
