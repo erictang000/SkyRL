@@ -107,3 +107,29 @@ decides whether an installed FA4 is used, without re-resolving the venv.
 Mainly for A/B-ing FA2 against FA4 on an otherwise identical environment, and as
 an escape hatch if an FA4 kernel misbehaves. Nothing currently calls it from
 `megatron_worker.py` — wire the call in if you need the switch.
+
+## `pin_nvrtc.py`: NVRTC paired with the headers TE compiles against
+
+TE JIT-compiles some kernels with NVRTC (e.g. the MXFP8 RMSNorm forward). Its
+loader takes `libnvrtc` from `NVRTC_HOME` / `CUDA_HOME` / `/usr/local/cuda`
+before the pip `nvidia-cuda-nvrtc` wheel, and 2.19 also points
+`NVTE_CUDA_INCLUDE_DIR` at the pip `nvidia/cu13` headers. On a box whose system
+toolkit is CUDA 12.x, NVRTC 12.9 then compiles against CUDA 13 headers and
+fails with `NVRTC_ERROR_COMPILATION` in `rmsnorm_fwd_kernel.cu`. This is a
+regression from 2.16: that release left the include dir unset, so the system
+NVRTC and the system headers matched. It only shows on MXFP8 (Blackwell) paths.
+
+`pin_te_nvrtc_to_pip_cuda()` sets `NVRTC_HOME` to the pip `nvidia/cu{major}`
+(the major comes from the installed `transformer-engine-cu{major}` wheel). It
+leaves the environment alone if the user set `NVTE_CUDA_INCLUDE_DIR`, if
+`NVRTC_HOME` already holds a `libnvrtc`, or if TE is already imported. The
+`Run-time NVRTC version:` line in TE's compile log shows which NVRTC TE loaded.
+
+**Wired in at** `skyrl/backends/skyrl_train/__init__.py`: TE reads `NVRTC_HOME`
+once, at import, and every SkyRL module that imports TE or Megatron lives under
+that package. A script that imports `transformer_engine` without going through
+SkyRL is not covered.
+
+**Delete it** when `_load_cuda_library` in `transformer_engine/common/__init__.py`
+prefers the pip wheel. `test_installed_te_still_prefers_system_nvrtc` in
+`tests/backends/skyrl_train/patches/te/test_pin_nvrtc.py` fails at that point.
