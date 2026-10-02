@@ -84,11 +84,14 @@ Megatron worker `forward_backward` on a 5-layer GLM-5.3 -- 3 dense + 2 MoE layer
 * At full scale the hybrid cut fwd+bwd 1517 -> 1028 s (-32%), more than the 5-layer benchmark
   suggests, because the full model has 78 sparse-attention layers but computes the indexer in only
   ~22 of them.
-* The cudnn backend needs FlashMLA (`nv_dev` branch, `flash_mla_sparse_fwd`), which is not on PyPI.
-  Built here with `FLASH_MLA_DISABLE_SM90=1 CUDA_HOME=<cuda-13.0>
-  CPATH=<cuda>/include/cccl:<venv>/nvidia/cu13/include python setup.py build_ext --inplace`,
-  staged at `/mnt/local_storage/etang_pylib/flash_mla` on every node and put on the workers'
-  path with `SKYRL_PYTHONPATH_EXPORT=1 PYTHONPATH=/mnt/local_storage/etang_pylib`.
+* The cudnn backend needs FlashMLA (`nv_dev` branch, `flash_mla_sparse_fwd`), which is not on
+  PyPI. The `megatron` extra now installs our build from
+  [skyrl-wheels `cu13torch2.13-flashmla-b7643bd`](https://github.com/NovaSky-AI/skyrl-wheels/releases/tag/cu13torch2.13-flashmla-b7643bd)
+  (x86_64, cp312-314, sm_90a + sm_100f; no aarch64 wheel yet). The sweep itself ran against an
+  identical local build put on the workers' path with `SKYRL_PYTHONPATH_EXPORT=1 PYTHONPATH=...`;
+  the release wheel gives a bit-identical loss on the 5-layer benchmark. To switch a run over:
+  `trainer.policy.megatron_config.transformer_config_kwargs.dsa_kernel_backend=cudnn` and
+  `export SKYRL_DSA_INDEXER_BACKEND=tilelang`.
 * The earlier impression that TileLang made training 2x slower than the naive path came from a
   naive-kernel run that OOMed partway through step 1; on identical batches TileLang is 2x faster
   than naive.
