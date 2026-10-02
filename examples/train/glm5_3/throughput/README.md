@@ -4,7 +4,17 @@ Systematic sweep of Megatron trainer throughput for GLM-5.3 (753B `glm_moe_dsa`,
 full fine-tuning, done 2026-10-02 on 8 nodes x 8 B200 (RoCE, 8x400G per node) with
 megatron-core d476c21be, Megatron-Bridge 0.7.0, TransformerEngine 2.19.0, torch 2.13.
 
-STATUS: in progress -- the 16k baseline (s0) is still running; this file is updated as runs complete.
+
+## Summary
+
+| max response | baseline step | best step | speedup | best config |
+|---|---|---|---|---|
+| 8k (8.69M tokens/step) | 2045 s (TP8, TileLang) | 1144 s | **1.79x** | TP4/EP64, hybrid DSA, `OMP_NUM_THREADS=12`, bf16 |
+| 16k (16.5M tokens/step) | 3443 s (TP8, TileLang) | 2645 s | **1.30x** | TP8/EP64, hybrid DSA, `OMP_NUM_THREADS=12`, bf16 |
+
+MXFP8 on the trainer is ~5% slower than bf16 at both lengths (GEMMs are ~3% of the step). The
+largest remaining cost is MoE all-to-all (~38% of the step); DeepEP / NCCL EP could not be made to
+work on this cluster (see below).
 
 ## Method
 
@@ -181,10 +191,10 @@ their own anyway.
 
 | run | config | fwd | fwd+bwd | optim | step | tokens/s | peak reserved |
 |---|---|---|---|---|---|---|---|
-| s1 | bf16 TP8/EP64, hybrid DSA, OMP 12 | 585 s | 1969 s | 86 s | 2645 s | 6.24k | 135 GiB |
+| s1 | bf16 TP8/EP64, hybrid DSA, OMP 12 | 585 s | 1969 s | 86 s | **2645 s (1.30x)** | 6.24k | 135 GiB |
 | s2 | s1 + MXFP8 | 619 s | 2098 s | 73 s | 2794 s | 5.91k | 145 GiB |
 | s3 | bf16 TP4/EP64, hybrid DSA, OMP 12, 8k microbatches | 419 s | OOM | | | | >172 GiB alloc |
-| s0 | 16k baseline (TP8, TileLang, single-threaded optimizer) | running | | | | | |
+| s0 | 16k baseline (TP8, TileLang, single-threaded optimizer) | 611 s | 2639 s | 188 s | 3443 s | 4.79k | 130 GiB |
 
 TP4 cannot hold a 16.9k-token microbatch (s3 OOMed in the first training mini-batch, as did 16k
 packed microbatches at TP4 in b4), so 16k stays at TP8. The TP4 forward pass alone was 30% faster
@@ -192,4 +202,26 @@ packed microbatches at TP4 in b4), so 16k stays at TP8. The TP4 forward pass alo
 
 ## Recommendations
 
-TODO
+For the DAPO recipe (`../run_dapo_glm5p3_fullft_fp8_rollout_8node.sh`), in order of payoff:
+
+1. **Hybrid DSA backend** (`dsa_kernel_backend=cudnn` + `SKYRL_DSA_INDEXER_BACKEND=tilelang`,
+   FlashMLA on the workers' path): -26% step time at no memory cost, numerically equivalent.
+2. **TP4** at 8k: another -20%; peak 140 GiB reserved, inside the ~165 GiB colocated budget. Keep
+   TP8 at 16k (TP4 OOMs on a 16.9k-token sequence). Untested in the colocated recipe: the weight
+   sync peak was the binding constraint there at TP4 for LoRA (vLLM weights + reload buffers +
+   trainer weights), though the eager-reload patch since cut vLLM's sync peak by ~20 GiB.
+3. **`OMP_NUM_THREADS=12`** for the CPU-offloaded optimizer: halves the optimizer step (-6% of
+   the step at 8k).
+4. Keep MoE recompute (`[core_attn, moe]`): dropping it saves 3% for +26 GiB.
+5. MXFP8 on the trainer costs ~5% throughput and ~10-13 GiB; use it for numerics, not speed.
+
+Remaining headroom is in communication, not compute (GEMMs are ~3% of the step):
+
+* EP dispatch (~38% of the step): a node-aware dispatcher (DeepEP/HybridEP/NCCL EP) needs either
+  the driver settings for IBGDA/GDAKI or NCCL EP fixed for uneven per-rank token counts (pad each
+  microbatch's dispatch input to the bootstrapped bound); FP8 dispatch payloads would halve bytes.
+* EP32 (fewer cross-node hops) does not fit with fp32 main grads: experts are ~11.3B params per GPU
+  at EP64 (23 GiB bf16 + 45 GiB fp32 grads), and EP32 doubles that. It would need
+  `ddp_config.grad_reduce_in_fp32=false` (bf16 grad accumulation) -- not measured.
+* Host syncs in the MoE path (`nonzero`, `.item()`) and CPU optimizer D2H/H2D
+  (`overlap_cpu_optimizer_d2h_h2d=false` here) are the next smaller items.
