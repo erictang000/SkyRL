@@ -15,6 +15,7 @@ import pytest
 from aiohttp.test_utils import TestServer
 
 from skycap import record
+from skycap.hashing import match_hash, token_match_hash
 from skycap.samples import build_samples
 from skycap.server import CaptureServer
 from skycap.tokens.backend import STATUS_HEADER, TokensBackend
@@ -83,6 +84,28 @@ async def converse(llm: openai.AsyncOpenAI, *texts: str, **kwargs: Any) -> list[
 
 
 # -- attribution ---------------------------------------------------------------
+@pytest.mark.parametrize("fields", [{"refusal": None}, {"response_id": "resp_1", "refusal": None}])
+def test_token_match_ignores_provider_specific_fields(fields: dict) -> None:
+    reply = {"role": "assistant", "content": "answer"}
+    replay = {**reply, "provider_specific_fields": fields}
+
+    assert token_match_hash(reply, tools="", model="policy") == token_match_hash(replay, tools="", model="policy")
+    assert match_hash(reply, tools="", model="policy") != match_hash(replay, tools="", model="policy")
+
+
+def test_token_match_equates_empty_tool_content_with_absent_content() -> None:
+    tool_call = {"id": "call_0", "type": "function", "function": {"name": "search", "arguments": "{}"}}
+    reply = {"role": "assistant", "content": "", "reasoning_content": "hmm", "tool_calls": [tool_call]}
+    replay = {key: value for key, value in reply.items() if key != "content"}
+    replay["provider_specific_fields"] = {"refusal": None}
+
+    assert token_match_hash(reply, tools="", model="policy") == token_match_hash(replay, tools="", model="policy")
+    assert match_hash(reply, tools="", model="policy") != match_hash(replay, tools="", model="policy")
+    assert token_match_hash(reply, tools="", model="policy") != token_match_hash(
+        {**replay, "content": "Summary so far"}, tools="", model="policy"
+    )
+
+
 def test_scaffold_belongs_to_the_following_message_and_the_tail_to_the_reply() -> None:
     chunks, scaffold = attribute([9, 1, 1, 8, 2, 2, 7, 7], [-1, 0, 0, -1, 1, 1, -1, -1], 2)
     assert chunks == [[9, 1, 1], [8, 2, 2]]
@@ -147,6 +170,34 @@ async def test_routed_experts_align_and_the_placeholder_is_replaced() -> None:
         assert routed[-1, 0, 0] == routed[-2, 0, 0]
 
 
+class _FullRoutesEngine(VLLMEngine):
+    routes_from_supported = False
+
+
+async def test_a_wire_without_routes_from_gets_every_calls_full_routes() -> None:
+    async with token_stack(engine=_FullRoutesEngine()) as stack:
+        created = await stack.create()
+        await converse(client(created["base_url"]), "hi", "more")
+        (sample,) = build_samples(stack.server.trajectories[created["id"]].graph)
+
+        assert not any("routed_experts_prompt_start" in r["sampling_params"] for r in stack.engine.requests)
+        np.testing.assert_array_equal(sample.routed_experts[:-1, 0, 0], np.arange(len(sample.input_ids) - 1) % 256)
+
+
+async def test_a_turn_fetches_only_the_routes_it_lacks_and_they_still_align() -> None:
+    async with token_stack() as stack:
+        created = await stack.create()
+        await converse(client(created["base_url"]), "hi", "more", "again")
+        (sample,) = build_samples(stack.server.trajectories[created["id"]].graph)
+        routed = sample.routed_experts
+
+        starts = [r["sampling_params"].get("routed_experts_prompt_start", 0) for r in stack.engine.requests]
+        # The first call has no history; each later one starts at the previous reply's last token.
+        assert starts[0] == 0 and all(0 < a < b for a, b in zip(starts[1:], starts[2:]))
+        assert routed is not None and routed.shape == (len(sample.input_ids), 2, 2)
+        np.testing.assert_array_equal(routed[:-1, 0, 0], np.arange(len(sample.input_ids) - 1) % 256)
+
+
 async def test_the_sampling_mask_covers_each_trained_token() -> None:
     async with token_stack(sampling_mask=True) as stack:
         created = await stack.create()
@@ -180,6 +231,62 @@ async def test_an_append_only_conversation_bridges_every_call_after_the_first() 
 
         assert [call.bridged for node in graph if node.author == "model" for call in node.calls] == [None, True, True]
         assert (await stack.finish(created["id"]))["unbridged_calls"] == 0
+
+
+async def test_client_metadata_does_not_prevent_bridging() -> None:
+    async with token_stack() as stack:
+        created = await stack.create()
+        llm = client(created["base_url"])
+        first = await llm.chat.completions.create(model="policy", messages=[user("q")])
+        reply = first.choices[0].message.model_dump(exclude_none=True)
+        reply["provider_specific_fields"] = {"refusal": None, "response_id": "resp_1"}
+        async with stack.http.post(
+            f"{created['base_url']}/chat/completions",
+            json={"model": "policy", "messages": [user("q"), reply, user("next")]},
+        ) as response:
+            assert response.status == 200
+
+        graph = stack.server.trajectories[created["id"]].graph
+        assert [call.bridged for node in graph if node.author == "model" for call in node.calls] == [None, True]
+        assert (await stack.finish(created["id"]))["unbridged_calls"] == 0
+
+
+async def test_empty_tool_call_content_replay_bridges_but_rewrite_forks() -> None:
+    completion = [*encode("THINK:hmm|CALL:search:{}"), END]
+    async with token_stack(completion=lambda prompt, sampling: completion) as stack:
+        created = await stack.create()
+        llm = client(created["base_url"])
+        tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
+        first = await llm.chat.completions.create(model="policy", messages=[user("q")], tools=tools)
+        reply = first.choices[0].message.model_dump(exclude_none=True)
+        assert reply["content"] == "" and reply["reasoning_content"] == "hmm" and reply["tool_calls"]
+
+        replay = {key: value for key, value in reply.items() if key != "content"}
+        replay["provider_specific_fields"] = {"refusal": None}
+        tool_result = {"role": "tool", "tool_call_id": reply["tool_calls"][0]["id"], "content": "found"}
+        async with stack.http.post(
+            f"{created['base_url']}/chat/completions",
+            json={"model": "policy", "messages": [user("q"), replay, tool_result], "tools": tools},
+        ) as response:
+            assert response.status == 200
+
+        async with stack.http.post(
+            f"{created['base_url']}/chat/completions",
+            json={
+                "model": "policy",
+                "messages": [user("q"), {"role": "assistant", "content": "Summary so far"}, user("next")],
+                "tools": tools,
+            },
+        ) as response:
+            assert response.status == 200
+
+        graph = stack.server.trajectories[created["id"]].graph
+        model_nodes = [node for node in graph if node.author == "model"]
+        assert len(model_nodes) == 3
+        assert model_nodes[0].id in graph.path_to(model_nodes[1].id)
+        assert model_nodes[0].id not in graph.path_to(model_nodes[2].id)
+        assert [call.bridged for node in model_nodes for call in node.calls] == [None, True, False]
+        assert (await stack.finish(created["id"]))["unbridged_calls"] == 1
 
 
 async def test_stripped_reasoning_forks_and_trains_each_sample_once() -> None:
