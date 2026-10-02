@@ -33,8 +33,8 @@ the idle TTL, the port and the renderer pool size.
 
 | Piece | What it does |
 | --- | --- |
-| `entrypoints/main_harbor_skycap.py` | Starts one skycap server in this process, in token mode, in front of the router. Stops it at the end, which writes every trajectory still in memory. |
-| `service.py` | Runs that server on its own thread and event loop, since the trainer may run each `generate` on a new loop. |
+| `entrypoints/main_harbor_skycap.py` | Starts the skycap servers in token mode, in front of the router, from the run's config. Stops them at the end, which writes every trajectory still in memory. |
+| `servers.py` | The server pool: one Ray actor per server, each running a `skycap.CaptureService` on a port of its own. skycap builds how calls reach the model from the options; the integration supplies only its engine wire. |
 | `engine.py` | `SkyRLEngine`: skycap's vLLM wire on `/skyrl/v1/generate`, with packed routed experts and sampler support decoded by SkyRL's own `generate_wire`, and sessions released at `/finish_session`. |
 | `harbor_generator.py` | Per trial: create a trajectory, point the agent's `api_base` at it, run Harbor, and `finish` with the reward to get the samples. A retry gets a fresh trajectory. |
 | `compose.py` | Samples to a step-wise `GeneratorOutput`: a trial's paths are contiguous under its `TrajectoryID`, the last one marked `is_last_step` and carrying the reward. |
@@ -49,15 +49,18 @@ Masking is the sibling's:
 - **Context-length stop:** trains with reward 0, unless overlong filtering is on.
 - **Failed inside skycap** (e.g. an unattributable prompt): the trial isn't trained on.
 
+R3 (rollout routing replay) needs
+`generator.inference_engine.enable_return_routed_experts=true` and
+`trainer.policy.megatron_config.moe_enable_routing_replay=true`, with Megatron
+and vLLM's `mp` backend, as for SkyRL's own generator. Each row carries routes
+for its whole prompt and response, each from the forward pass that ran that
+token. A trial whose trained path lacks routes is retried, then masked, and
+counted in `generate/skycap/num_missing_route_trajectories`.
+
 ## Limits
 
-- **No R3 yet.** skycap records routed experts, but SkyRL's trainer refuses them
-  with step-wise output. So the generator refuses
-  `enable_return_routed_experts=true`, and the trainer change is a follow-up.
 - **Sampler support** (`enable_return_sample_support_set`) is passed through,
   padded to `top_k`.
-- **One skycap server per run.** The generator takes a list of URLs and spreads
-  trajectories over them, for when servers are launched separately.
 
 ## Tests
 

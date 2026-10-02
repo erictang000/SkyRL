@@ -18,10 +18,13 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence
 
 from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
+    BLOCKWISE_FP8,
+    MXFP8,
     ModelFp8Spec,
     MoeExpertSpec,
     register_fp8_spec,
 )
+from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import MXFP8_GROUP_SIZE
 
 _GLM5_FP8_WEIGHT_SUFFIXES = (
     ".self_attn.q_a_proj.weight",
@@ -48,26 +51,33 @@ def is_glm5_config(hf_config: Any) -> bool:
     return model_type == "glm_moe_dsa"
 
 
-def get_glm5_fp8_ignored_layers(hf_config: Any) -> list[str]:
-    """No vLLM module needs an explicit ignore.
+def get_glm5_fp8_ignored_layers(hf_config: Any, wire_format: str = BLOCKWISE_FP8) -> list[str]:
+    """No vLLM module needs an explicit ignore, for either wire format.
 
     Every linear left in BF16 on the wire (router, indexer ``wk_weights_proj``) is built by
     vLLM without a quantization config, and the embeddings / ``lm_head`` / norms are not
-    ``LinearBase`` modules, so the FP8 config never reaches them.
+    ``LinearBase`` modules, so the FP8 config never reaches them. Every quantized linear has a
+    reduction dim divisible by 32 and ``out_features >= 128``, as MXFP8 kernels require.
     """
 
     return []
 
 
-def is_quantizable_weight_shape(name: str, shape: Sequence[int]) -> bool:
-    """Return whether an exported HF weight should be serialized as FP8."""
+def is_quantizable_weight_shape(name: str, shape: Sequence[int], wire_format: str = BLOCKWISE_FP8) -> bool:
+    """Return whether an exported HF weight should be serialized as FP8.
+
+    MXFP8 additionally requires the reduction dim to be a multiple of 32.
+    """
 
     if not name.endswith(".weight") or len(shape) != 2:
         return False
-    if name.endswith(_GLM5_FP8_WEIGHT_SUFFIXES):
-        return True
     # Routed experts: model.layers.<l>.mlp.experts.<n>.{gate,up,down}_proj.weight
-    return ".mlp.experts." in name and name.endswith(_GLM5_EXPERT_PROJ_SUFFIXES)
+    is_expert = ".mlp.experts." in name and name.endswith(_GLM5_EXPERT_PROJ_SUFFIXES)
+    if not (name.endswith(_GLM5_FP8_WEIGHT_SUFFIXES) or is_expert):
+        return False
+    if wire_format == MXFP8 and shape[1] % MXFP8_GROUP_SIZE != 0:
+        return False
+    return True
 
 
 def batched_moe_expert_spec(name: str) -> Optional[MoeExpertSpec]:

@@ -53,3 +53,12 @@ def test_glm5_bf16_weights_stay_unquantized(name):
 def test_glm5_spec_has_no_batched_experts_or_ignored_layers():
     assert GLM5_FP8_SPEC.moe_expert_spec("model.layers.3.mlp.experts.gate_up_proj") is None
     assert GLM5_FP8_SPEC.ignored_layers(SimpleNamespace(model_type="glm_moe_dsa")) == []
+
+
+def test_glm5_mxfp8_wire_requires_32_aligned_reduction_dim():
+    from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import MXFP8
+
+    name = "model.layers.3.mlp.experts.7.down_proj.weight"
+    assert GLM5_FP8_SPEC.should_quantize(name, (6144, 2048), MXFP8)
+    assert not GLM5_FP8_SPEC.should_quantize(name, (6144, 2050), MXFP8)
+    assert GLM5_FP8_SPEC.ignored_layers(SimpleNamespace(model_type="glm_moe_dsa"), MXFP8) == []

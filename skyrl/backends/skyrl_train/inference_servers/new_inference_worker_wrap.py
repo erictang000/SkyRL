@@ -41,6 +41,12 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 import torch
 
+from skyrl.backends.skyrl_train.inference_servers.vllm_compat import (
+    normalize_fp8_kv_scales_after_wake,
+    patch_vllm_dummy_weight_boot_detection,
+    patch_vllm_fp8_kv_scale_boot_normalization,
+    patch_vllm_fp8_kv_scale_completion,
+)
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     SKYRL_BATCHED_MOE_FP8_PREFIX,
     batched_moe_wire_targets,
@@ -54,6 +60,19 @@ ensure_ray_rdt_libfabric()
 if TYPE_CHECKING:
     from vllm.config import ModelConfig, VllmConfig
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
+# Must run inside EVERY vLLM worker process: post-sync hooks in the receive
+# engines need the process-local model runner, but vLLM only gives engines the
+# model object.
+try:
+    from skyrl.backends.skyrl_train.patches.vllm.patch_model_runner_registry import (
+        apply_model_runner_registry_patch,
+    )
+
+    apply_model_runner_registry_patch()
+except ModuleNotFoundError as exc:
+    if exc.name != "vllm":
+        raise
 
 # Must run inside EVERY vLLM worker process: Worker.load_model builds the
 # weight-transfer engine through the factory. vLLM loads this module before model
@@ -69,6 +88,14 @@ try:
     apply_lora_in_memory_patch()
 except ModuleNotFoundError:
     pass
+
+# Apply the compatibility patches before vLLM constructs each worker.
+# Must be installed before the two KV-scale patches run: it is what tells them
+# whether this engine booted from dummy weights (serialized FP8 weight sync) or
+# from a real checkpoint whose calibrated scales they must not touch.
+patch_vllm_dummy_weight_boot_detection()
+patch_vllm_fp8_kv_scale_boot_normalization()
+patch_vllm_fp8_kv_scale_completion()
 
 try:
     from skyrl.backends.skyrl_train.weight_sync.register import (
@@ -354,11 +381,11 @@ class NewInferenceWorkerWrap:
             draft = self._skyrl_draft_model()
             if draft is not None:
                 self._skyrl_restore_buffers(draft, "_skyrl_saved_draft_buffers")
-        # Re-init fp8 KV scales after the KV pool remaps (no-op without fp8 KV cache).
+        # Re-assert the serialized-FP8 KV scales after the KV pool remaps (no-op
+        # without fp8 KV cache or on a real-checkpoint boot). This path skips
+        # Worker.wake_up, so the vllm_compat wake patch never sees it.
         if tags is None or "kv_cache" in tags:
-            post_wake = getattr(self.model_runner, "post_kv_cache_wake_up", None)
-            if post_wake is not None:
-                post_wake()
+            normalize_fp8_kv_scales_after_wake(self.model_runner)
 
     def _skyrl_draft_model(self):
         """The spec-decode drafter module, or None when there is no drafter."""

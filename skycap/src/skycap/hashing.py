@@ -56,6 +56,25 @@ def match_hash(message: Mapping[str, Any], *, tools: str, model: str | None) -> 
     return digest([message_hash(message), tools, model or ""])
 
 
+def token_match_hash(message: Mapping[str, Any], *, tools: str, model: str | None) -> str:
+    """Match token-mode messages by fields the renderer can use.
+
+    ``provider_specific_fields`` is client metadata, not rendered tokens. Text
+    mode keeps it in the regular match hash because its upstream may use it.
+    For assistant tool calls, an empty ``content`` renders like absent content.
+    """
+    empty_tool_content = (
+        message.get("role") == "assistant" and message.get("content") == "" and bool(message.get("tool_calls"))
+    )
+    if "provider_specific_fields" not in message and not empty_tool_content:
+        return match_hash(message, tools=tools, model=model)
+    matched_message = dict(message)
+    matched_message.pop("provider_specific_fields", None)
+    if empty_tool_content:
+        matched_message.pop("content", None)
+    return match_hash(matched_message, tools=tools, model=model)
+
+
 def sampling_key(sampling: Mapping[str, Any] | None) -> dict[str, Any]:
     if not sampling:
         return {}
