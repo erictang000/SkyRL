@@ -1059,6 +1059,9 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "HF_ENDPOINT",
         "PYTORCH_CUDA_ALLOC_CONF",
         "SKYRL_DSA_INDEXER_BACKEND",
+        # vLLM all-reduce backend switches; multi-node TP engines need FlashInfer / symm-mem off.
+        "VLLM_ALLREDUCE_USE_FLASHINFER",
+        "VLLM_ALLREDUCE_USE_SYMM_MEM",
         # Ray sets OMP_NUM_THREADS=num_cpus (1 per policy actor) unless the runtime env has it,
         # which leaves the CPU-offloaded optimizer step single-threaded.
         "OMP_NUM_THREADS",

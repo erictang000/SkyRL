@@ -29,8 +29,19 @@ NUM_GPUS_PER_NODE=8
 # INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=16, which runs vLLM on its Ray executor (mp is single-node).
 NUM_INFERENCE_ENGINES="${NUM_INFERENCE_ENGINES:-8}"
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE="${INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE:-8}"
+MULTINODE_ENGINE_KWARGS=''
 if [ "$INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE" -gt "$NUM_GPUS_PER_NODE" ]; then
   INFERENCE_EXECUTOR_BACKEND="${INFERENCE_EXECUTOR_BACKEND:-ray}"
+  # A TP group across nodes without multi-node NVLink (B200 over RoCE), on vLLM 0.30:
+  # * custom all-reduce rendezvous for an MNNVL buffer that never forms -> engine init deadlocks;
+  # * FlashInfer all-reduce and NCCL symmetric memory cannot set up across nodes;
+  # * FlashInfer's TRT-LLM sparse-MLA decode has no kernel for 4 heads/rank (64 heads / TP16),
+  #   FlashMLA pads heads;
+  # * the per-layer FlashInfer fused all-reduce + RMSNorm retries its MNNVL workspace (30 s
+  #   timeout) on every call -- skipped by SkyRL's patch_multinode_fused_allreduce_norm.
+  MULTINODE_ENGINE_KWARGS='"disable_custom_all_reduce": true, "attention_config": {"backend": "FLASHMLA_SPARSE"}, '
+  export VLLM_ALLREDUCE_USE_FLASHINFER=0
+  export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 else
   INFERENCE_EXECUTOR_BACKEND="${INFERENCE_EXECUTOR_BACKEND:-mp}"
 fi
@@ -158,7 +169,7 @@ if [ "$ENABLE_ROUTING_REPLAY" = "true" ] && [ "$R3_MOE_BACKEND" != "auto" ]; the
 else
   MOE_BACKEND_KWARG=''
 fi
-ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', '"$MOE_BACKEND_KWARG$QUANT_KWARG"'"load_format": "dummy", "kv_cache_dtype": "bfloat16", "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "max_cudagraph_capture_size": '"$MAX_CUDAGRAPH_CAPTURE_SIZE"', "pass_config": {"fuse_allreduce_rms": false}}}'
+ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', '"$MOE_BACKEND_KWARG$QUANT_KWARG$MULTINODE_ENGINE_KWARGS"'"load_format": "dummy", "kv_cache_dtype": "bfloat16", "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY", "max_cudagraph_capture_size": '"$MAX_CUDAGRAPH_CAPTURE_SIZE"', "pass_config": {"fuse_allreduce_rms": false}}}'
 
 export SKYRL_WORKER_NCCL_TIMEOUT_IN_S=5400
 export SKYRL_GENERATE_CONCURRENCY_PER_ENGINE=128

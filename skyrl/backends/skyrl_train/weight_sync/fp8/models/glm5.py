@@ -51,16 +51,25 @@ def is_glm5_config(hf_config: Any) -> bool:
     return model_type == "glm_moe_dsa"
 
 
-def get_glm5_fp8_ignored_layers(hf_config: Any, wire_format: str = BLOCKWISE_FP8) -> list[str]:
-    """No vLLM module needs an explicit ignore, for either wire format.
+# MXFP8 only: MLA's kv_b_proj stays BF16. vLLM folds kv_b_proj into the absorbed W_UK_T / W_UV
+# at load; with no direct MXFP8 dequant, it reconstructs the weight by running the MXFP8 GEMM on
+# an identity matrix (``get_and_maybe_dequant_weights``), and after a level-2 sleep + reload that
+# path produced wrong W_UK_T / W_UV in every layer (garbage rollouts; pre-train AIME -1.0). A BF16
+# kv_b_proj takes vLLM's unquantized path. ~29 MB per layer.
+_GLM5_MXFP8_BF16_SUFFIXES = (".self_attn.kv_b_proj.weight",)
+_GLM5_MXFP8_IGNORED_LAYERS = ["re:.*self_attn\\.kv_b_proj"]
 
-    Every linear left in BF16 on the wire (router, indexer ``wk_weights_proj``) is built by
+
+def get_glm5_fp8_ignored_layers(hf_config: Any, wire_format: str = BLOCKWISE_FP8) -> list[str]:
+    """vLLM modules to build unquantized: ``kv_b_proj`` on the MXFP8 wire, nothing on blockwise.
+
+    Every other linear left in BF16 on the wire (router, indexer ``wk_weights_proj``) is built by
     vLLM without a quantization config, and the embeddings / ``lm_head`` / norms are not
     ``LinearBase`` modules, so the FP8 config never reaches them. Every quantized linear has a
     reduction dim divisible by 32 and ``out_features >= 128``, as MXFP8 kernels require.
     """
 
-    return []
+    return list(_GLM5_MXFP8_IGNORED_LAYERS) if wire_format == MXFP8 else []
 
 
 def is_quantizable_weight_shape(name: str, shape: Sequence[int], wire_format: str = BLOCKWISE_FP8) -> bool:
@@ -75,7 +84,7 @@ def is_quantizable_weight_shape(name: str, shape: Sequence[int], wire_format: st
     is_expert = ".mlp.experts." in name and name.endswith(_GLM5_EXPERT_PROJ_SUFFIXES)
     if not (name.endswith(_GLM5_FP8_WEIGHT_SUFFIXES) or is_expert):
         return False
-    if wire_format == MXFP8 and shape[1] % MXFP8_GROUP_SIZE != 0:
+    if wire_format == MXFP8 and (shape[1] % MXFP8_GROUP_SIZE != 0 or name.endswith(_GLM5_MXFP8_BF16_SUFFIXES)):
         return False
     return True
 

@@ -165,6 +165,15 @@ from skyrl.backends.skyrl_train.patches.vllm.patch_routed_experts_rebind import 
 
 apply_routed_experts_rebind_patch()
 
+# DeepSeek-V3.2-family models (GLM-5.3) call FlashInfer's fused all-reduce + RMSNorm in every
+# layer; on a TP group spanning nodes without multi-node NVLink its workspace setup times out on
+# every call. Fall back to NCCL all-reduce + RMSNorm there.
+from skyrl.backends.skyrl_train.patches.vllm.patch_multinode_fused_allreduce_norm import (  # noqa: E402
+    apply_multinode_fused_allreduce_norm_patch,
+)
+
+apply_multinode_fused_allreduce_norm_patch()
+
 
 VLLM_NEW_INFERENCE_WORKER_EXTENSION_CLS = f"{__name__}.NewInferenceWorkerWrap"
 

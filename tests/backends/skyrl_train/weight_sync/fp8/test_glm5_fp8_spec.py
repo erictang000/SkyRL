@@ -61,4 +61,20 @@ def test_glm5_mxfp8_wire_requires_32_aligned_reduction_dim():
     name = "model.layers.3.mlp.experts.7.down_proj.weight"
     assert GLM5_FP8_SPEC.should_quantize(name, (6144, 2048), MXFP8)
     assert not GLM5_FP8_SPEC.should_quantize(name, (6144, 2050), MXFP8)
-    assert GLM5_FP8_SPEC.ignored_layers(SimpleNamespace(model_type="glm_moe_dsa"), MXFP8) == []
+
+
+def test_glm5_mxfp8_wire_keeps_kv_b_proj_bf16():
+    """vLLM's MLA folds kv_b_proj into W_UK_T / W_UV through a generic identity-GEMM dequant on
+    MXFP8, which broke after a level-2 sleep; the MXFP8 wire sends it BF16 and has vLLM build it
+    unquantized. The blockwise wire keeps it FP8."""
+    from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
+        BLOCKWISE_FP8,
+        MXFP8,
+    )
+
+    name = "model.layers.3.self_attn.kv_b_proj.weight"
+    hf_config = SimpleNamespace(model_type="glm_moe_dsa")
+    assert not GLM5_FP8_SPEC.should_quantize(name, (28672, 512), MXFP8)
+    assert GLM5_FP8_SPEC.should_quantize(name, (28672, 512), BLOCKWISE_FP8)
+    assert GLM5_FP8_SPEC.ignored_layers(hf_config, MXFP8) == ["re:.*self_attn\\.kv_b_proj"]
+    assert GLM5_FP8_SPEC.ignored_layers(hf_config, BLOCKWISE_FP8) == []
