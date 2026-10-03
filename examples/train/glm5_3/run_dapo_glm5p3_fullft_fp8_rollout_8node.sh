@@ -24,8 +24,16 @@ TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
 
 NUM_NODES=8
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=8          # one TP8 FP8 engine per node
-INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=8
+# One TP8 FP8 engine per node by default. BF16 rollouts (VLLM_QUANTIZATION=none, ~94 GiB/GPU of
+# weights at TP16) need two nodes per engine: NUM_INFERENCE_ENGINES=4
+# INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=16, which runs vLLM on its Ray executor (mp is single-node).
+NUM_INFERENCE_ENGINES="${NUM_INFERENCE_ENGINES:-8}"
+INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE="${INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE:-8}"
+if [ "$INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE" -gt "$NUM_GPUS_PER_NODE" ]; then
+  INFERENCE_EXECUTOR_BACKEND="${INFERENCE_EXECUTOR_BACKEND:-ray}"
+else
+  INFERENCE_EXECUTOR_BACKEND="${INFERENCE_EXECUTOR_BACKEND:-mp}"
+fi
 LOGGER="${LOGGER:-wandb}"
 
 MAX_TRAINING_STEPS="${MAX_TRAINING_STEPS:-20}"
@@ -76,7 +84,15 @@ DSA_INDEXER_LOSS_COEFF=0.0
 # TileLang top-k matches the naive one exactly and sparse attention is within bf16 rounding
 # (0.3% on out/dq/dk), at ~0.6-1 GiB instead of ~18-19 GiB and ~10x faster. The kernels JIT with
 # $CUDA_HOME (CUDA 13.0 here); the cudnn backend would additionally need flash_mla.
-DSA_KERNEL_BACKEND="${DSA_KERNEL_BACKEND:-tilelang}"
+#
+# DSA_KERNEL_BACKEND=hybrid (default) runs sparse attention on cuDNN/FlashMLA and the indexer top-k
+# on TileLang (patch_dsa_hybrid_indexer): -26% step time vs tilelang in the throughput sweep
+# (throughput/README.md). FlashMLA comes with the megatron extra (x86_64).
+DSA_KERNEL_BACKEND="${DSA_KERNEL_BACKEND:-hybrid}"
+if [ "$DSA_KERNEL_BACKEND" = "hybrid" ]; then
+  DSA_KERNEL_BACKEND=cudnn
+  export SKYRL_DSA_INDEXER_BACKEND=tilelang
+fi
 
 OPTIMIZER_OFFLOAD=true
 OPTIMIZER_OFFLOAD_FRACTION=1.0
@@ -95,6 +111,7 @@ INFERENCE_ENGINE_GPU_MEMORY_UTILIZATION="${INFERENCE_ENGINE_GPU_MEMORY_UTILIZATI
 ROUTER_INIT_KWARGS='{"policy": "round_robin", "queue_size": 8192, "queue_timeout_secs": 1800}'
 # fp8_per_block needs SkyRL's per_block_cast_to_fp8 patch (installed in every vLLM worker); fp8
 # is per-tensor. load_format=dummy: SkyRL syncs the trainer's weights before the first rollout.
+# VLLM_QUANTIZATION=none serves BF16 (see NUM_INFERENCE_ENGINES above).
 VLLM_QUANTIZATION="${VLLM_QUANTIZATION:-fp8_per_block}"
 
 # FULL_FP8=true: MXFP8 GEMMs on the trainer (fp8_recipe=auto resolves to MXFP8 on Blackwell) and
@@ -107,7 +124,10 @@ FULL_FP8="${FULL_FP8:-false}"
 FP8_OVERRIDES=()
 if [ "$FULL_FP8" = "true" ]; then
   QUANT_KWARG=''
-  QUANT_LABEL=mxfp8_blockwise
+  # blockwise (128x128 FP32-scale blocks, vLLM fp8) or mxfp8 (E8M0 per 32-group, the trainer's
+  # own recipe; vLLM serves it through compressed-tensors).
+  FP8_WEIGHT_SYNC_MODE="${FP8_WEIGHT_SYNC_MODE:-blockwise}"
+  QUANT_LABEL=mxfp8_${FP8_WEIGHT_SYNC_MODE}
   export NVTE_FP8_BLOCK_SCALING_FP32_SCALES=0
   export VLLM_USE_DEEP_GEMM_E8M0=1
   FP8_OVERRIDES=(
@@ -115,11 +135,16 @@ if [ "$FULL_FP8" = "true" ]; then
     trainer.policy.megatron_config.fp8_recipe=auto
     trainer.policy.megatron_config.fp8_amax_compute_algo=most_recent
     trainer.policy.megatron_config.transformer_config_kwargs.tp_only_amax_red=false
-    generator.inference_engine.fp8_weight_sync_mode=blockwise
+    generator.inference_engine.fp8_weight_sync_mode=$FP8_WEIGHT_SYNC_MODE
   )
 else
-  QUANT_KWARG='"quantization": "'"$VLLM_QUANTIZATION"'", '
-  QUANT_LABEL=$VLLM_QUANTIZATION
+  if [ "$VLLM_QUANTIZATION" = "none" ]; then
+    QUANT_KWARG=''
+    QUANT_LABEL=bf16
+  else
+    QUANT_KWARG='"quantization": "'"$VLLM_QUANTIZATION"'", '
+    QUANT_LABEL=$VLLM_QUANTIZATION
+  fi
 fi
 # R3 on vLLM's default FP8 MoE backend on B200 (FlashInfer TRT-LLM, monolithic) needs SkyRL's
 # patch_routed_experts_rebind (backport of vllm#59455, installed in every vLLM worker): without it
@@ -138,6 +163,9 @@ ENGINE_INIT_KWARGS='{"max_model_len": '"$INFERENCE_ENGINE_MAX_MODEL_LEN"', '"$MO
 export SKYRL_WORKER_NCCL_TIMEOUT_IN_S=5400
 export SKYRL_GENERATE_CONCURRENCY_PER_ENGINE=128
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.3}"
+# Ray gives each policy actor num_cpus=1, so OMP_NUM_THREADS would default to 1 and the
+# CPU-offloaded Adam step would run single-threaded; 12 halves it (B200 nodes: 14 cores/GPU).
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-12}"
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=1800
 export SKYRL_VLLM_START_PORT="${SKYRL_VLLM_START_PORT:-8400}"
 export SKYRL_DUMP_INFRA_LOG_TO_STDOUT=1
@@ -148,7 +176,7 @@ RUN_NAME="${RUN_NAME:-glm5p3_dapo_fullft_${QUANT_LABEL}_tp${MEGATRON_TP}_ep${MEG
 CKPT_INTERVAL="${CKPT_INTERVAL:-0}"
 CKPT_PATH="${CKPT_PATH:-$HOME/ckpts/$RUN_NAME}"
 
-uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
+${UV_RUN:-uv run --isolated} --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$TEST_FILE']" \
   trainer.strategy=megatron \
@@ -217,7 +245,7 @@ uv run --isolated --extra megatron -m examples.train.algorithms.dapo.main_dapo \
   generator.inference_engine.backend=vllm \
   generator.inference_engine.run_engines_locally=true \
   generator.inference_engine.weight_sync_backend=nccl \
-  generator.inference_engine.distributed_executor_backend="mp" \
+  generator.inference_engine.distributed_executor_backend="$INFERENCE_EXECUTOR_BACKEND" \
   generator.inference_engine.num_engines=$NUM_INFERENCE_ENGINES \
   generator.inference_engine.tensor_parallel_size=$INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE \
   generator.inference_engine.max_num_seqs=$INFERENCE_ENGINE_MAX_NUM_SEQS \

@@ -759,10 +759,15 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
 
     assert ie_cfg.distributed_executor_backend in ("mp", "ray"), "invalid distributed executor backend"
 
-    if ie_cfg.enable_return_routed_experts:
-        assert (
-            ie_cfg.distributed_executor_backend == "mp"
-        ), "rollout router replay (r3) can hang with the ray backend - use the vLLM mp backend instead"
+    if ie_cfg.enable_return_routed_experts and ie_cfg.distributed_executor_backend == "ray":
+        # The hang (vllm-project/vllm#36237) is in the legacy Ray compiled-DAG executor. vLLM 0.30
+        # defaults "ray" to RayExecutorV2, a MultiprocExecutor subclass with the same execution
+        # path as "mp" -- which multi-node engines (e.g. TP16 across two nodes) need, since "mp"
+        # is single-node here.
+        assert os.environ.get("VLLM_USE_RAY_V2_EXECUTOR_BACKEND", "1") != "0", (
+            "rollout router replay (r3) can hang with vLLM's legacy Ray compiled-DAG executor "
+            "(VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0) - unset it to use RayExecutorV2, or use the mp backend"
+        )
         assert (
             cfg.trainer.strategy == "megatron"
         ), "rollout router replay (r3) is only supported with Megatron training backend"
