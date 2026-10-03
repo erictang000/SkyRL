@@ -206,6 +206,8 @@ Opt-in (`SKYRL_DSA_INDEXER_BACKEND=tilelang` with `dsa_kernel_backend="cudnn"`):
 `run_fused_qk_topk` DSA hook from the TileLang backend while sparse attention stays on
 cuDNN/FlashMLA. On the packed THD path the cudnn backend's indexer top-k is a per-head fp32
 `torch.bmm` fallback; TileLang's is a fused kernel. -32% trainer fwd+bwd for GLM-5.3 on B200.
+Applies to stock `DSAttention` (GLM-5 / GLM-5.3 `glm_moe_dsa`, DeepSeek-V3.2); GLM-5.3-Flash's
+k-pool indexer (`index_kpool > 1`) selects through `fused_qk_topk_kpool` and bypasses the hook.
 - **Landed?** Not an upstream fix: it is obsolete once megatron-core's cudnn backend has a fused
   varlen indexer top-k (`_indexer_topk_bshd` no longer falls back to `_indexer_topk_from_score_chunks`
   for packed inputs), or exposes per-hook backend selection.

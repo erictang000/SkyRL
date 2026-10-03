@@ -22,6 +22,12 @@ indices itself (``_prepare_attention_topk_indices``). The indexer-loss hook
 (``run_fused_qk_topk_with_loss``) stays on cuDNN; SkyRL trains GLM-5.3 with
 ``dsa_indexer_loss_coeff=0``, which never calls it.
 
+Scope: models on megatron-core's stock ``DSAttention`` (GLM-5 / GLM-5.3 ``glm_moe_dsa``,
+DeepSeek-V3.2), which select top-k through the ``run_fused_qk_topk`` hook. GLM-5.3-Flash
+(``glm5_next``, ``index_kpool > 1``) selects through SkyRL's own k-pool indexer
+(``Glm5NextDSAttention`` / ``fused_qk_topk_kpool``), which bypasses the hook, so this patch does not
+change its indexer.
+
 The cudnn backend imports FlashMLA (``flash_mla.flash_mla_sparse_fwd``) for the sparse-attention
 forward; it is not on PyPI (see the ``flash-mla`` dependency in the megatron extra).
 """
@@ -44,12 +50,13 @@ def apply_dsa_hybrid_indexer_patch() -> None:
         raise ValueError(f"SKYRL_DSA_INDEXER_BACKEND must be 'tilelang', got {indexer_backend!r}")
     from megatron.core.transformer.experimental_attention_variant import dsa_kernels
 
-    tilelang_module = dsa_kernels._BACKEND_MODULE_NAME_BY_BACKEND["tilelang"]
+    # Import once, up front: an unavailable TileLang backend fails at worker start, not mid-step.
+    tilelang_module = import_module(dsa_kernels._BACKEND_MODULE_NAME_BY_BACKEND["tilelang"])
     original = dsa_kernels._resolve_fused_hook
 
     def _resolve_fused_hook(config, hook_name):
         if hook_name in _HYBRID_HOOKS and dsa_kernels._get_dsa_kernel_backend(config) == "cudnn":
-            return getattr(import_module(tilelang_module), hook_name)
+            return getattr(tilelang_module, hook_name)
         return original(config, hook_name)
 
     dsa_kernels._resolve_fused_hook = _resolve_fused_hook
