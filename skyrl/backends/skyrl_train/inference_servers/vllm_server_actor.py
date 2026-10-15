@@ -592,6 +592,11 @@ class VLLMServerActor(ServerActorProtocol):
                     )
                 sampling_params_dict["flat_logprobs"] = True
                 sampling_params_dict["logprobs"] = top_k
+                # This endpoint returns token ids only, so the API-server process need not detokenize
+                # the k + 1 candidates per token; that work otherwise starves the event loop that also
+                # serves pause/weight-sync. Stop strings still need the decoded text.
+                if not sampling_params_dict.get("stop"):
+                    sampling_params_dict.setdefault("detokenize", False)
             sampling_params = VLLMSamplingParams(**sampling_params_dict)
             # `cache_salt` salts vLLM's prefix cache; vLLM rejects an empty salt, so attach only when set.
             if cache_salt is not None:
