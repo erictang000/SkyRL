@@ -459,6 +459,19 @@ class MegatronLoraConfig(BaseConfig):
 
     With ``merge_lora=False``, set ``generator.inference_engine.scale_moe_lora_rank=true`` to size the
     inference engine's expert LoRA slots at the reduced expert rank."""
+    sequence_parallel_input_regather: bool = True
+    """Maps to Megatron-Bridge ``LoRA(sequence_parallel_input_regather=...)``. Only used with
+    ``lora_type="lora"`` (``CanonicalLoRA`` does not take it), and only has an effect with sequence parallelism
+    (``tensor_model_parallel_size > 1``).
+
+    With sequence parallelism, the LoRA adapters on ``linear_qkv`` and on LayerNorm-fused ``linear_fc1`` read the
+    LayerNorm output of the Transformer Engine ``LayerNormLinear`` module they wrap. When this is ``False``, the
+    adapter reads the TP all-gathered LayerNorm output and its input gradient is dropped, so the gradient passed
+    to earlier layers is missing the LoRA branch's term
+    (https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/6453). When this is ``True``, the adapter reads the
+    sequence-local LayerNorm output and does its own all-gather, whose backward reduce-scatters the adapter's
+    input gradient into the module's input gradient. This adds an all-gather in forward and a reduce-scatter in
+    backward for the adapter input."""
 
 
 DEFAULT_MEGATRON_OPTIMIZER_KWARGS = {
