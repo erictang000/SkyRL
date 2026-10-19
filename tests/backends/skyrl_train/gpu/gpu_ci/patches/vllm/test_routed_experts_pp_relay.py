@@ -59,8 +59,10 @@ def prompt_token_ids():
 async def _generate(cfg: SkyRLTrainConfig, prompt_token_ids) -> list:
     """Greedy response ids and routed experts per prompt."""
     results = []
+    # The PP=1 engine holds all ~12.9 GiB of OLMoE weights on one GPU: on a 24 GB L4, 0.6 leaves no
+    # room for the KV cache ("No available memory for the cache blocks").
     async with InferenceEngineState.create(
-        cfg=cfg, sleep_level=1, gpu_memory_utilization=0.6, engine_init_kwargs={"moe_backend": "triton"}
+        cfg=cfg, sleep_level=1, gpu_memory_utilization=0.85, engine_init_kwargs={"moe_backend": "triton"}
     ) as engines:
         for ids in prompt_token_ids:
             output = await engines.client.generate(
