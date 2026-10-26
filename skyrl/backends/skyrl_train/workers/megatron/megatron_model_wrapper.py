@@ -197,6 +197,7 @@ def _build_replay_metadata_layout(
     packed: bool,
     fp8_enabled: bool,
     fp8_recipe: Optional[str],
+    seq_align: int = 1,
 ) -> Optional[TokenMetadataLayout]:
     """Build the token layout needed by router or sample-support replay."""
     if rollout_expert_indices is None and sample_support is None:
@@ -207,6 +208,7 @@ def _build_replay_metadata_layout(
         packed=packed,
         fp8_enabled=fp8_enabled,
         fp8_recipe=fp8_recipe,
+        seq_align=seq_align,
     )
 
 
@@ -238,6 +240,14 @@ class MegatronModelWrapper:
         self._pending_grad_sync: Optional[dict] = None
 
         config = get_model_config(self.actor_module[0])
+        # megatron-core's mlp_chunks_for_training splits the sequence with Tensor.chunk(n), which yields fewer
+        # than n pieces unless n divides the length. Each MoE call is a set of expert-parallel collectives, so
+        # a per-rank piece count hangs the EP group. Pad the unpacked length (remove_left_padding and the replay
+        # metadata layout alike) so every rank gets n pieces: with sequence parallelism the MLP sees the length
+        # divided by TP, so pad to a multiple of n * TP. The packed path is not covered.
+        mlp_chunks = getattr(config, "mlp_chunks_for_training", 1) or 1
+        sp_size = mpu.get_tensor_model_parallel_world_size() if getattr(config, "sequence_parallel", False) else 1
+        self._seq_align = mlp_chunks * sp_size if mlp_chunks > 1 else 1
         # Megatron-Bridge's Qwen-VL providers force calculate_per_token_loss when CP > 1 (VLM CP).
         self._per_token_loss = bool(getattr(config, "calculate_per_token_loss", False))
         if self._per_token_loss and any(
@@ -551,6 +561,7 @@ class MegatronModelWrapper:
                     pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True) or self.is_vlm,
                     fp8_enabled=fp8_enabled,
                     fp8_recipe=fp8_recipe,
+                    seq_align=self._seq_align,
                 )
                 packed_seq_params = None
                 # Qwen-style VLMs recompute 3D mRoPE positions internally from
@@ -565,6 +576,7 @@ class MegatronModelWrapper:
                 packed=packed_seq_params is not None,
                 fp8_enabled=fp8_enabled,
                 fp8_recipe=fp8_recipe,
+                seq_align=self._seq_align,
             )
 
             model_replay_kwargs = {}
@@ -1239,6 +1251,7 @@ class MegatronModelWrapper:
                     pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True) or self.is_vlm,
                     fp8_enabled=fp8_enabled,
                     fp8_recipe=fp8_recipe,
+                    seq_align=self._seq_align,
                 )
                 packed_seq_params = None
                 # Qwen-style VLMs recompute 3D mRoPE positions internally from
@@ -1255,6 +1268,7 @@ class MegatronModelWrapper:
                 packed=packed_seq_params is not None,
                 fp8_enabled=fp8_enabled,
                 fp8_recipe=fp8_recipe,
+                seq_align=self._seq_align,
             )
 
             model_replay_kwargs = {}
