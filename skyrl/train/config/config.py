@@ -617,6 +617,11 @@ class MegatronConfig(BaseConfig):
         default_factory=MegatronOptimizerOffloadToDiskConfig
     )
     """Hold the optimizer state on node-local disk; off unless ``optimizer_offload_to_disk.dir`` is set."""
+    stream_weight_sync_from_cpu: bool = False
+    """Colocated (``placement.colocate_all``) weight sync only. Keep the policy offloaded during
+    the sync and stream the export from its pinned CPU copy, one parameter (plus its TP/EP
+    gather) on the GPU at a time, instead of reloading the whole BF16 shard next to the woken
+    vLLM weights. See docs/design/colocated_weight_sync.md (M1)."""
     fp8: Optional[str] = None
     """TransformerEngine FP8 compute format for linear-layer GEMMs, e.g. ``"e4m3"`` or
     ``"hybrid"``. ``None`` (default) trains without FP8. Folded into
@@ -1440,6 +1445,21 @@ class InferenceEngineConfig(BaseConfig):
     Applies to both push backends -- ``nccl`` and colocated ``ipc``. Raised to fit the
     model's largest single parameter when that exceeds it, since a tensor too large for
     the buffer cannot be packed at all."""
+    weight_sync_num_ipc_buffers: int = 1
+    """Colocated CUDA-IPC only. Number of packed IPC buffers in the send ring. ``2`` pipelines
+    the sync: rank 0 ships chunk k on a helper thread while every rank gathers and packs chunk
+    k+1 into the next buffer. Each buffer is ``weight_transfer_threshold_cuda_ipc_GB``."""
+    weight_sync_layer_aligned_chunks: bool = False
+    """Colocated CUDA-IPC only. Cut packed chunks at decoder-layer boundaries (a chunk never
+    spans two ``model.layers.<N>.`` prefixes, and a layer larger than the buffer is split), so
+    one round trip carries about one layer."""
+    weight_sync_local_shard: bool = False
+    """Colocated CUDA-IPC only. Each trainer rank packs only the expert weights the vLLM worker
+    on its own GPU serves (vLLM expert parallelism), sent as per-worker payloads."""
+    selective_weight_sleep: bool = False
+    """Colocated full-weight sync only. Sleep the engine's weights at level 2 but keep (on CPU)
+    every ``weights``-pool allocation the reload does not fully rewrite, instead of saving
+    named buffers by list."""
     delta_weight_sync: Optional[DeltaWeightSyncConfig] = None
     """Required when ``weight_sync_backend="delta"``."""
     tensor_parallel_size: int = 1

@@ -150,21 +150,37 @@ class MegatronWeightSource(WeightSource):
         module: Any,
         dtype: torch.dtype,
         param_filter: Optional[Callable[[str], bool]] = None,
+        stream_from_cpu: bool = False,
     ) -> None:
         self._bridge = bridge
         self._module = module
         self._dtype = dtype
         self._param_filter = param_filter
+        # Colocated M1 (docs/design/colocated_weight_sync.md): read offloaded params
+        # from their pinned CPU copy, one at a time, instead of requiring the model
+        # on the GPU. A no-op for params that are resident.
+        self._stream_from_cpu = stream_from_cpu
 
     def _export(self) -> Iterator[Tuple[str, torch.Tensor]]:
         tasks = None
-        if self._param_filter is not None:
+        if self._param_filter is not None or self._stream_from_cpu:
             tasks = [
                 task
                 for task in self._bridge.get_conversion_tasks(self._module)
-                if self._param_filter(task.global_param_name)
+                if self._param_filter is None or self._param_filter(task.global_param_name)
             ]
-        return self._bridge.export_hf_weights(self._module, show_progress=False, conversion_tasks=tasks)
+        export = self._bridge.export_hf_weights(self._module, show_progress=False, conversion_tasks=tasks)
+        if not self._stream_from_cpu:
+            return export
+        return self._streamed(export, tasks)
+
+    def _streamed(self, export: Iterator[Tuple[str, torch.Tensor]], tasks: list) -> Iterator[Tuple[str, torch.Tensor]]:
+        from skyrl.backends.skyrl_train.weight_sync.colocated.streaming import (
+            stream_params_from_cpu,
+        )
+
+        with stream_params_from_cpu(self._module, tasks, prefetch=1):
+            yield from export
 
     def _wire_dtype(self, tensor: torch.Tensor) -> torch.dtype:
         return wire_dtype(tensor, self._dtype)

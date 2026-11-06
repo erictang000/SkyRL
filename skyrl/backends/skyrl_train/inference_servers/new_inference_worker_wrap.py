@@ -362,6 +362,48 @@ class NewInferenceWorkerWrap:
 
         return discard_in_memory_adapter(lora_name)
 
+    # Debug probes for colocated weight sync (M0 of docs/design/colocated_weight_sync.md).
+
+    def skyrl_debug_weight_checksums(self) -> dict:
+        """Byte checksums of every parameter and buffer of the main model (debug only)."""
+        from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
+            module_checksums,
+        )
+
+        torch.cuda.synchronize()
+        return module_checksums(self.model_runner.model)
+
+    def skyrl_debug_memory_stats(self, reset_peak: bool = False) -> dict:
+        """Torch allocator, device and CuMem-by-tag memory of this worker, in GiB."""
+        from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
+            cumem_snapshot,
+            device_memory_snapshot,
+        )
+
+        out = {"device": device_memory_snapshot(), "cumem": cumem_snapshot()}
+        engine = getattr(self, "weight_transfer_engine", None)
+        stats = getattr(engine, "skyrl_receive_stats", None)
+        if stats is not None:
+            out["receive"] = dict(stats)
+        if reset_peak:
+            torch.cuda.reset_peak_memory_stats()
+        return out
+
+    def skyrl_enable_selective_sleep(self) -> dict:
+        """Make every later level-2 sleep keep (on CPU) what the last reload did not rewrite.
+
+        See ``weight_sync/colocated/selective_sleep.py`` (M4a of the colocated design).
+        """
+        from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
+
+        selective_sleep.enable()
+        return selective_sleep.last_stats()
+
+    def skyrl_selective_sleep_stats(self) -> dict:
+        from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
+
+        return selective_sleep.last_stats()
+
     # Suspend / resume for non-colocated weight sync.
     #
     # Drives the per-worker CuMemAllocator directly instead of GPUWorker.sleep/

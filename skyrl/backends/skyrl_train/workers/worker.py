@@ -476,6 +476,10 @@ class Worker(DistributedTorchRayActor):
             "total": total,
         }
 
+    def get_last_weight_sync_stats(self) -> Optional[Dict[str, Any]]:
+        """Per-phase memory/time of this rank's last weight sync (``SKYRL_COLOCATED_SYNC_DEBUG=1`` only)."""
+        return getattr(self, "last_weight_sync_stats", None)
+
     def save_memory_snapshot(self, tag: str = ""):
         """Save a snapshot of memory usage on the Worker's CUDA device.
 
@@ -563,6 +567,17 @@ class Worker(DistributedTorchRayActor):
             data_parallel_size=int(inference_engine_client.data_parallel_size),
             base_model_path=self.cfg.policy.model.path,
         )
+
+        if (
+            getattr(inference_engine_cfg, "selective_weight_sleep", False)
+            and self.cfg.placement.colocate_all
+            and torch.distributed.get_rank() == 0
+        ):
+            # M4a of docs/design/colocated_weight_sync.md: from now on a level-2 sleep
+            # backs up what the last reload did not rewrite, and discards the rest.
+            await self._weight_sync_thread(
+                self._weight_sync_engine.client.collective_rpc, "skyrl_enable_selective_sleep"
+            )
 
         # # Register signal handlers for termination only on rank 0
         # NOTE (sumanthrh): This doesn't work yet, and is thus commented out.
@@ -666,8 +681,20 @@ class Worker(DistributedTorchRayActor):
         # is incompatible with the VMM addresses expandable segments use; some
         # engines (sharded_rdt) share GPU memory on every run and ask for the
         # toggle unconditionally.
+        from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
+            PhaseRecorder,
+            debug_enabled,
+            instrument_send,
+        )
+
+        recorder = PhaseRecorder("trainer_send") if debug_enabled() else None
         with self._expandable_segments_disabled_for_sync(force=engine.skyrl_force_disable_expandable_segments):
-            await self._weight_sync_thread(engine.send_weights)
+            if recorder is None:
+                await self._weight_sync_thread(engine.send_weights)
+            else:
+                with recorder.phase("send"), instrument_send(engine, recorder):
+                    await self._weight_sync_thread(engine.send_weights)
+                self.last_weight_sync_stats = {"phases": recorder.phases, "counters": recorder.counters}
 
         if cache_reset_task is not None:
             await cache_reset_task

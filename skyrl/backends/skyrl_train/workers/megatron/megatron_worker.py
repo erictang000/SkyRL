@@ -1755,7 +1755,13 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         from skyrl.backends.skyrl_train.weight_sync.sources import MegatronWeightSource
 
-        source = MegatronWeightSource(self.bridge, self.actor_module, dtype)
+        source = MegatronWeightSource(
+            self.bridge,
+            self.actor_module,
+            dtype,
+            stream_from_cpu=self.cfg.placement.colocate_all
+            and self.cfg.policy.megatron_config.stream_weight_sync_from_cpu,
+        )
         if self._serialized_fp8_config is not None:
             from skyrl.backends.skyrl_train.weight_sync.sources import (
                 SerializedFp8WeightSource,

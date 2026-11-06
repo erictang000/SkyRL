@@ -806,6 +806,17 @@ class WorkerDispatch:
         if not is_sleeping:
             await self._inference_engine_client.sleep()
 
+        if self._streams_weight_sync_from_cpu():
+            # The export reads the policy from its pinned CPU copy (M1 of
+            # docs/design/colocated_weight_sync.md): offload everything instead of
+            # reloading the BF16 shard next to the engines' woken weights. The
+            # offload refreshes the CPU copy from the just-updated GPU params.
+            for model, state in self._gpu_state.items():
+                if state.model_on_gpu or state.optimizer_on_gpu:
+                    self._offload(model, offload_optimizer=True, offload_model=True)
+            self.empty_cache("policy")
+            return
+
         offload_optimizer = self.cfg.trainer.policy.optimizer_config.offload_after_step
         self._ensure_on_gpu(
             "policy",
@@ -822,9 +833,18 @@ class WorkerDispatch:
         # wake_up(tags=["weights"]) fitting and OOMing.
         self.empty_cache("policy")
 
+    def _streams_weight_sync_from_cpu(self) -> bool:
+        """Colocated full-weight Megatron sync streamed from the offloaded policy (M1)."""
+        return (
+            self.colocate_all
+            and self.cfg.trainer.strategy == "megatron"
+            and self.cfg.trainer.policy.megatron_config.stream_weight_sync_from_cpu
+            and not self._is_lora_no_merge()
+        )
+
     def _finish_weight_sync(self, adapter_only_sync: bool = False) -> None:
         """Offload policy weights and conditionally offload optimizer state."""
-        if not self.colocate_all or adapter_only_sync:
+        if not self.colocate_all or adapter_only_sync or self._streams_weight_sync_from_cpu():
             return
         self._offload(
             "policy",
