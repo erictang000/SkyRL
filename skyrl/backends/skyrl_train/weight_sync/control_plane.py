@@ -156,6 +156,17 @@ class SkyrlWeightSyncClient:
             body["uri"] = uri
         self._fanout_uniform(FETCH_WEIGHTS_ENDPOINT, body)
 
+    def collective_rpc(self, method: str, kwargs: Optional[Dict[str, Any]] = None) -> List[Any]:
+        """``/collective_rpc`` a worker-extension method on every server; per-worker results, server-major."""
+        body = {"method": method, "kwargs": kwargs or {}}
+        results: List[Any] = []
+        for response in self._fanout_uniform("/collective_rpc", body):
+            try:
+                results.extend(response.json().get("results") or [])
+            except ValueError:
+                pass
+        return results
+
     def reset_prefix_cache(self, reset_running_requests: bool = True) -> None:
         """Reset every server's cache; raise if any server does not confirm it."""
         endpoint = f"{RESET_PREFIX_CACHE_ENDPOINT}?reset_running_requests={str(reset_running_requests).lower()}"

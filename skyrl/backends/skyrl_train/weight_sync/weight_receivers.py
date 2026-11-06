@@ -260,6 +260,11 @@ class SkyrlReceiveLifecycleMixin(SkyrlLoraStagingMixin, SkyrlCheckpointLoadMixin
             self.skyrl_begin_lora_update()
             return
         skyrl_before_weight_update()
+        from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
+
+        if selective_sleep.is_enabled():
+            # Record what this reload rewrites; the next level-2 sleep discards only that.
+            selective_sleep.begin_recording()
         with torch.device(self.device):
             super().start_weight_update()
 
@@ -302,10 +307,18 @@ class SkyrlReceiveLifecycleMixin(SkyrlLoraStagingMixin, SkyrlCheckpointLoadMixin
             restore_moe_kernel_constants,
         )
 
-        with torch.device(self.device):
-            super().finish_weight_update()
-            # A level-2 sleep zeroes MoE kernel constants that no reload rebuilds.
-            restore_moe_kernel_constants(self.model)
+        from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
+
+        ok = False
+        try:
+            with torch.device(self.device):
+                super().finish_weight_update()
+                # A level-2 sleep zeroes MoE kernel constants that no reload rebuilds.
+                restore_moe_kernel_constants(self.model)
+            ok = True
+        finally:
+            if selective_sleep.is_enabled():
+                selective_sleep.end_recording(ok)
         skyrl_after_weight_update()
         empty_cuda_cache_rocm()
 
