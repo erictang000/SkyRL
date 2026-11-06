@@ -588,7 +588,9 @@ class Worker(DistributedTorchRayActor):
             # M4a of docs/design/colocated_weight_sync.md: from now on a level-2 sleep
             # backs up what the last reload did not rewrite, and discards the rest.
             await self._weight_sync_thread(
-                self._weight_sync_engine.client.collective_rpc, "skyrl_enable_selective_sleep"
+                self._weight_sync_engine.client.collective_rpc,
+                "skyrl_enable_selective_sleep",
+                {"staged_wake": bool(getattr(inference_engine_cfg, "staged_weight_wake", False))},
             )
 
         # # Register signal handlers for termination only on rank 0
