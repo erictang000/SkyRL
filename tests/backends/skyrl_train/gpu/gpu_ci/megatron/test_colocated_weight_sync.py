@@ -38,7 +38,31 @@ from tests.backends.skyrl_train.gpu.utils import (
     InferenceEngineState,
     init_worker_with_type,
     make_dummy_training_batch,
+    run_inference,
 )
+
+_PROMPTS = [
+    [{"role": "user", "content": q}]
+    for q in (
+        "What is 17 * 23? Show your steps.",
+        "Write a haiku about GPUs.",
+        "Name three prime numbers greater than 100.",
+        "Explain expert parallelism in one paragraph.",
+    )
+]
+
+
+async def _greedy(client) -> list:
+    """Greedy completions (token ids): checks the synced weights *serve* (incl. CUDA graphs)."""
+    from skyrl.backends.skyrl_train.inference_servers.engine_utils import (
+        get_sampling_params_for_backend,
+    )
+    from skyrl.train.config import SamplingParams
+
+    params = get_sampling_params_for_backend("vllm", SamplingParams(temperature=0.0, max_generate_length=48))
+    await client.reset_prefix_cache()
+    out = await run_inference(client, _PROMPTS, params)
+    return [list(r) for r in out["response_ids"]]
 
 
 def _env_int(name, default):
@@ -206,6 +230,12 @@ def _engine_cm(cfg: SkyRLTrainConfig, case: _Case):
 
 def _ray_env():
     env = {"SKYRL_COLOCATED_SYNC_DEBUG": "1"}
+    # A fresh FlashInfer autotune cache per run. vLLM caches autotune results per rank;
+    # a run killed mid-autotune leaves some ranks cached and others not, and the next
+    # boot hangs in profile_run (cached ranks skip the synchronized autotune).
+    env["VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR"] = os.environ.get(
+        "VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR", f"/tmp/skyrl-cws-fi-autotune-{os.getpid()}-{int(time.time())}"
+    )
     for k, v in os.environ.items():
         # The trainer cap, multi-node NCCL transport settings, and offline uv for worker envs.
         if k == "SKYRL_COLOCATED_SYNC_TRAINER_CAP_GIB" or k.startswith("NCCL_") or k == "UV_OFFLINE":
@@ -224,13 +254,16 @@ async def test_colocated_sync_byte_parity():
             client = engines.client
             ref = await _rpc_all(client, "skyrl_debug_weight_checksums")
             print(f"CWS reference: {sum(len(r) for r in ref)} tensors over {len(ref)} workers", flush=True)
+            ref_tokens = await _greedy(client)
             h = await _build(cfg, case, engines)
             for i in range(case.num_syncs):
                 await h.sync_and_measure(f"sync{i}")
                 got = await _rpc_all(client, "skyrl_debug_weight_checksums")
                 bad = _diff_checksums(ref, got)
                 assert not bad, f"sync{i}: {len(bad)} tensors differ from the fresh load, e.g. {bad[:10]}"
-                print(f"CWS sync{i}: byte parity OK", flush=True)
+                tokens = await _greedy(client)
+                assert tokens == ref_tokens, f"sync{i}: greedy generations differ from the fresh engine"
+                print(f"CWS sync{i}: byte parity OK, greedy generations identical", flush=True)
 
 
 @pytest.mark.asyncio
