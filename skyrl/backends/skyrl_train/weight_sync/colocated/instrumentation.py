@@ -15,6 +15,23 @@ from typing import Any, Dict, Iterator, Optional
 import torch
 
 DEBUG_ENV = "SKYRL_COLOCATED_SYNC_DEBUG"
+# Test-only: cap this trainer process's CUDA allocations during the send, in GiB, to
+# reproduce "vLLM weights fill the GPU" OOMs on a small model.
+TRAINER_CAP_ENV = "SKYRL_COLOCATED_SYNC_TRAINER_CAP_GIB"
+
+
+@contextmanager
+def trainer_memory_cap() -> Iterator[None]:
+    cap = os.environ.get(TRAINER_CAP_ENV)
+    if not cap or not torch.cuda.is_available():
+        yield
+        return
+    _, total = torch.cuda.mem_get_info()
+    torch.cuda.set_per_process_memory_fraction(min(1.0, float(cap) * 1024**3 / total))
+    try:
+        yield
+    finally:
+        torch.cuda.set_per_process_memory_fraction(1.0)
 
 
 def debug_enabled() -> bool:

@@ -49,6 +49,7 @@ def _env_int(name, default):
 class _Case:
     model: str = field(default_factory=lambda: os.environ.get("SKYRL_CWS_MODEL", "Qwen/Qwen3-30B-A3B"))
     num_gpus: int = field(default_factory=lambda: _env_int("SKYRL_CWS_GPUS", 8))
+    num_nodes: int = field(default_factory=lambda: _env_int("SKYRL_CWS_NODES", 1))
     tp: int = field(default_factory=lambda: _env_int("SKYRL_CWS_TP", 2))
     ep: int = field(default_factory=lambda: _env_int("SKYRL_CWS_EP", 8))
     pp: int = field(default_factory=lambda: _env_int("SKYRL_CWS_PP", 1))
@@ -81,7 +82,8 @@ def _make_cfg(case: _Case, overrides: dict | None = None) -> SkyRLTrainConfig:
     cfg.trainer.micro_train_batch_size_per_gpu = 1
     cfg.trainer.remove_microbatch_padding = True
     cfg.trainer.placement.colocate_all = True
-    cfg.trainer.placement.policy_num_gpus_per_node = case.num_gpus
+    cfg.trainer.placement.policy_num_gpus_per_node = case.num_gpus // case.num_nodes
+    cfg.trainer.placement.policy_num_nodes = case.num_nodes
     mc = cfg.trainer.policy.megatron_config
     mc.tensor_model_parallel_size = case.tp
     mc.expert_model_parallel_size = case.ep
@@ -174,7 +176,12 @@ async def _build(cfg: SkyRLTrainConfig, case: _Case, engines) -> _Harness:
     client, pg = engines.client, engines.pg
     await client.sleep()
     policy = init_worker_with_type(
-        "policy", shared_pg=pg, colocate_all=True, num_gpus_per_node=case.num_gpus, cfg=cfg
+        "policy",
+        shared_pg=pg,
+        colocate_all=True,
+        num_gpus_per_node=case.num_gpus // case.num_nodes,
+        num_nodes=case.num_nodes,
+        cfg=cfg,
     )
     dispatch = WorkerDispatch(cfg=cfg, policy_actor_group=policy, inference_engine_client=client)
     # As the trainer does after building colocated models.
@@ -198,7 +205,12 @@ def _engine_cm(cfg: SkyRLTrainConfig, case: _Case):
 
 
 def _ray_env():
-    return {"SKYRL_COLOCATED_SYNC_DEBUG": "1"}
+    env = {"SKYRL_COLOCATED_SYNC_DEBUG": "1"}
+    for k, v in os.environ.items():
+        # The trainer cap, multi-node NCCL transport settings, and offline uv for worker envs.
+        if k == "SKYRL_COLOCATED_SYNC_TRAINER_CAP_GIB" or k.startswith("NCCL_") or k == "UV_OFFLINE":
+            env[k] = v
+    return env
 
 
 @pytest.mark.asyncio
@@ -277,6 +289,42 @@ async def test_colocated_sync_m0_probe():
                 bench = await _rpc_all(client, "skyrl_debug_benchmark_create_and_map", restore=restore)
                 for row in bench[0]:
                     print("CWS_MAP_BENCH " + json.dumps(row), flush=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.megatron
+async def test_colocated_lora_adapter_parity():
+    """M5: adapter-only LoRA sync with the export parked on pinned CPU stages the same adapter."""
+    case = _Case()
+    lora = {
+        "trainer.policy.model.lora.rank": int(os.environ.get("SKYRL_CWS_LORA_RANK", "32")),
+        "trainer.policy.model.lora.alpha": 64,
+        "trainer.policy.model.lora.target_modules": "all-linear",
+        "trainer.policy.model.lora.sync_mode": "memory",
+        "trainer.policy.megatron_config.lora_config.merge_lora": False,
+    }
+    with ray_init(extra_env_vars=_ray_env()):
+        base_cfg = _make_cfg(case, overrides={**lora, "trainer.policy.megatron_config.stream_weight_sync_from_cpu": False})
+        feat_cfg = _make_cfg(case, overrides={**lora, "trainer.policy.megatron_config.stream_weight_sync_from_cpu": True})
+        async with _engine_cm(base_cfg, case) as engines:
+            client = engines.client
+            h = await _build(base_cfg, case, engines)
+            batch = make_dummy_training_batch(batch_size=h.policy.actor_infos[0].rank.dp_size)
+            h.dispatch.forward_backward("policy", batch)
+            h.dispatch.optim_step("policy")
+            await h.sync_and_measure("lora_baseline")
+            base = await _rpc_all(client, "skyrl_debug_lora_checksums")
+            h.dispatch.cfg = feat_cfg
+            ray.get(h.policy.async_run_ray_method("pass_through", "reconfigure_for_test", feat_cfg))
+            h.dispatch.init_weight_sync_state(client)
+            await h.sync_and_measure("lora_parked")
+            got = await _rpc_all(client, "skyrl_debug_lora_checksums")
+            assert base and all(base), "no adapter staged"
+            for w, (b, g) in enumerate(zip(base, got)):
+                for name in b:
+                    bad = [k for k in b[name] if list(g[name].get(k, [])) != list(b[name][k])]
+                    assert not bad and set(g[name]) == set(b[name]), f"worker{w} {name}: {len(bad)} keys differ, e.g. {bad[:5]}"
+            print(f"CWS LoRA parity OK ({sum(len(v) for v in base[0].values())} staged tensors per worker)", flush=True)
 
 
 def _default_of(key: str):
