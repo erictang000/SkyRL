@@ -1,6 +1,7 @@
 # Bounded-memory colocated weight sync
 
-> **Status:** proposal / handoff for implementation
+> **Status:** M0-M4a implemented and validated on branch `colocated-weight-sync-impl`; M4b
+> prototype; M5 partial; M6 not built. See [Implementation status](#implementation-status-2026-11-06).
 > **Scope:** `placement.colocate_all=true`, Megatron trainer, CUDA-IPC weight sync (`skyrl_ipc`),
 > full-weight and LoRA-adapter (`lora.sync_mode=memory`) targets
 > **vLLM pin:** `vllm==0.33.0`. Every vLLM reference was checked against `v0.32.0` and `v0.33.0`;
@@ -23,8 +24,134 @@ takes **~18 minutes**. Four changes fix it. Each can land and be measured on its
 Priority: **M1-M3** solve both the memory problem and the 18-minute problem. **M4a** comes next.
 **M4b** is last and optional. Nothing strictly needs an upstream vLLM change.
 
+## Implementation status (2026-11-06)
+
+Branch `colocated-weight-sync-impl`. Code lives in `skyrl/backends/skyrl_train/weight_sync/colocated/`.
+Validation details: [`colocated_weight_sync_results.md`](colocated_weight_sync_results.md)
+(Qwen3-30B-A3B, vLLM 0.33.0). First full-scale use:
+[`colocated_weight_sync_inkling2.md`](colocated_weight_sync_inkling2.md) (Inkling2, ~590B MoE,
+4 × 8×B200, vLLM 0.32 plus the Inkling2 fork, on SkyRL-nms).
+
+| Milestone | Built | Validated on Qwen3-30B-A3B | Used for Inkling2 | Not built / differs from the design |
+|---|---|---|---|---|
+| **M0** instrumentation | `instrumentation.py`, worker debug RPCs, byte-parity harness | ✅ | ✅ (debugging on an 8-layer slice) | — |
+| **M1** trainer streaming | `streaming.py` | ✅ trainer peak 10.9 → 3.0 GiB | ❌ superseded by SkyRL-nms's `weight_sync_from_offloaded_params` | No `weight_sync_gpu_budget_GB`. Prefetch is one param ahead, not per layer. The gather transient is still one unsharded tensor |
+| **M2** local shards, Phase A | `slot_ring.py` (`LocalShardPlan`) | ✅ 61.1 → 10.3 GB per worker | ✅ **the main win** | Per-expert names only; fused 3D expert tensors still go whole. Needs vLLM EP (`expert_map`); the SkyRL-nms plugin hook for TP-sharded experts is not backported |
+| **M3** slot ring | `slot_ring.py` (`SlotRingSender`, `MultiSlotImporter`) | ✅ but no gain alone | ⚠️ ported, run with 1 slot (no memory for a second) | Layer-aligned chunks are a separate flag |
+| **M4a** selective sleep | `selective_sleep.py` | ✅ | ❌ off (slice only) | Coverage is recorded from a real reload, not derived from static rules |
+| **M4b** wake-on-write | `selective_sleep.py` | ✅ prototype | ❌ off (slice only) | Per-layer only (grouped wake dropped, see findings). No CUDA free-while-asleep guard. A crashed sync leaves the pool unmapped |
+| **M5** LoRA | `sources.py` (`park_on_cpu`) | ✅ step 1 | n/a (full fine-tuning) | No per-receiver slicing of fused expert adapters. Staged base restore not built (deprioritized) |
+| **M6** Phase B | — | — | — | Scoped, not built |
+
+Net result:
+- Qwen3-30B-A3B, everything on: sync transfer 5.3 → 2.1 s and trainer peak 11.2 → 4.2 GiB,
+  byte-identical to today's path after a training step.
+- Inkling2: full-weight sync in **23.5–24 s**, down from ~18 min. That came from SkyRL-nms's
+  offloaded-params export (M1's equivalent), M2, and four fixes the design did not anticipate
+  (section [New findings](#new-findings-from-the-implementation)).
+
+### New findings from the implementation
+
+What the implementation and the two runs taught us, and which design assumptions changed:
+
+1. **Wake cost scales with allocation count, not bytes or call count** (M0).
+   - `create_and_map` costs a flat ~2.3 ms per allocation from 64 to 256 MiB (≈100 GiB/s at
+     256 MiB); ≈45 GiB/s with the pinned CPU restore.
+   - Qwen3-30B-A3B's `weights` pool is 130 allocations (4–5 per layer, 26 shared across layer
+     boundaries, 0.27 GiB in the shared ones). Per-layer wake is ~12 ms per layer.
+   - So **grouped wake buys nothing at level 2**, and was not built. `staged_weight_wake_group_GB`
+     is dropped from section 4.
+2. **The receiver, not the export, bounds the transfer on Qwen3** (M3). Rank 0 waits ~3.8 s on
+   sends against a 0.8 s export: the receiver's clone plus layerwise load is the bottleneck. So the
+   ring alone gains nothing there. It is meant for a slow EP gather, which Inkling2 has, but there
+   was no memory for a second slot.
+3. **The trainer gather transient is the binding constraint at full scale** (risk 5, confirmed).
+   On Inkling2 the woken engine holds ~143–145 GiB per GPU and the trainer ~32–35 GiB *with its
+   params offloaded*. The smallest free memory after a sync was ~9 GiB. A second 1 GiB slot, or one
+   2 GiB slot, OOMs the trainer in the EP/TP gather. What the 32–35 GiB consists of is not yet
+   broken down; it decides how much room a budget (and a second slot) can have.
+4. **The receiver's clone OOMs near capacity** (new; fixed on SkyRL-nms only).
+   `packed_ipc_consumer` clones each received chunk before loading: ~1.73 GiB for the
+   embedding-sized chunk on Inkling2, which OOMed the engine at the first sync with ~9 GiB of
+   headroom. Fix (SkyRL-nms `4326a678`): for models that load in place and with no LoRA armed,
+   `receive_weights` rebuilds the slot tensor and passes views straight into `load_weights`,
+   syncing the current stream before acknowledging so the slot is not reused early. This is
+   model-agnostic and should be backported.
+5. **Trainer garbage holds GPU memory across the sync** (new; fixed on SkyRL-nms only). After a
+   train step, 3–8 GiB of activations survived in reference cycles, plus cuBLAS workspaces and
+   cached blocks: enough to OOM vLLM's KV-cache wake after the sync. Fix (SkyRL-nms `4106a5eb`,
+   `7b25579a`): under `colocate_all`, `broadcast_to_inference_engines` runs `gc.collect()`,
+   `torch._C._cuda_clearCublasWorkspaces()` and `torch.cuda.empty_cache()` before and after the
+   sync. `SKYRL_DEBUG_GPU_TENSORS=1` lists the largest live CUDA storages. Model-agnostic; backport.
+6. **Megatron-Bridge per-instance state is silently lost** (new; Inkling2 fix, generic trap).
+   `AutoBridge._model_bridge` is a property that builds a **new** bridge instance on every access,
+   and the export builds another. A per-instance "stream experts one at a time" flag on
+   `Inkling2Bridge` never reached the exporting instance, so every sync stacked a layer's 384
+   experts (~15 GiB), OOMed, and fell back to CPU stacking: the 18-minute sync. Fixed by making the
+   flag class-level. Worth a guard or a note in the bridge patches README.
+7. **Local shards without vLLM EP** (new; hook on SkyRL-nms only). Phase A assumed `expert_map`
+   describes a worker's experts. Inkling2's plugin shards experts over TP itself, so
+   `skyrl_local_shard_info` asks the MoE module for `skyrl_local_expert_ids()` first and falls back
+   to `expert_map`. The hook belongs in the generic path.
+8. **Sources without `iter_full()`** (new; small, SkyRL-nms only). The ring and instrumentation
+   iterate any source through `iter_source()` (`iter_full()` if present, else `iter()`).
+   SkyRL-nms's offloaded-params source is a plain iterable.
+9. **Selective sleep backs up memory that no named tensor reaches** (M4a). Per worker (vLLM EP),
+   7.14 GiB of weights is covered and discarded and 0.68 GiB is backed up. ~594 MiB of that is one
+   allocation with live blocks that no `named_parameters` / `named_buffers` reaches (likely MoE
+   backend scratch, or tensors retained from the initial load), plus the shared 20 MiB segments
+   holding them and `rotary_emb.cos_sin_cache`. Today's level 2 discards those and relies on the
+   save-lists; the recorded rule keeps them without having to know what they are.
+10. **Greedy equality is not a usable gate with CUDA graphs on.** A fresh engine with no sync at all
+    already diverges at tokens 33 and 18 on two prompts, and today's path diverges the same way
+    after a sync. Byte parity of every vLLM tensor is the gate; the serving check only asserts no
+    divergence before token 8.
+11. **Operational** (from the results write-up): vLLM 0.33 caches FlashInfer autotune results per
+    rank, and a run killed mid-autotune hangs the next boot in `profile_run` (use a fresh
+    `VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR` per run). Nested `ray.init` inside a Ray task on Anyscale
+    segfaults at shutdown unless `RAY_enable_ray_event` /
+    `RAY_enable_core_worker_ray_event_to_aggregator` are dropped from the task env. Ray's uv
+    runtime-env hook mis-parses `uv run ... -- pytest` (drop the `--`).
+
+### Review notes on the implementation
+
+Observations from reading the branch's code against this design. These are review comments, not
+measured results.
+
+- **Staged wake does not widen the Inkling2 margin at peak.** The Inkling2 write-up suggests M4b
+  lets "the full pool and the trainer's transient need not coexist". At the last layer they do
+  coexist (section [What staged wake buys](#what-staged-wake-buys)). M4a/M4b at full scale is still
+  worth running for correctness and early headroom, but the ~9 GiB margin is set by finding 3, not
+  by the wake.
+- **Recorded coverage assumes each reload rewrites at least what the previous one did.**
+  `selective_sleep` discards whatever the *last successful* reload wrote. If a later reload writes
+  less (a layer that loaded nothing and took the `_place_kernel_tensors` fallback, a changed
+  local-shard plan, a partial or draft-only update), the discarded bytes come back as garbage. Today
+  every full sync rewrites the same set, so this holds; it should be stated as an invariant and
+  checked (for example, refuse a selective sleep if the last reload's recorded bytes dropped
+  versus the one before).
+- **The `selective_sleep.py` docstring claims a check the code does not do.** It says a sleep falls
+  back "when the recorded layout no longer matches the live allocations". The code only checks that
+  every live block lies inside a recorded range. That is safe in vLLM 0.33 because nothing
+  allocates in the `weights` pool after `load_model` (`reload_weights` and the update session run
+  outside the pool context), so the layout cannot change. Fix the docstring, or add the check for
+  when that stops being true.
+- **The CUDA free-while-asleep risk is narrower than risk 9 says.** For the same reason, a crash
+  needs a whole `weights` segment to become free and be released while asleep; freeing one tensor
+  inside a segment only marks a block free. Still worth the guard, since a model patch that drops a
+  kernel tensor would hit it.
+- **M1 prefetch can hold more than "prefetch × largest param".** `CpuParamReader` pops an in-flight
+  copy only when that exact tensor object is read. A param that is prefetched but read through a
+  different object (or not at all) stays on the GPU until the export ends. The measured 3.0 GiB peak
+  says this does not happen on Qwen3; worth a counter in the debug stats.
+- **Two M1 implementations exist.** SkyRL's `stream_weight_sync_from_cpu` and SkyRL-nms's
+  `weight_sync_from_offloaded_params` do the same job. Pick one before either lands on `main`.
+
 ## Contents
 
+0. [Implementation status](#implementation-status-2026-11-06):
+   [new findings](#new-findings-from-the-implementation),
+   [review notes](#review-notes-on-the-implementation)
 1. [Background: what happens today](#1-background-what-happens-today)
 2. [Goals and non-goals](#2-goals-and-non-goals)
 3. [Design](#3-design)
@@ -295,6 +422,28 @@ read-back on the critical path.
 
 </details>
 
+> [!NOTE]
+> **As built (M1, `colocated/streaming.py`).**
+> - `stream_params_from_cpu` swaps `_gather_gtp_weight` in `model_bridge`, `peft_bridge` and
+>   `quant_bridge` for a reader (`CpuParamReader`) that H2D-copies the param's slice of
+>   `param_data_cpu` (via `param_index_map`). Frozen params outside the DDP buffers (LoRA base
+>   weights) are read from `_offload_cpu_data`. Only params whose GPU storage is empty are
+>   redirected, so resident params pass through.
+> - Prefetch is **one param ahead** on a side stream, in conversion-task order, with
+>   `wait_event` + `record_stream` on use. Per-layer prefetch was not built.
+> - `MegatronWeightSource(stream_from_cpu=True)` always passes an explicit task list so the
+>   reader knows the order. Dispatch (`_prepare_for_weight_sync`) offloads every model and its
+>   optimizer instead of reloading the policy, and `_finish_weight_sync` becomes a no-op.
+> - GTP and FSDP (DTensor) params raise `NotImplementedError`. `overlap_param_gather` is
+>   rejected in config validation.
+> - **Not built:** `weight_sync_gpu_budget_GB` and budget-derived slot sizing. Slots are still
+>   `weight_transfer_threshold_cuda_ipc_GB`.
+> - **LoRA (M5 step 1)** rides on the same flag: `MegatronLoraAdapterSource(park_on_cpu=True)`
+>   copies each exported adapter tensor to pinned CPU as it streams, so dedupe, the folds and the
+>   3D-to-flat rewrite run on the host. Cost: ~1.9 s per sync on Qwen3-30B-A3B rank 32.
+> - **On Inkling2** this module was not used: SkyRL-nms already had
+>   `weight_sync_from_offloaded_params`, which streams each param from its pinned copy.
+
 ### 3.2 vLLM side: staged wake-up
 
 This is the RFC's final stage, built on hooks vLLM already has, so no tensor-aware allocator is
@@ -392,6 +541,41 @@ flowchart TD
 6. **Dispatch** drops the up-front `wake_up(["weights"])`: trainer offloaded -> engines
    selectively asleep -> sync (weights wake per group or layer) -> `wake_up(["kv_cache"])`.
 
+> [!NOTE]
+> **As built (M4a / M4b, `colocated/selective_sleep.py`).** It differs from steps 1-6 above in
+> these ways:
+> - **Coverage is recorded, not derived.** No allocation map is built up front.
+>   `start_weight_update` calls `begin_recording()`; the wrapper on
+>   `layerwise._copy_and_restore_kernel_tensors` appends the byte range of every kernel param,
+>   and every kernel buffer that passes the function's own skip rule. A successful
+>   `finish_weight_update` commits the merged ranges (`end_recording(True)`); a failed one drops
+>   them. Non-contiguous tensors are not recorded, so their allocations stay uncovered (the safe
+>   direction).
+> - **Classification at sleep time.** The patched `CuMemAllocator.sleep` (active for any sleep
+>   that does not offload `weights`, i.e. level 2) asks torch's allocator snapshot
+>   (`torch.cuda.memory._snapshot()`) for each `weights` segment's live blocks, using
+>   `requested_size`. A segment is covered iff every live block lies inside the recorded ranges.
+>   Segments unknown to the snapshot are kept.
+> - **Sleep** (`_sleep_keeping`): offload the usual tags plus the uncovered `weights` segments to
+>   pinned CPU; unmap everything. Waking needs no change: `wake_up` already copies back any
+>   allocation with a CPU backup.
+> - **First sleep after boot** is plain level 2, since nothing has been recorded yet.
+> - **Enabling**: rank 0 calls the worker RPC `skyrl_enable_selective_sleep(staged_wake=...)` at
+>   `init_weight_sync_state`.
+> - **M4b deferred wake.** The patched `CuMemAllocator.wake_up` skips the `weights` tag after a
+>   selective sleep, and the patched `Worker.wake_up` clears the level-2 save-lists
+>   (`_sleep_saved_buffers`, `_sleep_saved_draft_buffers`, `_skyrl_saved_model_state`). With
+>   selective sleep, everything they held is CPU-backed in the allocator. The write hook then maps
+>   every asleep allocation overlapping the layer's kernel tensors' whole storage before the
+>   write. `finish_staged_wake()` maps the rest before `super().finish_weight_update()` (step 4).
+> - **Grouped wake (step 3) was not built.** M0 showed wake cost is per allocation (~2.3 ms), so
+>   grouping saves nothing at level 2 (finding 1).
+> - **Not built:** the CUDA free-while-asleep guard (step 5); recovery from a crashed sync, which
+>   leaves the pool unmapped. Direct reload mode cannot occur on 0.33, so there is no check for it.
+> - **Measured** on Qwen3-30B-A3B: 124 of 130 `weights` allocations (7.2 GiB) were mapped by the
+>   write hook as layers were written, and 6 at finish. Byte parity over 3 syncs, with CUDA graphs
+>   on and off.
+
 **Full weights vs LoRA.**
 
 | | Sleep | During sync | Status |
@@ -462,6 +646,27 @@ flowchart LR
   Phase B. Most of that comes in Phase A when experts are EP-served. Receiver clones and layerwise
   buffering shrink with it. This fixes the high-rank LoRA OOM.
 
+> [!NOTE]
+> **As built (M2 Phase A, `colocated/slot_ring.py`).**
+> - **Plan.** Resolved once on rank 0 and broadcast. Trainer ranks all-gather their GPU UUIDs;
+>   rank 0 calls the worker RPC `skyrl_local_shard_info` on every server, which returns the
+>   worker's GPU UUID, its list index (`dp_index * world_size + rank`), and its local experts
+>   from `expert_map`. `build_local_shard_plan` pairs them by UUID.
+> - **Falls back to full tensors (logged)** if: ranks and workers do not pair one-to-one by
+>   GPU; two ranks share a GPU; MoE layers disagree on placement; or no worker has an
+>   `expert_map` (no vLLM EP). The draft source always gets full tensors.
+> - **Filter.** Only per-expert names (`.layers.<N>. ... .experts.<id>.`) are filtered. **Fused 3D
+>   expert tensors still go whole** (risk 4).
+> - **Agreed chunk cuts.** Every rank runs the same cut rule in `iter_packed_chunks` over the
+>   per-rank byte counts, which every rank can compute from the shared plan: cut when any taker's
+>   slot would overflow, or at a layer boundary. So all ranks yield the same number of chunks.
+>   Rank 0 builds one per-worker list per server and sends it through the new
+>   `SkyrlWeightSyncClient.update_weights_per_server`.
+> - **Measured:** 61.1 → 10.3 GB received per worker and 58 → 11 round trips on Qwen3-30B-A3B
+>   (vLLM TP8 with EP), on 1 and 2 nodes.
+> - **Inkling2:** the main win (about 8× fewer expert bytes per worker). It needed the
+>   `skyrl_local_expert_ids()` hook (finding 7) because that plugin does not use vLLM EP.
+
 ### 3.4 Pipeline and round trips
 
 ```mermaid
@@ -497,6 +702,27 @@ sequenceDiagram
 - **Later** (risk 5): an all-to-all that ships each owner's slice directly, instead of
   all-gather-then-slice, cuts the gather volume by ~TP too.
 
+> [!NOTE]
+> **As built (M3, `colocated/slot_ring.py`).**
+> - `SkyrlIPCTrainerWeightTransferEngine._send_packed` routes to `SlotRingSender` when any of
+>   `weight_sync_num_ipc_buffers > 1`, `weight_sync_layer_aligned_chunks` or
+>   `weight_sync_local_shard` is set. Otherwise vLLM's packed producer runs unchanged.
+> - **Per chunk:** pack into slot `k % N`; `all_gather_object` of handle and layout; rank 0 joins
+>   send(k-1) and posts send(k) on a one-thread pool (with one slot, it waits for send(k) right
+>   away); then a barrier.
+> - **N > 2 adds nothing.** Sends are strictly serialized, so at most one send is in flight
+>   while the next chunk packs.
+> - **Receiver:** `MultiSlotImporter` replaces vLLM's one-entry `PackedBufferImporter`. It caches
+>   one mapping per slot for the transfer and releases them together, so a ring does not rebuild
+>   and release a mapping on every chunk (which would drive the producer-side refcount negative).
+> - **Layer-aligned chunks** are their own flag (`weight_sync_layer_aligned_chunks`). A tensor
+>   larger than a slot is an error; there is no splitting.
+> - **Measured:** no gain alone on Qwen3-30B-A3B, where the receiver is the bottleneck (finding
+>   2). On Inkling2 it was ported but run with 1 slot, since a second slot OOMs the trainer
+>   (finding 3).
+> - **Not on this branch:** the clone-free receive from SkyRL-nms (finding 4). That changes the
+>   receiver's per-chunk cost and memory, so re-measure the ring after backporting it.
+
 ### 3.5 Target memory timeline
 
 Full weights, per GPU, with 3.1-3.4 (and optionally M4b). Same legend as 1.4.
@@ -523,16 +749,45 @@ All new fields default to off. `validate_inference_engine_cfg` / `validate_cfg` 
 unsupported combinations (non-colocated, FSDP, FP8 serialized sync, the draft session,
 `sharded_rdt` / `delta`) rather than silently ignoring them.
 
-| Field | Default | Meaning |
-|---|---|---|
-| `trainer.policy.megatron_config.stream_weight_sync_from_cpu` | `false` | 3.1: keep the policy offloaded and stream the export from pinned CPU |
-| `generator.inference_engine.weight_sync_gpu_budget_GB` | `null` | Per-GPU trainer budget; derives the slot size. `null` keeps today's sizing from `weight_transfer_threshold_cuda_ipc_GB` |
-| `generator.inference_engine.weight_sync_num_ipc_buffers` | `1` | Ring depth N; `2` enables the 3.4 pipeline |
-| `generator.inference_engine.weight_sync_local_shard` | `false` | 3.3: Phase A, later Phase B |
-| `generator.inference_engine.staged_weight_wake` | `false` | 3.2: selective sleep + wake-on-write; requires `colocate_all` |
-| `generator.inference_engine.staged_weight_wake_group_GB` | `null` | 3.2 step 3: wake-ahead group size when chunks are not layer-aligned. `null` wakes per transfer chunk if layer-aligned, else per layer |
+| Field | Default | Meaning | Built? |
+|---|---|---|---|
+| `trainer.policy.megatron_config.stream_weight_sync_from_cpu` | `false` | 3.1: keep the policy offloaded and stream the export from pinned CPU. Also turns on LoRA adapter parking (M5) | ✅ |
+| `generator.inference_engine.weight_sync_gpu_budget_GB` | `null` | Per-GPU trainer budget; derives the slot size. `null` keeps today's sizing from `weight_transfer_threshold_cuda_ipc_GB` | ❌ |
+| `generator.inference_engine.weight_sync_num_ipc_buffers` | `1` | Ring depth N; `2` enables the 3.4 pipeline (N > 2 adds nothing) | ✅ |
+| `generator.inference_engine.weight_sync_layer_aligned_chunks` | `false` | Cut chunks at `model.layers.<N>.` boundaries. Not in the original design; split out from 3.4 | ✅ |
+| `generator.inference_engine.weight_sync_local_shard` | `false` | 3.3: Phase A, later Phase B | ✅ Phase A |
+| `generator.inference_engine.selective_weight_sleep` | `false` | 3.2 M4a: selective level-2 sleep. Split out from `staged_weight_wake` | ✅ |
+| `generator.inference_engine.staged_weight_wake` | `false` | 3.2 M4b: wake-on-write. Requires `selective_weight_sleep` | ✅ prototype |
+| ~~`generator.inference_engine.staged_weight_wake_group_GB`~~ | — | Dropped: grouped wake buys nothing at level 2 (finding 1) | ❌ dropped |
 
 `weight_transfer_threshold_cuda_ipc_GB` keeps its meaning when the budget is unset.
+
+**As built: validation** (`_validate_colocated_weight_sync_cfg` in `skyrl/train/utils/utils.py`).
+Any of these options requires `colocate_all` and the push backend (`nccl` / `ipc`). It also
+rejects:
+- serialized FP8 with local shards, streaming, or `staged_weight_wake` (the batched-MoE FP8 loader
+  writes outside the hook);
+- streaming without Megatron, or with `overlap_param_gather`;
+- `staged_weight_wake` without `selective_weight_sleep`;
+- `selective_weight_sleep` with adapter-only LoRA.
+
+How the design's non-goals are handled:
+- `sharded_rdt` / `delta` are rejected by the push-backend check.
+- The draft session falls back: the draft source always gets full tensors.
+- **FSDP is rejected only for streaming** (which requires Megatron). The ring, local-shard and
+  selective-sleep options are not rejected under FSDP, and are untested there. Either add the
+  check or test them.
+
+**As built: debug and test hooks.**
+- `SKYRL_COLOCATED_SYNC_DEBUG=1` records per-phase trainer memory and time, round-trip counts and
+  export time (`Worker.get_last_weight_sync_stats`).
+- `SKYRL_COLOCATED_SYNC_TRAINER_CAP_GIB` caps trainer memory during the send, to reproduce
+  "weights fill the GPU" on a small model.
+- Worker RPCs: `skyrl_debug_weight_checksums`, `skyrl_debug_lora_checksums`,
+  `skyrl_debug_memory_stats`, `skyrl_debug_weight_allocation_map`,
+  `skyrl_debug_benchmark_create_and_map`, `skyrl_selective_sleep_stats`.
+- Test-only `Worker.reconfigure_for_test` swaps the trainer config, to compare two sync paths on
+  the same trained weights.
 
 **New RPCs and handshake.**
 
@@ -613,6 +868,22 @@ flowchart LR
 > Wall time: split `timing/sync_weights_only_transfer` into export/gather, pack, round trips
 > (count and mean latency), and receive/load. Log one JSON line per sync on rank 0.
 
+> [!NOTE]
+> **As built: tests.** The correctness gate became stricter than logprob parity:
+> `gpu_ci/megatron/test_colocated_weight_sync.py` checks **byte parity of every vLLM parameter and
+> buffer on every worker** against a fresh load, after a level-2 sleep and the production
+> `save_weights_for_sampler` path. That is 5,408 tensors on 8 workers and 11,584 on 16.
+> - `test_colocated_sync_byte_parity`: byte parity against a fresh load.
+> - `test_colocated_sync_after_train_step_matches_baseline`: the feature path writes the same
+>   bytes as today's path after a real training step.
+> - `test_colocated_sync_m0_probe`: allocation map and `create_and_map` benchmark.
+> - `test_colocated_lora_adapter_parity`: staged adapters byte-identical.
+> - CPU tests: `tests/backends/skyrl_train/weight_sync/test_colocated_slot_ring.py` (chunk cuts,
+>   layer alignment, local-shard agreement across ranks, plan building).
+>
+> Known gap: the after-train-step test fails on the Inkling2 slice, because a VLM sample-packing
+> check rejects the dummy batch before any sync.
+
 | Milestone | What | Tests and exit criteria |
 |---|---|---|
 | **M0** · instrumentation + baseline | The measurements above, behind a debug flag. Baseline today's path at 1/2/4 GB buffers, confirming the clone and layerwise costs of 1.2. A micro-benchmark on B200 inside a vLLM worker: time `create_and_map` for 1, 10 and 100 allocations at realistic weight sizes, with and without the CPU-restore copy. Dump the layer -> allocation map for the target model after load (allocations per layer, bytes in segments shared across layers). | Numbers that decide whether grouped wake (3.2 step 3) beats the per-layer hook, and that size risk 1 |
@@ -638,8 +909,19 @@ flowchart LR
 | 6 | **Host memory.** Pinned copies add up: trainer params, LoRA parking, the vLLM level-1 base backup, uncovered tensors | Host OOM or H2D bandwidth contention | Check per-node totals and shared H2D bandwidth at scale |
 | 7 | **Allocator internals churn.** `CuMemAllocator`, `CuMemBackend` and the private layerwise reload functions change between releases (0.32 -> 0.33 already moved LoRA slots to `runtime`) | Silent breakage on a vLLM bump | Keep pin-coupled code in one module with a version check; the M4 GPU test is the bump gate |
 | 8 | **Async failures.** A failed async `update_weights` | Hang in the slot barrier | Abort the sync on all ranks. Reuse the `sharded_rdt` stall-watchdog idea |
-| 9 | **Free while asleep (CUDA).** See 3.2 step 5 | Until the guard lands, any mid-sync drop of a `weights`-pool tensor is a hard crash, not a leak | The guard + its unit test (M4b) |
-| 10 | **Direct reload mode** (vLLM after 0.33) bypasses the hook entirely | Staged wake silently does nothing, or writes to unmapped memory | Reject in config validation (section 4) |
+| 9 | **Free while asleep (CUDA).** See 3.2 step 5 | A hard crash, not a leak. Narrower than first thought: in 0.33 nothing allocates in the `weights` pool after `load_model`, so it needs a whole segment to become free and be released while asleep (see the review notes) | The guard + its unit test (M4b). **Not built yet** |
+| 10 | **Direct reload mode** (vLLM after 0.33) bypasses the hook entirely | Staged wake silently does nothing, or writes to unmapped memory | Reject in config validation (section 4). Not needed on 0.33; add with the next vLLM bump |
+| 11 | **Recorded coverage goes stale** (new, M4a as built) | If a reload writes less than the one recorded before it (fallback layer, changed local-shard plan, partial update), the discarded bytes come back as garbage | State "each full sync rewrites the same set" as an invariant, and check it (refuse a selective sleep if recorded bytes shrank) |
+| 12 | **Crashed sync under M4b** (new) | The `weights` pool stays unmapped; the next forward faults | Map the remainder on any exception path, or mark the engine unhealthy |
+| 13 | **Megatron-Bridge per-instance state** (new, finding 6) | A flag set on `bridge._model_bridge` never reaches the exporting instance; on Inkling2 this caused the 18-minute sync | Set such flags at class level; add a guard or a note in the bridge patches README |
+| 14 | **Receiver clone near capacity** (new, finding 4) | OOM at the first sync | Backport the clone-free receive from SkyRL-nms |
+
+**Status of the original risks, as built:**
+- **Risk 1 (allocation sharing):** handled by recording coverage from the actual reload and
+  classifying against live blocks. Byte parity holds on Qwen3-30B-A3B.
+- **Risk 4 (fused-expert slicing):** still open; Phase A filters per-expert names only.
+- **Risk 5 (gather volume and peak):** confirmed as the binding constraint at full scale (finding
+  3). It is the next thing to attack for memory.
 
 ---
 
@@ -667,6 +949,15 @@ flowchart LR
 ---
 
 ## 8. Revision history
+
+- **2026-11-06, implementation status.**
+  - New "Implementation status" section after the TL;DR: per-milestone status, new findings from
+    the Qwen3-30B-A3B validation and the Inkling2 run, and review notes on the code.
+  - "As built" notes in 3.1, 3.2, 3.3 and 3.4.
+  - Section 4: a Built? column; added `weight_sync_layer_aligned_chunks` and
+    `selective_weight_sleep`; dropped `staged_weight_wake_group_GB`; documented validation, debug
+    hooks and tests.
+  - Section 6: new risks 11-14; status of risks 1, 4 and 5.
 
 - **2026-11-06, follow-up.**
   - 3.1: the per-tensor gather transient is now an explicit budget term.
