@@ -910,6 +910,8 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
             ie_cfg.weight_sync_backend != "delta"
         ), "Offloading KV cache during weight sync is not supported for delta weight sync"
 
+    _validate_colocated_weight_sync_cfg(cfg)
+
     # Validate speculative decoding. `method` is required rather than left to vLLM's
     # inference from the draft model config, so an unsupported drafter cannot reach the
     # engine implicitly.
@@ -1610,3 +1612,49 @@ def get_free_port():
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+def _validate_colocated_weight_sync_cfg(cfg: SkyRLTrainConfig) -> None:
+    """Reject unsupported combinations of the colocated weight-sync options.
+
+    See docs/design/colocated_weight_sync.md. Every option is colocated CUDA-IPC only;
+    the rest of weight sync keeps today's path, so an option that would silently do
+    nothing is an error instead.
+    """
+    ie_cfg = cfg.generator.inference_engine
+    mcfg = cfg.trainer.policy.megatron_config
+    colocated = cfg.trainer.placement.colocate_all
+    ring_opts = {
+        "weight_sync_num_ipc_buffers": ie_cfg.weight_sync_num_ipc_buffers != 1,
+        "weight_sync_layer_aligned_chunks": ie_cfg.weight_sync_layer_aligned_chunks,
+        "weight_sync_local_shard": ie_cfg.weight_sync_local_shard,
+        "selective_weight_sleep": ie_cfg.selective_weight_sleep,
+    }
+    enabled = [k for k, on in ring_opts.items() if on]
+    if mcfg.stream_weight_sync_from_cpu:
+        enabled.append("trainer.policy.megatron_config.stream_weight_sync_from_cpu")
+    if not enabled:
+        return
+    if ie_cfg.weight_sync_num_ipc_buffers < 1:
+        raise ValueError("generator.inference_engine.weight_sync_num_ipc_buffers must be >= 1")
+    if not colocated:
+        raise ValueError(f"{enabled} require trainer.placement.colocate_all=true (CUDA-IPC weight sync).")
+    if ie_cfg.weight_sync_backend not in ("nccl", "ipc"):
+        raise ValueError(f"{enabled} require the push weight-sync backend, got {ie_cfg.weight_sync_backend!r}.")
+    if ie_cfg.fp8_weight_sync_mode is not None and (
+        ie_cfg.weight_sync_local_shard or mcfg.stream_weight_sync_from_cpu
+    ):
+        raise ValueError(
+            "weight_sync_local_shard / stream_weight_sync_from_cpu do not support serialized FP8 weight sync yet."
+        )
+    if mcfg.stream_weight_sync_from_cpu:
+        if cfg.trainer.strategy != "megatron":
+            raise ValueError("stream_weight_sync_from_cpu requires trainer.strategy=megatron.")
+        if mcfg.ddp_config.overlap_param_gather:
+            # sync_params_for_export needs the params on the GPU to publish the
+            # optimizer's shards; the streamed export never reloads them.
+            raise ValueError("stream_weight_sync_from_cpu does not support ddp_config.overlap_param_gather.")
+    if ie_cfg.selective_weight_sleep and cfg.trainer.policy.model.lora.rank > 0:
+        lora_cfg = mcfg.lora_config
+        if cfg.trainer.strategy != "megatron" or not lora_cfg.merge_lora:
+            raise ValueError("selective_weight_sleep is for full-weight sync; adapter-only LoRA sleeps at level 1.")

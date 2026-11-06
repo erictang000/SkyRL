@@ -105,7 +105,7 @@ async def _rpc_all(client, method: str, **kwargs) -> list:
     out = await client._call_all_servers("/collective_rpc", {"method": method, "kwargs": kwargs})
     results = []
     for url in client.server_urls:
-        results.extend(out[url]["results"])
+        results.extend(out[url]["body"]["results"])
     return results
 
 
@@ -189,7 +189,7 @@ def _engine_cm(cfg: SkyRLTrainConfig, case: _Case):
 
 
 def _ray_env():
-    return {"SKYRL_COLOCATED_SYNC_DEBUG": "1", "NVTE_FLASH_ATTN": "0"}
+    return {"SKYRL_COLOCATED_SYNC_DEBUG": "1"}
 
 
 @pytest.mark.asyncio
@@ -245,6 +245,29 @@ async def test_colocated_sync_after_train_step_matches_baseline():
             bad = _diff_checksums(base, got)
             assert not bad, f"{len(bad)} tensors differ from today's path, e.g. {bad[:10]}"
             print("CWS after-step parity OK", flush=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.megatron
+async def test_colocated_sync_m0_probe():
+    """M0: the layer -> weights-allocation map and CuMem re-map cost on this GPU (no trainer)."""
+    case = _Case()
+    with ray_init(extra_env_vars=_ray_env()):
+        cfg = _make_cfg(case)
+        async with _engine_cm(cfg, case) as engines:
+            client = engines.client
+            maps = await _rpc_all(client, "skyrl_debug_weight_allocation_map")
+            m = maps[0]
+            layers = m.pop("layers")
+            per_layer = sorted(layers.items(), key=lambda kv: (kv[0] == "other", int(kv[0]) if kv[0].isdigit() else 0))
+            print("CWS_ALLOC_MAP " + json.dumps(m), flush=True)
+            for k, v in per_layer[:3] + per_layer[-2:]:
+                print(f"CWS_ALLOC_LAYER {k} {json.dumps(v)}", flush=True)
+            await client.sleep()
+            for restore in (False, True):
+                bench = await _rpc_all(client, "skyrl_debug_benchmark_create_and_map", restore=restore)
+                for row in bench[0]:
+                    print("CWS_MAP_BENCH " + json.dumps(row), flush=True)
 
 
 def _default_of(key: str):

@@ -218,3 +218,116 @@ def instrument_send(engine: Any, recorder: PhaseRecorder) -> Iterator[None]:
         if ring:
             for k, v in ring.items():
                 recorder.counters[f"ring_{k}"] = v
+
+
+def weight_allocation_map(model: torch.nn.Module) -> Dict[str, Any]:
+    """Dump the layer -> ``weights``-allocation map of a loaded vLLM model (inside a worker).
+
+    For every ``model.layers.<N>`` prefix: the CuMem allocations its parameters and
+    buffers overlap, their bytes, and how many of those allocations are shared with
+    another layer. Decides how grouped a staged wake can be (M0 / M4b).
+    """
+    import bisect
+    import re
+
+    from vllm.device_allocator.cumem import CuMemAllocator
+
+    alloc = CuMemAllocator.get_instance()
+    segs = sorted((ptr, ptr + d.handle[1]) for ptr, d in alloc.pointer_to_data.items() if d.tag == "weights")
+    starts = [s for s, _ in segs]
+
+    def seg_of(p: int):
+        i = bisect.bisect_right(starts, p) - 1
+        return segs[i] if i >= 0 and segs[i][0] <= p < segs[i][1] else None
+
+    layer_re = re.compile(r"(?:^|\.)layers\.(\d+)\.")
+    by_layer: Dict[str, set] = {}
+    outside = 0
+    for name, t in list(model.named_parameters()) + list(model.named_buffers()):
+        if t is None or t.device.type != "cuda" or t.numel() == 0:
+            continue
+        m = layer_re.search(name)
+        key = m.group(1) if m else "other"
+        seg = seg_of(t.data_ptr())
+        if seg is None:
+            outside += t.numel() * t.element_size()
+            continue
+        by_layer.setdefault(key, set()).add(seg)
+    owners: Dict[tuple, set] = {}
+    for k, ss in by_layer.items():
+        for s in ss:
+            owners.setdefault(s, set()).add(k)
+    shared = {s for s, ks in owners.items() if len(ks) > 1}
+    gib = 1024**3
+    layers = {
+        k: {
+            "allocations": len(ss),
+            "GiB": sum(e - s for s, e in ss) / gib,
+            "shared_allocations": len(ss & shared),
+        }
+        for k, ss in by_layer.items()
+    }
+    return {
+        "weights_allocations": len(segs),
+        "weights_GiB": sum(e - s for s, e in segs) / gib,
+        "shared_allocations": len(shared),
+        "shared_GiB": sum(e - s for s, e in shared) / gib,
+        "tensor_bytes_outside_weights_pool_GiB": outside / gib,
+        "layers": layers,
+    }
+
+
+def benchmark_create_and_map(sizes_mb=(64, 256), counts=(1, 10, 100), restore: bool = True) -> list:
+    """Time CuMem ``create_and_map`` (+ optional pinned H2D restore) of fresh allocations.
+
+    Allocates through vLLM's ``weights``-style pool, sleeps them (discard or CPU
+    backup), then times re-mapping ``count`` of them directly with ``create_and_map``
+    -- what a staged wake would do per group -- without ``CuMemAllocator.wake_up``'s
+    ``gc.collect()`` / ``empty_cache()``.
+    """
+    from vllm.device_allocator.cumem import (
+        CuMemAllocator,
+        create_and_map,
+        libcudart,
+        unmap_and_release,
+    )
+
+    alloc = CuMemAllocator.get_instance()
+    results = []
+    for size_mb in sizes_mb:
+        for count in counts:
+            nbytes = size_mb * 1024**2
+            with alloc.use_memory_pool(tag="skyrl_bench"):
+                ts = [torch.empty(nbytes, dtype=torch.uint8, device="cuda") for _ in range(count)]
+            ptrs = [t.data_ptr() for t in ts]
+            datas = [alloc.pointer_to_data[p] for p in ptrs if p in alloc.pointer_to_data]
+            backups = []
+            for d in datas:
+                if restore:
+                    cpu = torch.empty(d.handle[1], dtype=torch.uint8, pin_memory=True)
+                    libcudart.cudaMemcpy(cpu.data_ptr(), d.handle[2], d.handle[1])
+                    backups.append(cpu)
+                unmap_and_release(d.handle)
+                d.is_asleep = True
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for i, d in enumerate(datas):
+                create_and_map(d.handle)
+                d.is_asleep = False
+                if restore:
+                    libcudart.cudaMemcpy(d.handle[2], backups[i].data_ptr(), d.handle[1])
+            torch.cuda.synchronize()
+            dt = time.perf_counter() - t0
+            results.append(
+                {
+                    "size_MiB": size_mb,
+                    "count": count,
+                    "restore": restore,
+                    "seconds": dt,
+                    "GiB_per_s": count * nbytes / 1024**3 / dt if dt else None,
+                    "ms_per_alloc": dt / max(1, len(datas)) * 1e3,
+                }
+            )
+            del ts, backups
+            torch.cuda.empty_cache()
+    return results
