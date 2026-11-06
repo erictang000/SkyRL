@@ -24,6 +24,9 @@ main 518c624a:
   restore unless the numbers call for it.
 - 6: new risks 9 (free while asleep) and 10 (direct reload).
 - Suggested priority: M1-M3 carry both the memory and the 18-minute problems; M4a next; M4b last.
+- 3.1 (follow-up): the per-tensor gather transient is now an explicit budget term, and "keep the
+  trainer resident, free it layer by layer" is recorded as an alternative considered (why not:
+  Megatron's flat DDP param buffers cannot be freed per layer).
 
 ## 1. Motivation and current behavior
 
@@ -162,6 +165,39 @@ in `sources.py`):
 `P` x largest staged layer slice + largest gathered layer + `N` x slot size. `build_trainer_engine`
 derives the slot size from it and checkpoint shapes (like `_packed_buffer_size_bytes`), failing
 fast naming the term that does not fit.
+
+The "largest gathered layer" term is usually the biggest one, and it is there whether or not
+the trainer is offloaded. `export_hf_weights` materializes each HF tensor *unsharded* on every
+trainer rank, so a fused 3D expert tensor is gathered whole: for the motivating case,
+384 experts x 4608 x 4608 x 2 B ~ 16 GB for one `gate_up` tensor, held at the end of the sync
+next to ~147 GiB of woken vLLM weights. Size the budget from the largest single gathered tensor
+(from checkpoint shapes), not from the trainer's per-rank shard. Local shards (3.3) shrink what
+is *packed*, not what is *gathered*; only an owner -> consumer reshard (open question 5) or
+exporting fused experts in EP-local pieces bounds the gather itself.
+
+**Alternative considered: keep the trainer resident and free it layer by layer.** Instead of
+offloading the policy before sync and reading it back from pinned CPU, keep the BF16 shard on
+GPU, and after layer k is sent, offload it (D2H) and free its GPU memory, while vLLM wakes layer k
+just before writing it (3.2). Memory works out: per GPU,
+`trainer(layers k..L) + vLLM(layers 0..k) ~ 37 (1 - k/L) + 147 (k/L)` GiB plus transients, a
+monotone ramp from the trainer shard to W, so the peak (W + transients, at the end) is the same
+as the offloaded design. It saves one H2D read of the shard. Not chosen, because:
+- *Megatron cannot free part of a buffer.* At the pinned megatron-core, each DDP
+  `_ParamAndGradBuffer` allocates `param_data` as one flat tensor (one per dtype group, plus one
+  for expert-parallel params); every param and bucket is a view into it, and
+  `offload_to_cpu(move_params=True)` frees it as a whole (`storage().resize_(0)`). Dropping views
+  frees nothing. Per-layer freeing needs per-bucket storage in Megatron DDP (touching grad
+  reduce, the distributed optimizer and NCCL buffer registration) or VMM-backed trainer buffers
+  that can unmap sub-ranges. Both are larger and riskier than the CPU read.
+- *It makes wake-on-write (M4b) mandatory.* The ramp only fits if vLLM wakes per layer; with the
+  trainer offloaded, a full `wake_up(["weights"])` already fits and M4b stays optional. M4b is
+  the most version-coupled piece (allocator internals, free-while-asleep, direct reload).
+- *The CPU path is cheap.* The shard has to reach CPU before generation anyway; offload-then-read
+  adds one H2D of the shard (~37 GiB per GPU in the motivating case, ~1 s per GPU at PCIe 5
+  rates, a few seconds with 8 GPUs sharing host links) against a sync measured in minutes.
+
+Revisit if Megatron gains per-bucket (or VMM-backed) param storage, or if M0 shows the H2D
+read-back on the critical path.
 
 **LoRA.** Adapter params live in DDP buffers that stay resident (`offload_megatron_model_to_cpu`
 skips them when `is_lora`). The fix is to stop materializing the whole adapter on GPU:
@@ -449,9 +485,12 @@ round trips (count, mean latency), receive/load. One JSON line per sync on rank 
 4. **Fused-expert slicing semantics.** Whether the fused-name loader expects global or local
    expert order differs by model/loader; verify per supported architecture or restrict Phase A
    to per-expert names first.
-5. **Gather volume.** All-gather-then-slice still moves the whole model into every trainer rank;
-   an all-to-all reshard (owner -> consumer slice) would cut it by ~TP. Needs the Phase B plan on
-   the trainer side; evaluate after M3 numbers.
+5. **Gather volume and gather peak.** All-gather-then-slice still moves the whole model into
+   every trainer rank, and holds each unsharded tensor (up to ~16 GB for a fused expert tensor
+   in the motivating case) on every rank at once; see the budget note in 3.1. An all-to-all
+   reshard (owner -> consumer slice) would cut the volume by ~TP and the peak to the local
+   slice. Needs the Phase B plan on the trainer side; evaluate after M3 numbers, sooner if the
+   gathered tensor does not fit next to the woken weights.
 6. **Host memory.** Pinned copies add up (trainer params, LoRA parking, vLLM level-1 base
    backup, uncovered tensors); check per-node totals and shared H2D bandwidth at scale.
 7. **Allocator internals churn.** `CuMemAllocator`, `CuMemBackend`, layerwise reload private
