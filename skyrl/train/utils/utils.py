@@ -1629,6 +1629,7 @@ def _validate_colocated_weight_sync_cfg(cfg: SkyRLTrainConfig) -> None:
         "weight_sync_layer_aligned_chunks": ie_cfg.weight_sync_layer_aligned_chunks,
         "weight_sync_local_shard": ie_cfg.weight_sync_local_shard,
         "selective_weight_sleep": ie_cfg.selective_weight_sleep,
+        "staged_weight_wake": ie_cfg.staged_weight_wake,
     }
     enabled = [k for k, on in ring_opts.items() if on]
     if mcfg.stream_weight_sync_from_cpu:
@@ -1654,6 +1655,11 @@ def _validate_colocated_weight_sync_cfg(cfg: SkyRLTrainConfig) -> None:
             # sync_params_for_export needs the params on the GPU to publish the
             # optimizer's shards; the streamed export never reloads them.
             raise ValueError("stream_weight_sync_from_cpu does not support ddp_config.overlap_param_gather.")
+    if ie_cfg.staged_weight_wake and not ie_cfg.selective_weight_sleep:
+        raise ValueError("staged_weight_wake requires selective_weight_sleep.")
+    if ie_cfg.staged_weight_wake and ie_cfg.fp8_weight_sync_mode is not None:
+        # The batched-MoE FP8 loader writes kernel tensors outside the layerwise hook.
+        raise ValueError("staged_weight_wake does not support serialized FP8 weight sync.")
     if ie_cfg.selective_weight_sleep and cfg.trainer.policy.model.lora.rank > 0:
         lora_cfg = mcfg.lora_config
         if cfg.trainer.strategy != "megatron" or not lora_cfg.merge_lora:

@@ -45,13 +45,24 @@ _RECORDED: Optional[List[Tuple[int, int]]] = None
 _LAST_STATS: Dict[str, Any] = {}
 _INSTALLED = False
 _LAST_KEEP: List[Tuple[int, int]] = []
+# M4b: wake ``weights`` allocations as the reload writes them instead of all up front.
+_STAGED_WAKE = False
+# True between a deferred weights wake and the end of the reload that maps them.
+_DEFERRED = False
+_LAST_SLEEP_SELECTIVE = False
+_STAGED_STATS: Dict[str, Any] = {}
 
 
-def enable() -> None:
-    """Turn selective sleep on in this worker process (idempotent)."""
-    global _ENABLED
+def enable(staged_wake: bool = False) -> None:
+    """Turn selective sleep (and optionally wake-on-write) on in this worker process."""
+    global _ENABLED, _STAGED_WAKE
     install()
     _ENABLED = True
+    _STAGED_WAKE = bool(staged_wake)
+
+
+def staged_stats() -> Dict[str, Any]:
+    return dict(_STAGED_STATS)
 
 
 def is_enabled() -> bool:
@@ -114,6 +125,9 @@ def install() -> None:
     original = layerwise._copy_and_restore_kernel_tensors
 
     def _recording_copy_and_restore(layer, info):
+        if _DEFERRED and info.kernel_tensors is not None:
+            parameters, buffers = info.kernel_tensors
+            _map_for_tensors(list(parameters.values()) + list(buffers.values()))
         rec = _RECORDING
         if rec is not None and info.kernel_tensors is not None:
             parameters, buffers = info.kernel_tensors
@@ -142,15 +156,107 @@ def install() -> None:
     orig_sleep = CuMemAllocator.sleep
 
     def _selective_sleep(self, offload_tags=None):
+        global _LAST_SLEEP_SELECTIVE
         tags = (offload_tags,) if isinstance(offload_tags, str) else offload_tags
+        _LAST_SLEEP_SELECTIVE = False
         if _ENABLED and tags is not None and "weights" not in tags:
             keep = _uncovered_weight_allocations(self)
             if keep is not None:
-                return _sleep_keeping(self, tags, keep)
+                _sleep_keeping(self, tags, keep)
+                _LAST_SLEEP_SELECTIVE = True
+                return None
         return orig_sleep(self, offload_tags)
 
+    orig_wake = CuMemAllocator.wake_up
+
+    def _staged_wake_up(self, tags=None):
+        global _DEFERRED
+        if _STAGED_WAKE and _LAST_SLEEP_SELECTIVE and tags is not None and "weights" in tags:
+            # Leave the weights pool unmapped: the reload maps each layer just before
+            # writing it. Everything else wakes as usual.
+            _DEFERRED = True
+            _STAGED_STATS.clear()
+            _STAGED_STATS.update(deferred=True, mapped_in_hook=0, mapped_at_finish=0, GiB_in_hook=0.0)
+            rest = [t for t in tags if t != "weights"]
+            # Non-deferrable tags (runtime, cudagraph) are always woken by vLLM's loop.
+            return orig_wake(self, rest or ["__skyrl_none__"])
+        return orig_wake(self, tags)
+
     CuMemAllocator.sleep = _selective_sleep
+    CuMemAllocator.wake_up = _staged_wake_up
+
+    from vllm.v1.worker.gpu_worker import Worker
+
+    orig_worker_wake = Worker.wake_up
+
+    def _worker_wake_up(worker, tags=None):
+        if _STAGED_WAKE and _LAST_SLEEP_SELECTIVE and tags is not None and "weights" in tags:
+            # The level-2 save-lists (named buffers, model-state tensors) would be copied
+            # into unmapped memory now, or replayed over freshly loaded values later. With
+            # selective sleep every tensor the reload does not rewrite is CPU-backed in the
+            # allocator itself, so they are not needed.
+            for attr in ("_sleep_saved_buffers", "_sleep_saved_draft_buffers", "_skyrl_saved_model_state"):
+                if getattr(worker, attr, None):
+                    setattr(worker, attr, {})
+        return orig_worker_wake(worker, tags)
+
+    Worker.wake_up = _worker_wake_up
     _INSTALLED = True
+
+
+def _weights_index() -> Tuple[List[int], List[Any]]:
+    from vllm.device_allocator.cumem import CuMemAllocator
+
+    items = sorted(
+        (ptr, d) for ptr, d in CuMemAllocator.get_instance().pointer_to_data.items() if d.tag == "weights"
+    )
+    return [p for p, _ in items], [d for _, d in items]
+
+
+def _map_allocation(data: Any) -> None:
+    """Re-map one asleep allocation at its old address, restoring its CPU backup if any."""
+    from vllm.device_allocator.cumem import create_and_map, libcudart
+
+    create_and_map(data.handle)
+    data.is_asleep = False
+    backup = data.cpu_backup_tensor
+    if backup is not None:
+        libcudart.cudaMemcpy(data.handle[2], backup.data_ptr(), backup.numel() * backup.element_size())
+        data.cpu_backup_tensor = None
+
+
+def _map_for_tensors(tensors: List[torch.Tensor]) -> None:
+    """Map every asleep ``weights`` allocation overlapping these tensors (a layer, before its write)."""
+    starts, datas = _weights_index()
+    for t in tensors:
+        if not isinstance(t, torch.Tensor) or t.device.type != "cuda" or t.numel() == 0:
+            continue
+        storage = t.untyped_storage()
+        lo = storage.data_ptr()
+        hi = lo + storage.nbytes()
+        i = max(0, bisect.bisect_right(starts, lo) - 1)
+        while i < len(starts) and starts[i] < hi:
+            d = datas[i]
+            if d.is_asleep and starts[i] + d.handle[1] > lo:
+                _map_allocation(d)
+                _STAGED_STATS["mapped_in_hook"] = _STAGED_STATS.get("mapped_in_hook", 0) + 1
+                _STAGED_STATS["GiB_in_hook"] = _STAGED_STATS.get("GiB_in_hook", 0.0) + d.handle[1] / 1024**3
+            i += 1
+
+
+def finish_staged_wake() -> None:
+    """Map every ``weights`` allocation still asleep. Must run before ``finalize_layerwise_reload``."""
+    global _DEFERRED
+    if not _DEFERRED:
+        return
+    _, datas = _weights_index()
+    n = 0
+    for d in datas:
+        if d.is_asleep:
+            _map_allocation(d)
+            n += 1
+    _STAGED_STATS["mapped_at_finish"] = n
+    _DEFERRED = False
 
 
 def _live_blocks_by_segment() -> Dict[int, List[Tuple[int, int]]]:

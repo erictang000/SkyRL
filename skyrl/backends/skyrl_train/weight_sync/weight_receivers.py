@@ -311,6 +311,10 @@ class SkyrlReceiveLifecycleMixin(SkyrlLoraStagingMixin, SkyrlCheckpointLoadMixin
 
         ok = False
         try:
+            # Wake-on-write (M4b): map whatever the reload did not write before finalize,
+            # which runs process_weights_after_loading on deferred attention layers'
+            # kernel tensors directly, outside the write hook.
+            selective_sleep.finish_staged_wake()
             with torch.device(self.device):
                 super().finish_weight_update()
                 # A level-2 sleep zeroes MoE kernel constants that no reload rebuilds.

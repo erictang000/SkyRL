@@ -1460,6 +1460,10 @@ class InferenceEngineConfig(BaseConfig):
     """Colocated full-weight sync only. Sleep the engine's weights at level 2 but keep (on CPU)
     every ``weights``-pool allocation the reload does not fully rewrite, instead of saving
     named buffers by list."""
+    staged_weight_wake: bool = False
+    """Requires ``selective_weight_sleep``. After a selective sleep, leave the weights pool
+    unmapped at the pre-sync wake and map each layer's allocations just before the reload
+    writes it (wake-on-write); the rest is mapped before finalize. Experimental (M4b)."""
     delta_weight_sync: Optional[DeltaWeightSyncConfig] = None
     """Required when ``weight_sync_backend="delta"``."""
     tensor_parallel_size: int = 1

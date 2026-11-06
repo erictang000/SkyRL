@@ -414,14 +414,14 @@ class NewInferenceWorkerWrap:
 
         return benchmark_create_and_map(restore=restore)
 
-    def skyrl_enable_selective_sleep(self) -> dict:
+    def skyrl_enable_selective_sleep(self, staged_wake: bool = False) -> dict:
         """Make every later level-2 sleep keep (on CPU) what the last reload did not rewrite.
 
         See ``weight_sync/colocated/selective_sleep.py`` (M4a of the colocated design).
         """
         from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
 
-        selective_sleep.enable()
+        selective_sleep.enable(staged_wake=staged_wake)
         return selective_sleep.last_stats()
 
     def skyrl_local_shard_info(self) -> dict:
@@ -459,6 +459,7 @@ class NewInferenceWorkerWrap:
 
         stats = selective_sleep.last_stats()
         stats["uncovered"] = selective_sleep.describe_uncovered(self.model_runner.model)
+        stats["staged_wake"] = selective_sleep.staged_stats()
         return stats
 
     # Suspend / resume for non-colocated weight sync.
