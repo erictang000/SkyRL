@@ -35,6 +35,8 @@ Megatron TP2/EP8 → vLLM TP8 on one node, 1 GiB slots, steady-state sync (secon
 | all, after a training step vs today's path | ✅ (identical bytes) | 11 vs 58 | 10.3 vs 61.1 GB | 2.1 vs 5.3 | 4.2 vs 11.2 |
 | all, vLLM TP4 × 2 engines (EP4 each) | ✅ | 17 | 17.6 GB | 3.7 | 4.0 |
 | all, **2 nodes**: Megatron TP2/EP16 → vLLM TP8 × 2 (EP) | ✅ (16 workers) | 11 | 10.3 GB | 2.4 | 4.0 |
+| all + M4b wake-on-write, vLLM EP (3 syncs) | ✅ | 11 | 10.3 GB | 2.2 | 4.0 |
+| M4a + M4b alone (3 syncs) | ✅ | 58 | 61.1 GB | 7.8 | 10.9 |
 
 **OOM-shaped repro** (trainer capped at 6 GiB during the send with
 `SKYRL_COLOCATED_SYNC_TRAINER_CAP_GIB`, mimicking "vLLM weights fill the GPU"): today's path
@@ -45,6 +47,13 @@ parity at a 3.0 GiB peak.
 **M5 LoRA** (rank 32, all-linear incl. experts, `sync_mode=memory`, after a training step):
 parking the adapter export on pinned CPU stages byte-identical adapters on every worker
 (37,248 tensors per worker). It costs ~1.9 s per sync here (dedupe/folds/3D→flat on the host).
+
+**Serving check.** After each sync the harness also compares 4 greedy 48-token generations
+with the fresh engine's. In eager mode they are identical through 3 syncs with every feature
+(including M4b) on. With CUDA graphs on, exact equality is not a usable gate: the *fresh
+engine repeated with no sync at all* already diverges at token 33 and 18 on two prompts,
+today's path diverges the same way after a sync, and the feature path stays within that
+noise. The harness therefore asserts only that no prompt diverges before token 8.
 
 **M0 probes.** vLLM's `weights` pool for this model is 130 CuMem allocations (4–5 per layer,
 26 shared across layer boundaries, 0.27 GiB in shared ones). `create_and_map` costs a flat
@@ -68,7 +77,7 @@ selective rule backs them up without having to know what they are.
 | M2 local shards, Phase A | **done, validated** | Per-expert names only; fused 3D expert tensors (risk 4) still go whole. Falls back (logged) without vLLM EP |
 | M3 slot ring | **done, validated** | No gain alone on this model: rank 0 waits ~3.8 s on sends; the receiver (clone + layerwise load), not the 0.8 s export, is the bottleneck. Matters when the EP gather is slow (motivating case) and composes with M2 |
 | M4a selective sleep | **done, validated** | Coverage recorded empirically from the actual reload (no static rules), classified against the torch allocator's live blocks |
-| M4b wake-on-write | **prototype** | See below |
+| M4b wake-on-write | **prototype, validated on this model** | Byte parity over 3 syncs; 124 of 130 `weights` allocations (7.2 GiB) mapped by the write hook as layers were written, 6 at finish. With CUDA graphs on, post-sync greedy output stays within the engine's own run-to-run noise (below), so replay at the re-mapped addresses works. Not done: the CUDA free-while-asleep guard (step 5, no frees mid-sync on this model), direct-reload rejection beyond the FP8 check, and a crashed sync leaves the pool unmapped |
 | M5 LoRA | **step 1 done, validated** | Adapter parked on pinned CPU; per-receiver slicing of fused 3D expert adapters not done |
 | M6 Phase B (TP slices) | **scoped, not built** | Needs the `FakeRDTTensor` bake from `sharded_rdt` run against the colocated worker's loader; only matters without vLLM EP |
 
