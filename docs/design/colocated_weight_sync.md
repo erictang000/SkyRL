@@ -8,6 +8,23 @@ both `v0.32.0` and `v0.33.0`; differences are called out).
 Read first: `.agents/docs/weight_sync.md` (engines, sources, receive lifecycle, KV offload),
 `.agents/docs/backends/megatron.md`, `.agents/docs/inference.md`.
 
+**Review revision (2026-11-06).** Changes from a review pass, checked against v0.33.0 and vLLM
+main 518c624a:
+- 3.2: the coverage rule is restated as "written by `_copy_and_restore_kernel_tensors`", so padded
+  params count as covered. The hook goes on that module attribute, which also catches SkyRL's
+  eager layerwise patch. New grouped (per-chunk) wake, with the per-layer hook as the safety
+  net. New CUDA free-while-asleep guard (step 5). Why finish must wake everything before
+  finalize is spelled out (deferred attention).
+- 3.2: staged base restore for LoRA is deprioritized. "What staged wake buys" now says plainly
+  that it does not lower peak once 3.1 lands. Selective sleep is the part to keep.
+- 4: config validation rejects direct reload mode (post-0.33 vLLM). New
+  `staged_weight_wake_group_GB` field.
+- 5: M0 gains a `create_and_map` micro-benchmark and a layer -> allocation map dump. M4 is split
+  into M4a (selective sleep, lands alone) and M4b (wake-on-write, optional). M5 drops staged
+  restore unless the numbers call for it.
+- 6: new risks 9 (free while asleep) and 10 (direct reload).
+- Suggested priority: M1-M3 carry both the memory and the 18-minute problems; M4a next; M4b last.
+
 ## 1. Motivation and current behavior
 
 Motivating case: a large MoE (~600B params, ~1.2 TB of BF16 weights) served by TP8 vLLM
@@ -184,35 +201,75 @@ The RFC's final stage, built on hooks vLLM already has (no tensor-aware allocato
 
 1. *Allocation map*, built once (first `init_weight_transfer_engine`): per module with
    layerwise info, the `weights` allocations its kernel params/buffers overlap (address ranges in
-   `pointer_to_data`). An allocation is **covered** iff every live tensor in it is a parameter
-   fully rewritten by a reload; else **uncovered** (buffers, unloaded/padded params, MoE kernel
-   constants).
+   `pointer_to_data`). An allocation is **covered** iff every live tensor in it is written by
+   `_copy_and_restore_kernel_tensors` during a reload: every kernel parameter, and every kernel
+   buffer except non-persistent buffers that are not loaded (the function's own skip rule).
+   Padded / partially loaded params are covered: `copy_` from the temporary layer overwrites the
+   whole kernel tensor (padding included), exactly as today's full-wake path does. Everything
+   else is **uncovered** (non-persistent buffers such as rotary caches, tensors of modules
+   without layerwise info, MoE kernel constants).
 2. *Selective sleep* (`skyrl_sleep_for_weight_sync` extended, driven over `/collective_rpc` as
    today): discard covered allocations; offload uncovered ones to CPU (or save the uncovered
    tensors by value, generalizing today's `_skyrl_saved_buffers`). This is "level 2 done
    correctly": no full CPU backup, and nothing that a reload does not rewrite is lost. It also
    subsumes the MoE-kernel-constant restore in `SkyrlReceiveLifecycleMixin.finish_weight_update`.
-3. *Wake on write*: wrap layerwise `_layerwise_process` / `_copy_and_restore_kernel_tensors`
-   (and the finalize-time writers) so that, before a layer's kernel tensors are written, its
-   still-asleep allocations are `create_and_map`-ed (and CPU-restored if backed up). Shared small
-   segments wake with the first layer that touches them; later layers overwrite their part.
+3. *Wake on write*: replace the **module attribute** `layerwise._copy_and_restore_kernel_tensors`
+   so that, before a layer's kernel tensors are written, its still-asleep allocations are
+   `create_and_map`-ed (and CPU-restored if backed up). Patch the module attribute rather than
+   `_layerwise_process`: upstream's `_layerwise_process` and `_reload_attention_scales` both call
+   it through the module global, and so does SkyRL's eager patch (`patch_layerwise_reload_eager.py`,
+   `_finish` calls `layerwise._copy_and_restore_kernel_tensors`), so one wrapper covers all three
+   paths. (Verified on v0.33.0 and vLLM main 518c624a.) Shared small segments wake with the first
+   layer that touches them; later layers overwrite their part. Call `create_and_map` (plus the
+   CPU-restore copy) directly. **Never call `CuMemAllocator.wake_up()` per layer or group:** it
+   runs `gc.collect()` + `empty_cache()` on every call.
+   *Grouped wake (pack wakes like the transfer packs tensors):* the per-layer hook above is the
+   correctness safety net; the normal path wakes per **group** ahead of the load. With the
+   layer-aligned chunks of 3.4, the receive engine's `update_weights` takes the layer indices
+   named in the chunk (`model.layers.<N>.` prefix; embeddings / `lm_head` / final norm go to a
+   catch-all group). Before `load_weights`, it wakes the union of their allocations in one pass.
+   One transfer slot then means one wake group. If chunks are not layer-aligned (or the source is
+   out of order), the hook can instead wake ahead: layers k..k+G-1 up to
+   `staged_weight_wake_group_GB`. Groups matter little at level 2 (cost should scale with bytes
+   mapped, not call count; measure it in M0). They matter at level 1: fewer, larger pinned H2D
+   copies issued async on a side stream ahead of the load.
 4. *Finish*: first wake anything still asleep in `weights` (normally nothing), then the existing
-   finalize, then restore by-value tensors.
-5. Dispatch drops the up-front `wake_up(["weights"])`: trainer offloaded -> engines selectively
-   asleep -> sync (weights wake per layer) -> `wake_up(["kv_cache"])`.
+   finalize, then restore by-value tensors. This ordering is load-bearing: in
+   `_finalize_attention_layer`, a deferred attention layer with no loaded weights goes through
+   `_place_kernel_tensors` then `layer.process_weights_after_loading()` directly on the kernel
+   tensors, without passing through `_copy_and_restore_kernel_tensors`, so the hook never sees it.
+5. *Free-while-asleep guard (CUDA).* `CuMemAllocator._python_free_callback` skips unmap/release
+   for asleep allocations **only on ROCm** (v0.33.0 `cumem.py:211`, same on main). On CUDA,
+   freeing an asleep allocation calls `cuMemUnmap` on an unmapped range: the double-free class
+   of vllm#36651. Today every allocation is woken before anything can free it; with staged
+   wake, any path that drops a kernel tensor mid-sync crashes, e.g. a model patch or a
+   `process_weights_after_loading` that swaps in a new Parameter. Patch the callback in SkyRL to
+   return an empty/no-op handle for asleep allocations on CUDA too (mirroring the ROCm branch),
+   and cover it with a unit test that frees a tensor while asleep.
+6. Dispatch drops the up-front `wake_up(["weights"])`: trainer offloaded -> engines selectively
+   asleep -> sync (weights wake per group/layer) -> `wake_up(["kv_cache"])`.
 
 **Full weights vs LoRA.**
 - Full weights: selective level 2 (above). Woken bytes grow from ~0 to W over the sync;
   nothing is ever copied H2D except uncovered tensors.
 - LoRA: base weights come back from the level-1 CPU backup, so staged wake = *staged restore*:
   map + H2D layer by layer on a side stream, overlapped with the adapter transfer; the adapter
-  is staged separately and activated after the restore. Hides ~147 GiB of H2D per GPU (8 GPUs
-  share host bandwidth). LoRA slots must sit outside `weights` (true on 0.33).
+  is staged separately and activated after the restore. LoRA slots must sit outside `weights`
+  (true on 0.33). **Deprioritized (review):** the adapter transfer is small, so there is little
+  to overlap ~147 GiB of H2D with, and the base must be fully restored before generation
+  anyway. The observed LoRA OOMs (1.3) are a trainer-side transient and whole-fused-expert
+  sends, which 3.1 and 3.3 fix. Build this only if M0/M5 numbers show the restore on the
+  critical path; if built, use budget-sized groups (step 3), not single layers.
 
 **What staged wake buys, honestly.** With 3.1 alone a full wake + bounded trainer already fits.
 Staged wake adds: (a) no up-front ~147 GiB map (nor, at level 1, an H2D copy of weights about to
 be overwritten); (b) level 2 safe by construction instead of by buffer save-lists; (c) headroom
 early in the sync that a budget can use; (d) the hook an RFC-style upstream API needs.
+It does **not** lower peak memory once 3.1 lands: the peak is W + budget at the end of the sync
+either way (3.5). Without 3.1 it also does not help, since the trainer's resident shard is
+still on the GPU when the last layer wakes. Its peak benefit exists only when the trainer is
+on the GPU *and* frees layer by layer, which 3.1 supersedes. So (b), the selective sleep, is the
+part worth landing on its own (M4a). Wake-on-write (M4b) is optional.
 
 ### 3.3 Receiver-local shards (`weight_sync_local_shard`)
 
@@ -287,6 +344,7 @@ silently ignoring them.
 | `generator.inference_engine.weight_sync_num_ipc_buffers` | `1` | ring depth N; `2` enables the pipeline in 3.4 |
 | `generator.inference_engine.weight_sync_local_shard` | `false` | 3.3 (Phase A, later Phase B) |
 | `generator.inference_engine.staged_weight_wake` | `false` | 3.2: selective sleep + wake-on-write; requires `colocate_all` |
+| `generator.inference_engine.staged_weight_wake_group_GB` | `null` | 3.2 step 3: wake-ahead group size when chunks are not layer-aligned; `null` = wake per transfer chunk (layer-aligned) else per layer |
 
 `weight_transfer_threshold_cuda_ipc_GB` keeps its meaning when the budget is unset. New worker
 extension RPCs: `skyrl_build_weight_alloc_map`, an extended `skyrl_sleep_for_weight_sync(mode=
@@ -299,6 +357,13 @@ model not offloaded, unknown expert placement) logs once and takes today's path 
 full `wake_up(["weights"])`, full tensors, one buffer. Never a silent partial wake: finish
 always wakes the remainder before `finalize_layerwise_reload`.
 
+**Direct reload mode.** vLLM after 0.33 adds `VLLM_RELOAD_MODE=direct`
+(`model_executor/model_loader/reload/direct.py`; not in v0.33.0, present on main 518c624a):
+loaders write the checkpoint straight into kernel storage, and there is no
+`_copy_and_restore_kernel_tensors` step to hook. `staged_weight_wake` must reject it in config
+validation (or, later, wake per parameter by wrapping the loaders). Re-check this on every vLLM
+bump.
+
 **Upstream vLLM vs SkyRL-local.**
 
 | piece | where | notes |
@@ -306,7 +371,7 @@ always wakes the remainder before `finalize_layerwise_reload`.
 | streaming source, budget, LoRA streaming | SkyRL | Megatron-Bridge hook `_gather_gtp_weight` is private; upstream a "param reader" hook to Megatron-Bridge eventually |
 | ring of IPC slots, async rank-0 control, per-worker layouts | SkyRL (subclass `IPCTrainerWeightTransferEngine` / `IPCWeightTransferEngine`) | uses the existing `update_weights(list)` routing; upstream a `num_buffers` + per-worker layout option to `packed_ipc_producer` later |
 | allocation map, selective sleep, wake-on-write | SkyRL (worker extension + patch of layerwise reload) | touches `CuMemAllocator` internals (`pointer_to_data`, `create_and_map`, `unmap_and_release`) and private layerwise functions; version-coupled like the existing KV-offload path |
-| clean upstream API (recommended, not required) | vLLM | (1) `CuMemAllocator.wake_up_range(ptr, nbytes)` / `sleep(..., discard_ranges=...)` or a tensor-to-allocation query; (2) a layerwise-reload "before kernel write" callback; (3) `sleep(level=2)` that keeps uncovered tensors automatically; (4) the RFC's `wake_up_with_weights(generator)` built on (1)+(2) |
+| clean upstream API (recommended, not required) | vLLM | (1) `CuMemAllocator.wake_up_ranges([(ptr, nbytes), ...])` (batched, no per-call `gc.collect`/`empty_cache`) / `sleep(..., discard_ranges=...)` or a tensor-to-allocation query, plus the CUDA free-while-asleep fix; (2) a layerwise-reload "before kernel write" callback; (3) `sleep(level=2)` that keeps uncovered tensors automatically; (4) the RFC's `wake_up_with_weights(generator)` built on (1)+(2) |
 
 Nothing strictly requires upstream; upstreaming (1)-(3) removes the monkeypatches.
 
@@ -332,7 +397,12 @@ shared headroom). Wall time: `timing/sync_weights_only_transfer` split into expo
 round trips (count, mean latency), receive/load. One JSON line per sync on rank 0.
 
 - **M0 - instrumentation + baseline.** The measurements above behind a debug flag; baseline
-  today's path at 1/2/4 GB buffers, confirming the clone/layerwise costs of 1.2.
+  today's path at 1/2/4 GB buffers, confirming the clone/layerwise costs of 1.2. Also a
+  micro-benchmark on B200 inside a vLLM worker: time `create_and_map` for 1, 10, 100 allocations
+  at realistic weight sizes, with and without the CPU-restore copy. Also dump the layer -> allocation
+  map for the target model after load (allocations per layer, bytes in segments shared across
+  layers). Together these decide whether grouped wake (3.2 step 3) is worth more than the
+  per-layer hook, and size open question 1.
 - **M1 - trainer streaming (full weights).** `stream_weight_sync_from_cpu` + dispatch residency
   change + `_gather_gtp_weight` hook, then per-layer prefetch. Tests: parity gate; trainer peak
   during transfer <= budget independent of model size (compare tiny vs 30B); metadata identical
@@ -345,14 +415,21 @@ round trips (count, mean latency), receive/load. One JSON line per sync on rank 
   counters).
 - **M3 - ring of slots + async control plane.** Tests: parity; an artificially slow receiver
   (test-only hook) proves no slot is overwritten before its ack; wall time vs M2.
-- **M4 - staged wake (full weights).** Allocation map, selective sleep, wake-on-write, dispatch
-  ordering. Tests: GPU unit test on the tiny MoE inside vLLM: build map, sleep, sync, assert all
-  `weights` allocations awake and outputs equal to a fresh engine; run with CUDA graphs on
-  (`enforce_eager=false`) to prove address stability; parity gate; memory timeline shows vLLM
-  usage ramping during transfer, not stepping at wake. Re-run `gpu_ci/test_offload_kv_weight_sync.py`
-  (shares `skyrl_sleep_for_weight_sync`).
-- **M5 - LoRA.** Streaming adapter prepare to pinned CPU, per-receiver fused-expert slicing,
-  staged base restore overlapped with transfer. Tests: LoRA parity gate at ranks 32 and 128 on
+- **M4a - selective sleep (correctness, lands on its own).** Allocation map + covered/uncovered
+  classification + selective sleep, with today's full `wake_up(["weights"])` kept. Replaces the
+  buffer save-lists. Tests: GPU unit test on the tiny MoE: byte-for-byte compare of a
+  full-backup wake vs selective sleep + sync (open question 1); parity gate; re-run
+  `gpu_ci/test_offload_kv_weight_sync.py` (shares `skyrl_sleep_for_weight_sync`).
+- **M4b - wake-on-write (optional; see "What staged wake buys").** Module-attribute hook on
+  `_copy_and_restore_kernel_tensors`, grouped per-chunk wake, CUDA free-while-asleep guard,
+  finish-wakes-all ordering, dispatch ordering, direct-reload rejection. Tests: build map,
+  sleep, sync, assert all `weights` allocations awake and outputs equal to a fresh engine; run
+  with CUDA graphs on (`enforce_eager=false`) to prove address stability; with and without
+  `SKYRL_VLLM_EAGER_LAYERWISE_RELOAD` (both paths must hit the hook); a free-while-asleep unit
+  test; memory timeline shows vLLM usage ramping during transfer, not stepping at wake.
+- **M5 - LoRA.** Streaming adapter prepare to pinned CPU, per-receiver fused-expert slicing.
+  Staged base restore only if M0 numbers put the level-1 restore on the critical path (see
+  3.2). Tests: LoRA parity gate at ranks 32 and 128 on
   Qwen3-30B-A3B with vLLM EP; trainer and vLLM peaks; `test_lora_target.py` /
   `test_lora_receive.py` extended for sliced fused experts.
 - **M6 - local shards, Phase B + scale.** Baked TP slice plan; 2-node validation; propose
@@ -382,6 +459,9 @@ round trips (count, mean latency), receive/load. One JSON line per sync on rank 
    Pin-coupled code goes in one module with a version check, and the M4 GPU test is the bump gate.
 8. **Async failures.** A failed async `update_weights` must abort the sync on all ranks rather
    than hang in the slot barrier (reuse the `sharded_rdt` stall-watchdog idea).
+9. **Free while asleep (CUDA).** See 3.2 step 5. Until the guard lands, any mid-sync drop of a
+   `weights`-pool tensor is a hard crash, not a leak.
+10. **Direct reload mode** (post-0.33 vLLM) bypasses the hook entirely; see section 4.
 
 ## 7. Notes for the implementing agent
 
