@@ -476,6 +476,18 @@ class Worker(DistributedTorchRayActor):
             "total": total,
         }
 
+    def reconfigure_for_test(self, cfg: Any) -> None:
+        """Test-only: adopt another run config's trainer section and drop the transfer engine.
+
+        Lets a GPU test compare two weight-sync paths on the same trained weights; the
+        caller re-runs ``init_weight_sync_state`` afterwards.
+        """
+        from skyrl.backends.skyrl_train.weight_sync.weight_senders import teardown_engine
+
+        self.cfg = cfg.trainer
+        engine, self._weight_sync_engine = getattr(self, "_weight_sync_engine", None), None
+        teardown_engine(engine)
+
     def get_last_weight_sync_stats(self) -> Optional[Dict[str, Any]]:
         """Per-phase memory/time of this rank's last weight sync (``SKYRL_COLOCATED_SYNC_DEBUG=1`` only)."""
         return getattr(self, "last_weight_sync_stats", None)

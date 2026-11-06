@@ -399,6 +399,36 @@ class NewInferenceWorkerWrap:
         selective_sleep.enable()
         return selective_sleep.last_stats()
 
+    def skyrl_local_shard_info(self) -> dict:
+        """This worker's GPU, its index in ``update_weights`` lists, and the routed experts it serves.
+
+        For the colocated local-shard send (M2 of the colocated design). ``local_experts``
+        is None when the worker serves every expert (no vLLM expert parallelism), and
+        ``consistent`` is False if MoE layers disagree on placement (the trainer then
+        falls back to full tensors).
+        """
+        parallel = self.vllm_config.parallel_config
+        uuid = str(torch.cuda.get_device_properties(self.device.index).uuid)
+        local = None
+        consistent = True
+        num_experts = None
+        for module in self.model_runner.model.modules():
+            emap = getattr(module, "expert_map", None)
+            if not isinstance(emap, torch.Tensor) or emap.dim() != 1:
+                continue
+            ids = tuple(int(i) for i in torch.nonzero(emap >= 0).flatten().tolist())
+            if local is None:
+                local, num_experts = ids, int(emap.numel())
+            elif ids != local:
+                consistent = False
+        return {
+            "gpu_uuid": uuid,
+            "worker_index": parallel.data_parallel_index * parallel.world_size + self.rank,
+            "local_experts": list(local) if local is not None else None,
+            "num_experts": num_experts,
+            "consistent": consistent,
+        }
+
     def skyrl_selective_sleep_stats(self) -> dict:
         from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
 
