@@ -697,10 +697,13 @@ class Worker(DistributedTorchRayActor):
             PhaseRecorder,
             debug_enabled,
             instrument_send,
+            trainer_memory_cap,
         )
 
         recorder = PhaseRecorder("trainer_send") if debug_enabled() else None
-        with self._expandable_segments_disabled_for_sync(force=engine.skyrl_force_disable_expandable_segments):
+        with self._expandable_segments_disabled_for_sync(
+            force=engine.skyrl_force_disable_expandable_segments
+        ), trainer_memory_cap():
             if recorder is None:
                 await self._weight_sync_thread(engine.send_weights)
             else:

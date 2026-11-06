@@ -373,6 +373,15 @@ class NewInferenceWorkerWrap:
         torch.cuda.synchronize()
         return module_checksums(self.model_runner.model)
 
+    def skyrl_debug_lora_checksums(self) -> dict:
+        """Byte checksums of every staged in-memory LoRA adapter, by name (debug only)."""
+        from skyrl.backends.skyrl_train.patches.vllm.patch_lora_in_memory import _STAGED
+        from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
+            tensor_checksum,
+        )
+
+        return {name: {k: tensor_checksum(t) for k, t in a.tensors.items()} for name, a in _STAGED.items()}
+
     def skyrl_debug_memory_stats(self, reset_peak: bool = False) -> dict:
         """Torch allocator, device and CuMem-by-tag memory of this worker, in GiB."""
         from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
