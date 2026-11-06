@@ -448,7 +448,9 @@ class NewInferenceWorkerWrap:
     def skyrl_selective_sleep_stats(self) -> dict:
         from skyrl.backends.skyrl_train.weight_sync.colocated import selective_sleep
 
-        return selective_sleep.last_stats()
+        stats = selective_sleep.last_stats()
+        stats["uncovered"] = selective_sleep.describe_uncovered(self.model_runner.model)
+        return stats
 
     # Suspend / resume for non-colocated weight sync.
     #

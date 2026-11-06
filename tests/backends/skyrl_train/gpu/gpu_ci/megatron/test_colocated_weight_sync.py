@@ -57,6 +57,9 @@ class _Case:
     buffer_gb: float = field(default_factory=lambda: float(os.environ.get("SKYRL_CWS_BUFFER_GB", "1.0")))
     num_syncs: int = field(default_factory=lambda: _env_int("SKYRL_CWS_NUM_SYNCS", 2))
     gpu_mem_util: float = field(default_factory=lambda: float(os.environ.get("SKYRL_CWS_GMU", "0.6")))
+    # Eager by default: boots faster, and sidesteps an intermittent vLLM compile/autotune
+    # hang seen on concurrent boots. Set 0 to cover CUDA graphs (needed for staged wake).
+    enforce_eager: bool = field(default_factory=lambda: os.environ.get("SKYRL_CWS_EAGER", "1") == "1")
     # Extra dotted overrides, JSON: {"generator.inference_engine.weight_sync_num_ipc_buffers": 2, ...}
     overrides: dict = field(default_factory=lambda: json.loads(os.environ.get("SKYRL_CWS_OVERRIDES", "{}")))
 
@@ -91,6 +94,7 @@ def _make_cfg(case: _Case, overrides: dict | None = None) -> SkyRLTrainConfig:
     ie.distributed_executor_backend = "ray"
     ie.weight_transfer_threshold_cuda_ipc_GB = case.buffer_gb
     ie.gpu_memory_utilization = case.gpu_mem_util
+    ie.enforce_eager = case.enforce_eager
     if case.vllm_ep:
         ie.engine_init_kwargs = dict(ie.engine_init_kwargs or {}, enable_expert_parallel=True)
     ie.engine_init_kwargs = dict(ie.engine_init_kwargs or {}, max_model_len=4096)
@@ -156,6 +160,11 @@ class _Harness:
             "vllm_max_alloc_GiB": max(v["device"]["max_allocated"] for v in vllm),
             "counters_rank0": trainer[0]["counters"] if trainer and trainer[0] else None,
         }
+        summary["vllm_receive_w0"] = vllm[0].get("receive")
+        summary["vllm_weights_awake_GiB_w0"] = (vllm[0].get("cumem") or {}).get("weights", {}).get("awake")
+        if self.cfg.generator.inference_engine.selective_weight_sleep:
+            sel = await _rpc_all(self.client, "skyrl_selective_sleep_stats")
+            print("CWS_SELECTIVE " + json.dumps(sel[0], default=str), flush=True)
         print("CWS_SUMMARY " + json.dumps(summary, default=str), flush=True)
         print("CWS_RECORD " + json.dumps(rec, default=str), flush=True)
         return rec

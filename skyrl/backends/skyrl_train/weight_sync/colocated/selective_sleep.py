@@ -44,6 +44,7 @@ _RECORDING: Optional[List[Tuple[int, int]]] = None
 _RECORDED: Optional[List[Tuple[int, int]]] = None
 _LAST_STATS: Dict[str, Any] = {}
 _INSTALLED = False
+_LAST_KEEP: List[Tuple[int, int]] = []
 
 
 def enable() -> None:
@@ -192,6 +193,8 @@ def _uncovered_weight_allocations(allocator: Any) -> Optional[set]:
         else:
             keep.add(ptr)
             uncovered_bytes += size
+    global _LAST_KEEP
+    _LAST_KEEP = sorted(((p, allocator.pointer_to_data[p].handle[1]) for p in keep), key=lambda x: -x[1])
     _LAST_STATS.update(
         mode="selective",
         covered_GiB=covered_bytes / 1024**3,
@@ -237,3 +240,19 @@ def _sleep_keeping(allocator: Any, offload_tags: Tuple[str, ...], keep: set) -> 
     )
     gc.collect()
     torch.cuda.empty_cache()
+
+
+def describe_uncovered(model: torch.nn.Module, top: int = 12) -> List[Dict[str, Any]]:
+    """The largest allocations the last selective sleep backed up, with the tensors inside."""
+    tensors = [(n, t) for n, t in list(model.named_parameters()) + list(model.named_buffers()) if t is not None and t.is_cuda]
+    out = []
+    for ptr, size in _LAST_KEEP[:top]:
+        inside = []
+        for n, t in tensors:
+            p = t.data_ptr()
+            if ptr <= p < ptr + size:
+                r = _tensor_range(t)
+                covered = r is not None and _RECORDED is not None and _covered(_RECORDED, *r)
+                inside.append(f"{n}{list(t.shape)}{'' if covered else '*'}")
+        out.append({"MiB": size / 2**20, "tensors": inside[:8], "num_tensors": len(inside)})
+    return out
