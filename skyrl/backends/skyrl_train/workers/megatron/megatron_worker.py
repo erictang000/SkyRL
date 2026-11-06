@@ -1873,6 +1873,8 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                 or getattr(self.bridge.hf_pretrained, "model_name_or_path", "")
                 or getattr(self.bridge.hf_pretrained, "name_or_path", "")
             ),
+            park_on_cpu=self.cfg.placement.colocate_all
+            and self.cfg.policy.megatron_config.stream_weight_sync_from_cpu,
         )
 
     async def _publish_lora_adapter_in_memory(

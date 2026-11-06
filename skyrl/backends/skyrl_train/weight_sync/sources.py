@@ -419,15 +419,26 @@ class MegatronLoraAdapterSource(LoraAdapterWeightSource):
         actor_module: Any,
         lora_cls: Any,
         base_model_name_or_path: str,
+        park_on_cpu: bool = False,
     ) -> None:
         super().__init__(dtype=dtype, experts_per_shared_adapter=experts_per_shared_adapter)
         self._bridge = bridge
         self._actor_module = actor_module
         self._lora_cls = lora_cls
         self._base_model_name_or_path = base_model_name_or_path
+        # Colocated M5 (docs/design/colocated_weight_sync.md): park every exported
+        # tensor in pinned CPU as it streams, so dedupe, the rank/alpha folds and the
+        # 3D -> flat rewrite run on the host and the GPU holds one exported tensor
+        # (plus the IPC slot) at a time instead of the whole adapter.
+        self._park_on_cpu = park_on_cpu
 
     def export_adapter_stream(self) -> Iterator[Tuple[str, torch.Tensor]]:
         for name, tensor in self._bridge.export_adapter_weights(self._actor_module, cpu=False, show_progress=False):
+            if self._park_on_cpu and tensor.is_cuda:
+                parked = torch.empty(tensor.shape, dtype=tensor.dtype, pin_memory=True)
+                parked.copy_(tensor)
+                del tensor
+                tensor = parked
             yield f"base_model.model.{name}", tensor
 
     def finalize_adapter(

@@ -189,24 +189,32 @@ def instrument_send(engine: Any, recorder: PhaseRecorder) -> Iterator[None]:
     """
     source = getattr(engine, "source", None)
     client = getattr(engine, "client", None)
-    orig_update = getattr(client, "update_weights", None) if client is not None else None
+    wrapped = []
     if source is not None:
         engine.source = _TimedSource(source, recorder)
-    if orig_update is not None:
+    for method in ("update_weights", "update_weights_per_server"):
+        orig = getattr(client, method, None) if client is not None else None
+        if orig is None:
+            continue
 
-        def timed_update(update_info):
+        def timed(update_info, _orig=orig):
             t0 = time.perf_counter()
             try:
-                return orig_update(update_info)
+                return _orig(update_info)
             finally:
                 recorder.add("round_trips", 1)
                 recorder.add("round_trip_seconds", time.perf_counter() - t0)
 
-        client.update_weights = timed_update
+        setattr(client, method, timed)
+        wrapped.append(method)
     try:
         yield
     finally:
         if source is not None:
             engine.source = source
-        if orig_update is not None:
-            del client.update_weights
+        for method in wrapped:
+            delattr(client, method)
+        ring = getattr(engine, "skyrl_last_send_stats", None)
+        if ring:
+            for k, v in ring.items():
+                recorder.counters[f"ring_{k}"] = v
