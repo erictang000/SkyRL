@@ -389,6 +389,22 @@ class NewInferenceWorkerWrap:
             torch.cuda.reset_peak_memory_stats()
         return out
 
+    def skyrl_debug_weight_allocation_map(self) -> dict:
+        """Layer -> ``weights`` allocation map of the loaded model (debug, M0)."""
+        from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
+            weight_allocation_map,
+        )
+
+        return weight_allocation_map(self.model_runner.model)
+
+    def skyrl_debug_benchmark_create_and_map(self, restore: bool = True) -> list:
+        """Time CuMem re-mapping of fresh allocations, as a staged wake would do (debug, M0)."""
+        from skyrl.backends.skyrl_train.weight_sync.colocated.instrumentation import (
+            benchmark_create_and_map,
+        )
+
+        return benchmark_create_and_map(restore=restore)
+
     def skyrl_enable_selective_sleep(self) -> dict:
         """Make every later level-2 sleep keep (on CPU) what the last reload did not rewrite.
 
