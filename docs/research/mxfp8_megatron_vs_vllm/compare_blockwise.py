@@ -14,13 +14,14 @@ import argparse
 import importlib
 
 import torch
-
 from compare_quantizers import model_weights  # same tensor iterator
 
 
 def te_block(w, pow2):
     import transformer_engine.pytorch  # noqa: F401
-    from transformer_engine.pytorch.tensor.float8_blockwise_tensor import Float8BlockQuantizer
+    from transformer_engine.pytorch.tensor.float8_blockwise_tensor import (
+        Float8BlockQuantizer,
+    )
 
     tex = importlib.import_module("transformer_engine_torch")
     q = Float8BlockQuantizer(
@@ -47,7 +48,9 @@ def vllm_block(w, ue8m0=False):
 def vllm_block_fp32_then_requant(w):
     """Online fp8_per_block (FP32 scales) followed by the Blackwell DeepGEMM post-process,
     requant_weight_ue8m0_inplace: dequantize the FP8 codes and re-quantize to UE8M0."""
-    from vllm.model_executor.layers.quantization.utils.fp8_utils import requant_weight_ue8m0_inplace
+    from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+        requant_weight_ue8m0_inplace,
+    )
     from vllm.utils.deep_gemm import per_block_cast_to_fp8
 
     c, s = per_block_cast_to_fp8(w, block_size=[128, 128], use_ue8m0=False)
@@ -91,9 +94,13 @@ def main():
             tot[k][0] += cm
             tot[k][1] += sm
             tot[k][2] += int(cm > 0)
-    print(f"{args.model}: {n_t} 2D tensors, {n_el/1e9:.3f} B elements, {n_blk} 128x128 blocks; ref = TE Float8BlockQuantizer(force_pow_2_scales={pow2})")
+    print(
+        f"{args.model}: {n_t} 2D tensors, {n_el/1e9:.3f} B elements, {n_blk} 128x128 blocks; ref = TE Float8BlockQuantizer(force_pow_2_scales={pow2})"
+    )
     for k, (cm, sm, nt) in tot.items():
-        print(f"  {k:17s} code mismatches={cm} ({cm/n_el:.4%})  scale mismatches={sm} ({sm/n_blk:.2%} of blocks)  tensors affected={nt}")
+        print(
+            f"  {k:17s} code mismatches={cm} ({cm/n_el:.4%})  scale mismatches={sm} ({sm/n_blk:.2%} of blocks)  tensors affected={nt}"
+        )
 
 
 if __name__ == "__main__":

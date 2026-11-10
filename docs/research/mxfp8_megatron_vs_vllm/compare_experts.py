@@ -12,8 +12,6 @@ import glob
 import json
 import os
 
-import torch
-
 from compare_quantizers import q_te_split, q_vllm_op
 
 
@@ -51,8 +49,12 @@ def main():
         tot_el += w.numel()
         tot_cm += cm
         tot_sm += sm
-        print(f"{n:60s} {tuple(w.shape)} code_mismatch={cm} scale_mismatch={sm} mismatches_only_in_scale_byte_0={zero_scale_only}")
-    print(f"TOTAL {tot_el/1e9:.2f} B elements: code mismatches {tot_cm} ({tot_cm/tot_el:.4%}), scale mismatches {tot_sm}")
+        print(
+            f"{n:60s} {tuple(w.shape)} code_mismatch={cm} scale_mismatch={sm} mismatches_only_in_scale_byte_0={zero_scale_only}"
+        )
+    print(
+        f"TOTAL {tot_el/1e9:.2f} B elements: code mismatches {tot_cm} ({tot_cm/tot_el:.4%}), scale mismatches {tot_sm}"
+    )
 
 
 if __name__ == "__main__":

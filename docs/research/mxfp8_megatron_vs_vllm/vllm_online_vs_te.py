@@ -75,16 +75,25 @@ def install_hook():
 
 def te_block_pow2(w2d: torch.Tensor):
     import transformer_engine.pytorch  # noqa: F401
-    from transformer_engine.pytorch.tensor.float8_blockwise_tensor import Float8BlockQuantizer
+    from transformer_engine.pytorch.tensor.float8_blockwise_tensor import (
+        Float8BlockQuantizer,
+    )
 
     tex = importlib.import_module("transformer_engine_torch")
     q = Float8BlockQuantizer(
-        fp8_dtype=tex.DType.kFloat8E4M3, rowwise=True, columnwise=False,
-        amax_epsilon=0.0, force_pow_2_scales=True, block_scaling_dim=2,
+        fp8_dtype=tex.DType.kFloat8E4M3,
+        rowwise=True,
+        columnwise=False,
+        amax_epsilon=0.0,
+        force_pow_2_scales=True,
+        block_scaling_dim=2,
     )
     o = q(w2d.contiguous())
     r, c = w2d.shape
-    return o._rowwise_data.view(torch.uint8).view(r, c), o._rowwise_scale_inv[: (r + 127) // 128, : (c + 127) // 128].float()
+    return (
+        o._rowwise_data.view(torch.uint8).view(r, c),
+        o._rowwise_scale_inv[: (r + 127) // 128, : (c + 127) // 128].float(),
+    )
 
 
 _CURRENT_BF16: list = []

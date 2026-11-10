@@ -98,14 +98,18 @@ def q_te_split(w3):
 
 
 def q_vllm_op(w):
-    from vllm.model_executor.layers.quantization.utils.mxfp8_utils import mxfp8_e4m3_quantize
+    from vllm.model_executor.layers.quantization.utils.mxfp8_utils import (
+        mxfp8_e4m3_quantize,
+    )
 
     c, s = mxfp8_e4m3_quantize(w.contiguous(), is_sf_swizzled_layout=False)
     return c.view(torch.uint8).view(w.shape), s.view(torch.uint8).reshape(w.shape[0], -1)
 
 
 def q_vllm_torch(w):
-    from vllm.model_executor.layers.quantization.utils.mxfp8_utils import _mxfp8_e4m3_quantize_torch
+    from vllm.model_executor.layers.quantization.utils.mxfp8_utils import (
+        _mxfp8_e4m3_quantize_torch,
+    )
 
     c, s = _mxfp8_e4m3_quantize_torch(w.contiguous(), is_sf_swizzled_layout=False)
     return c.view(torch.uint8), s.view(torch.uint8)
@@ -268,7 +272,11 @@ def main():
 
     agg = defaultdict(lambda: [0, 0, 0])
     for name, row in results.items():
-        mism = {k: v for k, v in row.items() if isinstance(v, dict) and (v.get("code_mismatch") or v.get("scale_mismatch") or v.get("error"))}
+        mism = {
+            k: v
+            for k, v in row.items()
+            if isinstance(v, dict) and (v.get("code_mismatch") or v.get("scale_mismatch") or v.get("error"))
+        }
         if name.startswith("synthetic/") or mism:
             print(f"{name:60s} {row['shape']}  " + "  ".join(f"{k}={v}" for k, v in row.items() if isinstance(v, dict)))
         if not name.startswith("synthetic/"):
@@ -279,7 +287,9 @@ def main():
                     agg[k][2] += 1
     if args.model:
         tot = sum(math.prod(r["shape"]) for n, r in results.items() if not n.startswith("synthetic/"))
-        print(f"\nModel {args.model}: {sum(1 for n in results if not n.startswith('synthetic/'))} tensors, {tot/1e9:.3f} B elements, reference={REFERENCE}")
+        print(
+            f"\nModel {args.model}: {sum(1 for n in results if not n.startswith('synthetic/'))} tensors, {tot/1e9:.3f} B elements, reference={REFERENCE}"
+        )
         for k, (cm, sm, n) in agg.items():
             print(f"  {k:12s} code mismatches={cm}  scale mismatches={sm}  (over {n} tensors)")
     if args.out:
