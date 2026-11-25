@@ -121,10 +121,10 @@ skyrl-train = [
 
 fsdp = [
     "skyrl[skyrl-train]",
-    # DO NOT MERGE: Inkling2 needs a vLLM build of the Inkling2 vLLM branch (torch 2.14, cu130,
-    # x86_64 only) until a vLLM release ships the model; aarch64 stays on the release.
+    # DO NOT MERGE: Inkling2 needs a vLLM build of the Inkling2 vLLM branch (torch 2.14, cu130; x86_64 and
+    # aarch64 wheels) until a vLLM release ships the model.
     "vllm @ https://github.com/NovaSky-AI/skyrl-wheels/releases/download/vllm-inkling2-76a43a186-cu13torch2.14/vllm-0.34.0rc1.dev955%2Binkling2loop.g76a43a186.cu130.torch214-cp38-abi3-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "vllm==0.33.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "vllm @ https://github.com/NovaSky-AI/skyrl-wheels/releases/download/vllm-inkling2-76a43a186-cu13torch2.14/vllm-0.34.0rc1.dev955%2Binkling2loop.g76a43a186.cu130.torch214-cp38-abi3-linux_aarch64.whl ; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "vllm-router; sys_platform == 'linux'",
     # The `nixl` shim provides that namespace and dispatches on `torch.version.cuda`,
     # so with a cu13 torch it loads `nixl_cu13`. `nixl-cu13` ships the `nixl_cu13`
@@ -183,10 +183,10 @@ megatron = [
     # (imported lazily as `flash_mla.flash_mla_sparse_fwd`). Not on PyPI: our own build of the
     # `nv_dev` branch (x86_64 and aarch64), see [tool.uv.sources].
     "flash-mla==1.0.0+cu.13.0.torch.2.14.b7643bd; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
-    # DO NOT MERGE: Inkling2 needs a vLLM build of the Inkling2 vLLM branch (torch 2.14, cu130,
-    # x86_64 only) until a vLLM release ships the model; aarch64 stays on the release.
+    # DO NOT MERGE: Inkling2 needs a vLLM build of the Inkling2 vLLM branch (torch 2.14, cu130; x86_64 and
+    # aarch64 wheels) until a vLLM release ships the model.
     "vllm @ https://github.com/NovaSky-AI/skyrl-wheels/releases/download/vllm-inkling2-76a43a186-cu13torch2.14/vllm-0.34.0rc1.dev955%2Binkling2loop.g76a43a186.cu130.torch214-cp38-abi3-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "vllm==0.33.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "vllm @ https://github.com/NovaSky-AI/skyrl-wheels/releases/download/vllm-inkling2-76a43a186-cu13torch2.14/vllm-0.34.0rc1.dev955%2Binkling2loop.g76a43a186.cu130.torch214-cp38-abi3-linux_aarch64.whl ; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "vllm-router; sys_platform == 'linux'",
     # The `nixl` shim provides that namespace and dispatches on `torch.version.cuda`,
     # so with a cu13 torch it loads `nixl_cu13`. `nixl-cu13` ships the `nixl_cu13`
